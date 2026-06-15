@@ -16,7 +16,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { VoiceMemosColors } from '@/constants/VoiceMemosColors';
 import { useAudioEngine, useAudioEngineState } from '@/src/audio/AudioEngineContext';
 import { PlaybackControls } from '@/src/components/PlaybackControls';
-import { TrimHandles } from '@/src/components/TrimHandles';
 import { WaveformView } from '@/src/components/WaveformView';
 import { getPrimaryLayerFile } from '@/src/storage/paths';
 import {
@@ -25,7 +24,6 @@ import {
   replaceRecordingSegment,
   saveRecording,
   updateTitle,
-  updateTrim,
 } from '@/src/storage/memoStore';
 import type { Memo } from '@/src/storage/types';
 import { hasRecording } from '@/src/storage/types';
@@ -41,9 +39,6 @@ export default function MemoEditorScreen() {
   const [memo, setMemo] = useState<Memo | null>(null);
   const [loading, setLoading] = useState(true);
   const [title, setTitle] = useState('');
-  const [trimStart, setTrimStart] = useState(0);
-  const [trimEnd, setTrimEnd] = useState(0);
-  const [waveformWidth, setWaveformWidth] = useState(0);
   const [replaceMode, setReplaceMode] = useState(false);
 
   const loadMemo = useCallback(async () => {
@@ -56,17 +51,9 @@ export default function MemoEditorScreen() {
     setMemo(loaded);
     if (loaded) {
       setTitle(loaded.title);
-      setTrimStart(loaded.trimStart);
-      setTrimEnd(loaded.trimEnd || loaded.duration);
       if (hasRecording(loaded)) {
         const file = getPrimaryLayerFile(loaded);
-        await engine.loadMemo(
-          loaded.id,
-          file.uri,
-          loaded.duration,
-          loaded.trimStart,
-          loaded.trimEnd || loaded.duration
-        );
+        await engine.loadMemo(loaded.id, file.uri, loaded.duration, 0, loaded.duration);
       }
     }
     setLoading(false);
@@ -102,9 +89,8 @@ export default function MemoEditorScreen() {
     if (title.trim() && title !== memo.title) {
       await updateTitle(memo.id, title);
     }
-    await updateTrim(memo.id, trimStart, trimEnd);
     router.back();
-  }, [engine, memo, title, trimEnd, trimStart]);
+  }, [engine, memo, title]);
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -114,33 +100,23 @@ export default function MemoEditorScreen() {
         </Pressable>
       ),
     });
-  }, [handleDone, navigation, title, trimEnd, trimStart, memo]);
+  }, [handleDone, navigation, memo]);
 
   const handleStopRecording = async () => {
     if (!memo || !engineState.isRecording) {
       return;
     }
     try {
-      const { path, duration, peaks: capturedPeaks } = engine.stopRecording();
+      const { path, duration } = engine.stopRecording();
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      const peaksToSave =
-        !replaceMode && capturedPeaks.length > 0 ? capturedPeaks : undefined;
       const updated = replaceMode
-        ? await replaceRecordingSegment(memo.id, trimStart, trimEnd, path)
-        : await saveRecording(memo.id, path, duration, peaksToSave);
+        ? await replaceRecordingSegment(memo.id, 0, memo.duration, path)
+        : await saveRecording(memo.id, path, duration);
       setMemo(updated);
       setTitle(updated.title);
-      setTrimStart(updated.trimStart);
-      setTrimEnd(updated.trimEnd);
       setReplaceMode(false);
       const file = getPrimaryLayerFile(updated);
-      await engine.loadMemo(
-        updated.id,
-        file.uri,
-        updated.duration,
-        updated.trimStart,
-        updated.trimEnd
-      );
+      await engine.loadMemo(updated.id, file.uri, updated.duration, 0, updated.duration);
     } catch (error) {
       Alert.alert('Could not save recording', error instanceof Error ? error.message : 'Unknown error');
     }
@@ -161,16 +137,6 @@ export default function MemoEditorScreen() {
     }
   };
 
-  const handleTrimChange = (nextStart: number, nextEnd: number) => {
-    setTrimStart(nextStart);
-    setTrimEnd(nextEnd);
-    engine.pause();
-    if (memo && hasRecording(memo)) {
-      const file = getPrimaryLayerFile(memo);
-      void engine.loadMemo(memo.id, file.uri, memo.duration, nextStart, nextEnd);
-    }
-  };
-
   if (loading || !memo) {
     return (
       <View style={styles.centered}>
@@ -179,10 +145,11 @@ export default function MemoEditorScreen() {
     );
   }
 
-  const duration = memo.duration;
-  const effectiveDuration = trimEnd > trimStart ? trimEnd - trimStart : duration;
+  const isActiveMemo = engineState.memoId === memo.id;
+  const duration =
+    isActiveMemo && engineState.duration > 0 ? engineState.duration : memo.duration;
   const isRecording = engineState.isRecording;
-  const currentTime = engineState.memoId === memo.id ? engineState.currentTime : trimStart;
+  const currentTime = isActiveMemo ? engineState.currentTime : 0;
 
   const waveformDuration = isRecording
     ? Math.max(engineState.recordingDuration, 0.01)
@@ -214,38 +181,25 @@ export default function MemoEditorScreen() {
           <WaveformView
             currentTime={waveformCurrentTime}
             duration={waveformDuration}
+            getPlaybackTime={() => engine.getPlaybackTime()}
+            isPlaying={engineState.isPlaying}
+            isRecording={isRecording}
             peaks={waveformPeaks}
-            trimEnd={isRecording ? waveformDuration : trimEnd}
-            trimStart={isRecording ? 0 : trimStart}
             onSeek={(time) => {
               if (!isRecording) {
                 engine.seek(time);
               }
             }}
-            onWidthChange={setWaveformWidth}
           />
-          {!isRecording ? (
-            <TrimHandles
-              duration={duration}
-              trimEnd={trimEnd}
-              trimStart={trimStart}
-              width={waveformWidth}
-              onTrimChange={handleTrimChange}
-            />
-          ) : null}
         </View>
 
         <View style={styles.timeDisplay}>
           <Text style={styles.largeTime}>
-            {formatDuration(
-              isRecording
-                ? engineState.recordingDuration
-                : Math.max(0, currentTime - trimStart)
-            )}
+            {formatDuration(isRecording ? engineState.recordingDuration : currentTime)}
           </Text>
           {!isRecording ? (
             <Text style={styles.remainingTime}>
-              −{formatDuration(Math.max(0, effectiveDuration - (currentTime - trimStart)))}
+              −{formatDuration(Math.max(0, duration - currentTime))}
             </Text>
           ) : null}
         </View>
@@ -263,8 +217,8 @@ export default function MemoEditorScreen() {
         ) : (
           <>
             <PlaybackControls
-              currentTime={Math.max(0, currentTime - trimStart)}
-              duration={effectiveDuration}
+              currentTime={currentTime}
+              duration={duration}
               isPlaying={engineState.isPlaying}
               onPlayPause={() => void engine.togglePlayback()}
               onSkipBack={() => engine.skip(-15)}
@@ -321,8 +275,7 @@ const styles = StyleSheet.create({
     color: VoiceMemosColors.secondaryText,
   },
   waveformSection: {
-    position: 'relative',
-    minHeight: 120,
+    marginHorizontal: -20,
   },
   timeDisplay: {
     alignItems: 'center',

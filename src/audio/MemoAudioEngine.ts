@@ -13,6 +13,7 @@ const RECORDING_SAMPLE_RATE = 44100;
 const RECORDING_BUFFER_LENGTH = RECORDING_SAMPLE_RATE * 0.1;
 const PLAYBACK_END_TOLERANCE = 0.05;
 const PLAYBACK_SCHEDULE_LEAD = 0.01;
+const PLAYBACK_UI_UPDATE_MS = 100;
 
 export type EngineState = {
   memoId: string | null;
@@ -50,14 +51,14 @@ export class MemoAudioEngine {
   private decodedPath: string | null = null;
   private decodedBuffer: AudioBuffer | null = null;
   private recordingTimer: ReturnType<typeof setInterval> | null = null;
-  private playbackTimer: ReturnType<typeof setInterval> | null = null;
+  private playbackRafId: number | null = null;
   private playbackSessionId = 0;
   private activePlaybackSessionId = 0;
   private playbackStartAt = 0;
   private playbackEndAt = 0;
-  private playbackWallClockStart = 0;
+  private playbackContextStartWhen = 0;
   private sessionConfigured = false;
-  private peakNormalizers: number[] = [];
+  private sessionPeakMax = 0.001;
 
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener);
@@ -67,6 +68,13 @@ export class MemoAudioEngine {
 
   getState(): EngineState {
     return this.state;
+  }
+
+  getPlaybackTime(): number {
+    if (!this.context || this.playbackContextStartWhen <= 0) {
+      return this.state.currentTime;
+    }
+    return this.getElapsedPlaybackTime(this.context);
   }
 
   private emit(partial: Partial<EngineState>): void {
@@ -110,24 +118,52 @@ export class MemoAudioEngine {
     return this.state.currentTime >= endAt - PLAYBACK_END_TOLERANCE;
   }
 
-  private getElapsedPlaybackTime(): number {
-    if (this.playbackWallClockStart <= 0) {
-      return this.state.currentTime;
-    }
-    const elapsed = (Date.now() - this.playbackWallClockStart) / 1000;
-    return Math.min(this.playbackStartAt + elapsed, this.playbackEndAt);
-  }
-
   private invalidatePlaybackSession(): void {
     this.playbackSessionId += 1;
     this.activePlaybackSessionId = this.playbackSessionId;
   }
 
   private clearPlaybackTimer(): void {
-    if (this.playbackTimer) {
-      clearInterval(this.playbackTimer);
-      this.playbackTimer = null;
+    if (this.playbackRafId !== null) {
+      cancelAnimationFrame(this.playbackRafId);
+      this.playbackRafId = null;
     }
+  }
+
+  private getElapsedPlaybackTime(context: AudioContext): number {
+    if (this.playbackContextStartWhen <= 0) {
+      return this.state.currentTime;
+    }
+    const elapsed = context.currentTime - this.playbackContextStartWhen;
+    return Math.min(this.playbackStartAt + elapsed, this.playbackEndAt);
+  }
+
+  private startPlaybackTimer(sessionId: number, context: AudioContext): void {
+    this.clearPlaybackTimer();
+    let lastUiUpdateMs = 0;
+
+    const tick = (frameMs: number) => {
+      if (sessionId !== this.activePlaybackSessionId) {
+        return;
+      }
+
+      const nextTime = this.getElapsedPlaybackTime(context);
+
+      if (frameMs - lastUiUpdateMs >= PLAYBACK_UI_UPDATE_MS) {
+        lastUiUpdateMs = frameMs;
+        this.emit({ currentTime: nextTime, isPlaying: true });
+      }
+
+      if (nextTime >= this.playbackEndAt - PLAYBACK_END_TOLERANCE) {
+        this.finishPlaybackNaturally(this.playbackEndAt, sessionId);
+        return;
+      }
+
+      this.playbackRafId = requestAnimationFrame(tick);
+    };
+
+    this.emit({ currentTime: this.playbackStartAt, isPlaying: true });
+    this.playbackRafId = requestAnimationFrame(tick);
   }
 
   private stopActiveSource(): void {
@@ -148,7 +184,7 @@ export class MemoAudioEngine {
   private invalidateAndStopSource(): void {
     this.invalidatePlaybackSession();
     this.clearPlaybackTimer();
-    this.playbackWallClockStart = 0;
+    this.playbackContextStartWhen = 0;
     this.stopActiveSource();
   }
 
@@ -185,26 +221,11 @@ export class MemoAudioEngine {
     this.emit({ isPlaying: false, currentTime: endAt });
   }
 
-  private startPlaybackTimer(sessionId: number): void {
-    this.clearPlaybackTimer();
-    this.playbackWallClockStart = Date.now();
-    this.playbackTimer = setInterval(() => {
-      if (sessionId !== this.activePlaybackSessionId) {
-        return;
-      }
-      const nextTime = this.getElapsedPlaybackTime();
-      this.emit({ currentTime: nextTime, isPlaying: true });
-      if (nextTime >= this.playbackEndAt - PLAYBACK_END_TOLERANCE) {
-        this.finishPlaybackNaturally(this.playbackEndAt, sessionId);
-      }
-    }, 50);
-  }
-
   private appendRecordingPeak(rawPeak: number): void {
     const peak = Math.max(rawPeak, 0.001);
-    this.peakNormalizers.push(peak);
-    const highest = Math.max(...this.peakNormalizers, 0.001);
-    let nextPeaks = [...this.state.recordingPeaks, peak / highest];
+    this.sessionPeakMax = Math.max(this.sessionPeakMax, peak);
+    const normalizedPeak = peak / this.sessionPeakMax;
+    let nextPeaks = [...this.state.recordingPeaks, normalizedPeak];
 
     if (nextPeaks.length > MAX_RECORDING_PEAKS) {
       const bucketSize = Math.ceil(nextPeaks.length / MAX_RECORDING_PEAKS);
@@ -232,7 +253,7 @@ export class MemoAudioEngine {
   async loadMemo(
     memoId: string,
     filePath: string,
-    duration: number,
+    _duration: number,
     trimStart: number,
     trimEnd: number
   ): Promise<void> {
@@ -241,11 +262,19 @@ export class MemoAudioEngine {
       this.invalidateDecodedBuffer();
     }
     this.loadedPath = filePath;
+
+    const context = await this.ensureContext();
+    const buffer = await this.getDecodedBuffer(context);
+    const authoritativeDuration = buffer.duration;
+    const trimEndResolved = trimEnd > 0
+      ? Math.min(trimEnd, authoritativeDuration)
+      : authoritativeDuration;
+
     this.emit({
       memoId,
-      duration,
+      duration: authoritativeDuration,
       trimStart,
-      trimEnd,
+      trimEnd: trimEndResolved,
       currentTime: trimStart,
       isPlaying: false,
     });
@@ -280,7 +309,7 @@ export class MemoAudioEngine {
       throw new Error(result.message);
     }
 
-    this.peakNormalizers = [];
+    this.sessionPeakMax = 0.001;
     this.recorder.onAudioReady(
       {
         sampleRate: RECORDING_SAMPLE_RATE,
@@ -321,7 +350,7 @@ export class MemoAudioEngine {
     this.recorder.clearOnAudioReady();
     const result = this.recorder.stop();
     this.recorder = null;
-    this.peakNormalizers = [];
+    this.sessionPeakMax = 0.001;
 
     if (result.status === 'error') {
       throw new Error(result.message);
@@ -372,18 +401,20 @@ export class MemoAudioEngine {
 
     this.source = source;
     const when = context.currentTime + PLAYBACK_SCHEDULE_LEAD;
+    this.playbackContextStartWhen = when;
     source.start(when, startAt);
     source.stop(when + playDuration);
 
-    this.startPlaybackTimer(sessionId);
-    this.emit({ isPlaying: true, currentTime: startAt });
+    this.startPlaybackTimer(sessionId, context);
   }
 
   pause(): void {
     if (!this.state.isPlaying) {
       return;
     }
-    const pausedAt = this.getElapsedPlaybackTime();
+    const pausedAt = this.context
+      ? this.getElapsedPlaybackTime(this.context)
+      : this.state.currentTime;
     this.invalidateAndStopSource();
     this.emit({ isPlaying: false, currentTime: pausedAt });
   }

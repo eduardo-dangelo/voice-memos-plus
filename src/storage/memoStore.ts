@@ -1,6 +1,6 @@
 import { Directory, File, Paths } from 'expo-file-system';
 
-import { computeWaveformPeaks, resolveWaveformPeaks } from '@/src/audio/waveform';
+import { computeWaveformPeaks, peakCountForDuration, resolveWaveformPeaks } from '@/src/audio/waveform';
 import { spliceRecording } from '@/src/audio/wavUtils';
 import { createDefaultTitle } from '@/src/utils/format';
 import { randomId } from '@/src/utils/id';
@@ -132,7 +132,10 @@ export async function ensureWaveformPeaks(memo: Memo): Promise<Memo> {
   }
 
   try {
-    layer.waveformPeaks = await computeWaveformPeaks(file.uri);
+    layer.waveformPeaks = await computeWaveformPeaks(
+      file.uri,
+      peakCountForDuration(memo.duration)
+    );
     memo.updatedAt = new Date().toISOString();
     writeManifest(memo);
   } catch {
@@ -145,7 +148,7 @@ export async function ensureWaveformPeaks(memo: Memo): Promise<Memo> {
 export async function saveRecording(
   memoId: string,
   sourcePath: string,
-  duration: number,
+  _duration: number,
   capturedPeaks?: number[]
 ): Promise<Memo> {
   const memo = await getMemo(memoId);
@@ -163,12 +166,18 @@ export async function saveRecording(
   }
   source.copy(dest);
 
-  memo.duration = duration;
+  const { decodeAudioData } = await import('react-native-audio-api');
+  const buffer = await decodeAudioData(dest.uri);
+  memo.duration = buffer.duration;
   memo.trimStart = 0;
-  memo.trimEnd = duration;
+  memo.trimEnd = buffer.duration;
   memo.updatedAt = new Date().toISOString();
 
-  memo.layers[0].waveformPeaks = await resolveWaveformPeaks(dest.uri, capturedPeaks);
+  memo.layers[0].waveformPeaks = await resolveWaveformPeaks(
+    dest.uri,
+    buffer.duration,
+    capturedPeaks
+  );
 
   writeManifest(memo);
   return memo;
@@ -199,7 +208,11 @@ export async function replaceLayerFile(
   memo.trimEnd = buffer.duration;
   memo.updatedAt = new Date().toISOString();
 
-  memo.layers[0].waveformPeaks = await resolveWaveformPeaks(dest.uri, capturedPeaks);
+  memo.layers[0].waveformPeaks = await resolveWaveformPeaks(
+    dest.uri,
+    buffer.duration,
+    capturedPeaks
+  );
 
   writeManifest(memo);
   return memo;

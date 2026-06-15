@@ -1,6 +1,15 @@
 import { decodeAudioData } from 'react-native-audio-api';
 
+export const WAVEFORM_BAR_WIDTH = 2;
+export const WAVEFORM_BAR_GAP = 1;
+export const WAVEFORM_PIXELS_PER_SECOND = 48;
+
 const DEFAULT_PEAK_COUNT = 150;
+
+export function peakCountForDuration(duration: number): number {
+  const barStep = WAVEFORM_BAR_WIDTH + WAVEFORM_BAR_GAP;
+  return Math.max(DEFAULT_PEAK_COUNT, Math.floor(duration * WAVEFORM_PIXELS_PER_SECOND / barStep));
+}
 
 export async function computeWaveformPeaks(
   filePath: string,
@@ -57,15 +66,16 @@ export function resamplePeaks(peaks: number[], peakCount = DEFAULT_PEAK_COUNT): 
 
 export async function resolveWaveformPeaks(
   filePath: string,
+  duration?: number,
   capturedPeaks?: number[]
 ): Promise<number[] | undefined> {
-  if (capturedPeaks && capturedPeaks.length > 0) {
-    return resamplePeaks(capturedPeaks);
-  }
-
   try {
-    return await computeWaveformPeaks(filePath);
+    const peakCount = duration ? peakCountForDuration(duration) : DEFAULT_PEAK_COUNT;
+    return await computeWaveformPeaks(filePath, peakCount);
   } catch {
+    if (capturedPeaks && capturedPeaks.length > 0) {
+      return resamplePeaks(capturedPeaks);
+    }
     return undefined;
   }
 }

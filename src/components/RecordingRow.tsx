@@ -12,7 +12,7 @@ import {
   updateTitle,
 } from '@/src/storage/memoStore';
 import type { Memo } from '@/src/storage/types';
-import { getEffectiveDuration, hasRecording } from '@/src/storage/types';
+import { hasRecording } from '@/src/storage/types';
 import { formatDate, formatDuration } from '@/src/utils/format';
 import * as Sharing from 'expo-sharing';
 
@@ -44,15 +44,16 @@ export function RecordingRow({
   const engine = useAudioEngine();
   const engineState = useAudioEngineState();
   const isActive = engineState.memoId === memo.id;
-  const duration = getEffectiveDuration(memo);
+  const duration =
+    isActive && engineState.duration > 0 ? engineState.duration : memo.duration;
   const playable = hasRecording(memo);
 
   const displayTime = useMemo(() => {
     if (isActive) {
-      return engineState.currentTime - memo.trimStart;
+      return engineState.currentTime;
     }
     return 0;
-  }, [engineState.currentTime, isActive, memo.trimStart]);
+  }, [engineState.currentTime, isActive]);
 
   const ensureLoaded = async () => {
     if (!playable) {
@@ -60,13 +61,7 @@ export function RecordingRow({
     }
     if (!isActive) {
       const file = getPrimaryLayerFile(memo);
-      await engine.loadMemo(
-        memo.id,
-        file.uri,
-        memo.duration,
-        memo.trimStart,
-        memo.trimEnd || memo.duration
-      );
+      await engine.loadMemo(memo.id, file.uri, memo.duration, 0, memo.duration);
     }
     return true;
   };
