@@ -29,8 +29,12 @@ export default function RootLayout() {
               name="memo/[id]"
               options={{
                 title: '',
-                presentation: 'card',
+                presentation: 'formSheet',
+                sheetGrabberVisible: true,
+                sheetAllowedDetents: [1],
+                sheetInitialDetentIndex: 0,
                 headerBackTitle: 'All Recordings',
+                headerTransparent: false,
                 contentStyle: { backgroundColor: VoiceMemosColors.background },
               }}
             />

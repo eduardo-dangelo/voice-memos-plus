@@ -13,7 +13,7 @@ const RECORDING_SAMPLE_RATE = 44100;
 const RECORDING_BUFFER_LENGTH = RECORDING_SAMPLE_RATE * 0.1;
 const PLAYBACK_END_TOLERANCE = 0.05;
 const PLAYBACK_SCHEDULE_LEAD = 0.01;
-const PLAYBACK_UI_UPDATE_MS = 100;
+const PLAYBACK_UI_UPDATE_MS = 50;
 
 export type EngineState = {
   memoId: string | null;
@@ -337,7 +337,7 @@ export class MemoAudioEngine {
       if (this.recorder) {
         this.emit({ recordingDuration: this.recorder.getCurrentDuration() });
       }
-    }, 100);
+    }, 50);
   }
 
   stopRecording(): { path: string; duration: number; peaks: number[] } {

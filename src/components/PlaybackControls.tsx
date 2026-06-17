@@ -12,6 +12,8 @@ type Props = {
   onSkipBack: () => void;
   onSkipForward: () => void;
   compact?: boolean;
+  showProgressBar?: boolean;
+  showTimeLabels?: boolean;
 };
 
 export function PlaybackControls({
@@ -22,16 +24,20 @@ export function PlaybackControls({
   onSkipBack,
   onSkipForward,
   compact = false,
+  showProgressBar = true,
+  showTimeLabels = true,
 }: Props) {
   const progress = duration > 0 ? currentTime / duration : 0;
 
   return (
     <View style={styles.container}>
-      <View style={styles.progressTrack}>
-        <View style={[styles.progressFill, { width: `${Math.min(progress * 100, 100)}%` }]} />
-      </View>
-      <View style={styles.controlsRow}>
-        <Text style={styles.time}>{formatDuration(currentTime)}</Text>
+      {showProgressBar ? (
+        <View style={styles.progressTrack}>
+          <View style={[styles.progressFill, { width: `${Math.min(progress * 100, 100)}%` }]} />
+        </View>
+      ) : null}
+      <View style={[styles.controlsRow, !showTimeLabels && styles.controlsRowCentered]}>
+        {showTimeLabels ? <Text style={styles.time}>{formatDuration(currentTime)}</Text> : null}
         <View style={styles.buttons}>
           <Pressable accessibilityLabel="Skip back 15 seconds" onPress={onSkipBack} style={styles.iconButton}>
             <SymbolView name={{ ios: 'gobackward.15' }} size={compact ? 24 : 28} tintColor={VoiceMemosColors.text} />
@@ -47,7 +53,7 @@ export function PlaybackControls({
             <SymbolView name={{ ios: 'goforward.15' }} size={compact ? 24 : 28} tintColor={VoiceMemosColors.text} />
           </Pressable>
         </View>
-        <Text style={styles.time}>{formatDuration(duration)}</Text>
+        {showTimeLabels ? <Text style={styles.time}>{formatDuration(duration)}</Text> : null}
       </View>
     </View>
   );
@@ -71,6 +77,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+  },
+  controlsRowCentered: {
+    justifyContent: 'center',
   },
   buttons: {
     flexDirection: 'row',

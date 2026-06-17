@@ -1,10 +1,11 @@
 import * as Haptics from 'expo-haptics';
-import { Stack, router, useLocalSearchParams, useNavigation } from 'expo-router';
+import { router, useLocalSearchParams, useNavigation } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -17,7 +18,6 @@ import { VoiceMemosColors } from '@/constants/VoiceMemosColors';
 import { useAudioEngine, useAudioEngineState } from '@/src/audio/AudioEngineContext';
 import { PlaybackControls } from '@/src/components/PlaybackControls';
 import { WaveformView } from '@/src/components/WaveformView';
-import { getPrimaryLayerFile } from '@/src/storage/paths';
 import {
   ensureWaveformPeaks,
   getMemo,
@@ -25,9 +25,10 @@ import {
   saveRecording,
   updateTitle,
 } from '@/src/storage/memoStore';
+import { getPrimaryLayerFile } from '@/src/storage/paths';
 import type { Memo } from '@/src/storage/types';
 import { hasRecording } from '@/src/storage/types';
-import { formatDate, formatDuration } from '@/src/utils/format';
+import { formatDate, formatDuration, formatDurationWithTenths } from '@/src/utils/format';
 
 export default function MemoEditorScreen() {
   const { id, record } = useLocalSearchParams<{ id: string; record?: string }>();
@@ -92,15 +93,33 @@ export default function MemoEditorScreen() {
     router.back();
   }, [engine, memo, title]);
 
+  const renderDoneButton = useCallback(
+    () => (
+      <Pressable onPress={() => void handleDone()} style={styles.doneButton}>
+        <SymbolView name={{ ios: 'checkmark' }} size={22} tintColor="#FFFFFF" />
+      </Pressable>
+    ),
+    [handleDone],
+  );
+
   useLayoutEffect(() => {
     navigation.setOptions({
-      headerRight: () => (
-        <Pressable onPress={() => void handleDone()} style={styles.doneButton}>
-          <SymbolView name={{ ios: 'checkmark' }} size={22} tintColor={VoiceMemosColors.accent} />
-        </Pressable>
-      ),
+      title: '',
+      ...(Platform.OS === 'ios'
+        ? {
+            unstable_headerRightItems: () => [
+              {
+                type: 'custom' as const,
+                hidesSharedBackground: true,
+                element: renderDoneButton(),
+              },
+            ],
+          }
+        : {
+            headerRight: renderDoneButton,
+          }),
     });
-  }, [handleDone, navigation, memo]);
+  }, [navigation, renderDoneButton]);
 
   const handleStopRecording = async () => {
     if (!memo || !engineState.isRecording) {
@@ -163,7 +182,6 @@ export default function MemoEditorScreen() {
 
   return (
     <SafeAreaView edges={['bottom']} style={styles.screen}>
-      <Stack.Screen options={{ title: memo.title }} />
       <View style={styles.content}>
         <View style={styles.headerMeta}>
           <TextInput
@@ -195,13 +213,8 @@ export default function MemoEditorScreen() {
 
         <View style={styles.timeDisplay}>
           <Text style={styles.largeTime}>
-            {formatDuration(isRecording ? engineState.recordingDuration : currentTime)}
+            {formatDurationWithTenths(isRecording ? engineState.recordingDuration : currentTime)}
           </Text>
-          {!isRecording ? (
-            <Text style={styles.remainingTime}>
-              −{formatDuration(Math.max(0, duration - currentTime))}
-            </Text>
-          ) : null}
         </View>
 
         {isRecording ? (
@@ -209,7 +222,9 @@ export default function MemoEditorScreen() {
             <Text style={styles.recordingLabel}>
               {replaceMode ? 'Recording replacement…' : 'Recording…'}
             </Text>
-            <Text style={styles.recordingTime}>{formatDuration(engineState.recordingDuration)}</Text>
+            <Text style={styles.recordingTime}>
+              {formatDurationWithTenths(engineState.recordingDuration)}
+            </Text>
             <Pressable onPress={() => void handleStopRecording()} style={styles.stopButton}>
               <View style={styles.stopSquare} />
             </Pressable>
@@ -220,6 +235,8 @@ export default function MemoEditorScreen() {
               currentTime={currentTime}
               duration={duration}
               isPlaying={engineState.isPlaying}
+              showProgressBar={false}
+              showTimeLabels={false}
               onPlayPause={() => void engine.togglePlayback()}
               onSkipBack={() => engine.skip(-15)}
               onSkipForward={() => engine.skip(15)}
@@ -258,7 +275,13 @@ const styles = StyleSheet.create({
     backgroundColor: VoiceMemosColors.background,
   },
   doneButton: {
-    paddingHorizontal: 8,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: VoiceMemosColors.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 4,
   },
   headerMeta: {
     gap: 4,
@@ -285,11 +308,6 @@ const styles = StyleSheet.create({
     fontSize: 44,
     fontWeight: '300',
     color: VoiceMemosColors.text,
-    fontVariant: ['tabular-nums'],
-  },
-  remainingTime: {
-    fontSize: 16,
-    color: VoiceMemosColors.secondaryText,
     fontVariant: ['tabular-nums'],
   },
   recordingPanel: {
