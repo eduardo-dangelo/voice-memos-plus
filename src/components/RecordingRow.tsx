@@ -1,21 +1,23 @@
 import { SymbolView } from 'expo-symbols';
 import { useMemo } from 'react';
 import { ActionSheetIOS, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import Animated, { LinearTransition } from 'react-native-reanimated';
 
 import { VoiceMemosColors } from '@/constants/VoiceMemosColors';
 import { useAudioEngine, useAudioEngineState } from '@/src/audio/AudioEngineContext';
-import { getPrimaryLayerFile } from '@/src/storage/paths';
 import {
   deleteMemo,
   duplicateMemo,
   getShareableFile,
   updateTitle,
 } from '@/src/storage/memoStore';
+import { getPrimaryLayerFile } from '@/src/storage/paths';
 import type { Memo } from '@/src/storage/types';
 import { hasRecording } from '@/src/storage/types';
 import { formatDate, formatDuration } from '@/src/utils/format';
 import * as Sharing from 'expo-sharing';
 
+import { Collapsible } from './Collapsible';
 import { PlaybackControls } from './PlaybackControls';
 
 type Props = {
@@ -146,7 +148,7 @@ export function RecordingRow({
   };
 
   return (
-    <View style={styles.container}>
+    <Animated.View layout={LinearTransition.duration(40)} style={styles.container}>
       <Pressable
         onPress={selectionMode ? onToggleSelect : onToggleExpand}
         onLongPress={onOpenEditor}
@@ -173,23 +175,25 @@ export function RecordingRow({
         ) : null}
       </Pressable>
 
-      {expanded && playable ? (
-        <View style={styles.expanded}>
-          <PlaybackControls
-            compact
-            currentTime={isActive ? displayTime : 0}
-            duration={duration}
-            isPlaying={isActive && engineState.isPlaying}
-            onPlayPause={() => void handlePlayPause()}
-            onSkipBack={() => void handleSkip(-15)}
-            onSkipForward={() => void handleSkip(15)}
-          />
-          <Pressable onPress={onOpenEditor} style={styles.editLink}>
-            <Text style={styles.editLinkText}>Edit Recording</Text>
-          </Pressable>
-        </View>
+      {playable ? (
+        <Collapsible expanded={expanded}>
+          <View style={styles.expanded}>
+            <PlaybackControls
+              compact
+              currentTime={isActive ? displayTime : 0}
+              duration={duration}
+              isPlaying={isActive && engineState.isPlaying}
+              onPlayPause={() => void handlePlayPause()}
+              onSkipBack={() => void handleSkip(-15)}
+              onSkipForward={() => void handleSkip(15)}
+            />
+            <Pressable onPress={onOpenEditor} style={styles.editLink}>
+              <Text style={styles.editLinkText}>Edit Recording</Text>
+            </Pressable>
+          </View>
+        </Collapsible>
       ) : null}
-    </View>
+    </Animated.View>
   );
 }
 

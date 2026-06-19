@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   LayoutChangeEvent,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -22,7 +24,7 @@ const BAR_WIDTH = WAVEFORM_BAR_WIDTH;
 const BAR_GAP = WAVEFORM_BAR_GAP;
 const BAR_STEP = BAR_WIDTH + BAR_GAP;
 const PIXELS_PER_SECOND = WAVEFORM_PIXELS_PER_SECOND;
-const WAVEFORM_HEIGHT = 180;
+const WAVEFORM_HEIGHT = 240;
 const MARKER_ROW_HEIGHT = 24;
 const TRACK_HEIGHT = WAVEFORM_HEIGHT + MARKER_ROW_HEIGHT;
 const MIN_LABEL_SPACING = 48;
@@ -62,8 +64,11 @@ export function WaveformView({
   onWidthChange,
 }: Props) {
   const scrollRef = useRef<ScrollView>(null);
+  const isUserScrollingRef = useRef(false);
   const getPlaybackTimeRef = useRef(getPlaybackTime);
   getPlaybackTimeRef.current = getPlaybackTime;
+  const onSeekRef = useRef(onSeek);
+  onSeekRef.current = onSeek;
   const [viewportWidth, setViewportWidth] = useState(0);
 
   const targetWidth = duration > 0 ? duration * PIXELS_PER_SECOND : 0;
@@ -115,8 +120,32 @@ export function WaveformView({
     onSeek(ratio * duration);
   };
 
+  const handleScrollBeginDrag = () => {
+    isUserScrollingRef.current = true;
+  };
+
+  const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    if (!isUserScrollingRef.current || duration <= 0 || contentWidth <= 0) {
+      return;
+    }
+    const x = event.nativeEvent.contentOffset.x;
+    const ratio = Math.max(0, Math.min(1, x / contentWidth));
+    onSeekRef.current(ratio * duration);
+  };
+
+  const handleScrollEndDrag = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const velocity = event.nativeEvent.velocity?.x ?? 0;
+    if (Math.abs(velocity) < 0.1) {
+      isUserScrollingRef.current = false;
+    }
+  };
+
+  const handleMomentumScrollEnd = () => {
+    isUserScrollingRef.current = false;
+  };
+
   useEffect(() => {
-    if (viewportWidth <= 0 || isPlaying) {
+    if (viewportWidth <= 0 || isPlaying || isUserScrollingRef.current) {
       return;
     }
     scrollRef.current?.scrollTo({ x: scrollX, animated: !isRecording });
@@ -146,8 +175,13 @@ export function WaveformView({
         horizontal
         bounces={false}
         nestedScrollEnabled
+        scrollEnabled={!isPlaying && !isRecording}
         scrollEventThrottle={16}
         showsHorizontalScrollIndicator={false}
+        onScroll={handleScroll}
+        onScrollBeginDrag={handleScrollBeginDrag}
+        onScrollEndDrag={handleScrollEndDrag}
+        onMomentumScrollEnd={handleMomentumScrollEnd}
         style={styles.scrollView}>
         <Pressable
           onPress={(event) => handlePress(event.nativeEvent.locationX)}
