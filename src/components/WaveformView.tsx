@@ -13,6 +13,7 @@ import {
 import { VoiceMemosColors } from '@/constants/VoiceMemosColors';
 import {
   getPeaksForMemo,
+  peakToAbsoluteScale,
   resamplePeaks,
   WAVEFORM_BAR_GAP,
   WAVEFORM_BAR_WIDTH,
@@ -42,6 +43,7 @@ type Props = {
   isRecording?: boolean;
   isPlaying?: boolean;
   getPlaybackTime?: () => number;
+  getRecordingTime?: () => number;
   onSeek: (time: number) => void;
   onTrackPress: (trackId: string) => void;
   onWidthChange?: (width: number) => void;
@@ -66,6 +68,14 @@ function getTrackBarCount(trackDuration: number, contentWidth: number): number {
   }
   const targetWidth = trackDuration * PIXELS_PER_SECOND;
   return Math.max(1, Math.floor(Math.min(contentWidth, targetWidth) / BAR_STEP));
+}
+
+function timeToScrollX(time: number, contentWidth: number): number {
+  return Math.max(0, Math.min(contentWidth, time * PIXELS_PER_SECOND));
+}
+
+function scrollXToTime(x: number, duration: number): number {
+  return Math.max(0, Math.min(duration, x / PIXELS_PER_SECOND));
 }
 
 function TimelineDimRegions({
@@ -126,7 +136,10 @@ function TrackWaveformRow({
   const trackWidth = barCount * BAR_STEP;
 
   const normalizedPeaks = useMemo(() => {
-    const source = getPeaksForMemo(track.peaks, barCount);
+    const source =
+      track.peaks && track.peaks.length > 0
+        ? track.peaks.slice(0, barCount)
+        : getPeaksForMemo(track.peaks, barCount);
     return barCount > 0 ? resamplePeaks(source, barCount) : [];
   }, [barCount, track.peaks]);
 
@@ -160,7 +173,11 @@ function TrackWaveformRow({
               },
             ]}>
             {normalizedPeaks.map((peak, index) => {
-              const barHeight = Math.max(4, peak * (trackHeight - 16));
+              const scaled = peakToAbsoluteScale(peak);
+              const barHeight =
+                scaled <= 0.01
+                  ? 2
+                  : Math.max(4, scaled * (trackHeight - 16));
               return (
                 <View
                   key={index}
@@ -190,6 +207,7 @@ export function WaveformView({
   isRecording = false,
   isPlaying = false,
   getPlaybackTime,
+  getRecordingTime,
   onSeek,
   onTrackPress,
   onWidthChange,
@@ -198,6 +216,11 @@ export function WaveformView({
   const isUserScrollingRef = useRef(false);
   const getPlaybackTimeRef = useRef(getPlaybackTime);
   getPlaybackTimeRef.current = getPlaybackTime;
+  const getRecordingTimeRef = useRef(getRecordingTime);
+  getRecordingTimeRef.current = getRecordingTime;
+  const currentTimeRef = useRef(currentTime);
+  currentTimeRef.current = currentTime;
+  const contentWidthRef = useRef(0);
   const onSeekRef = useRef(onSeek);
   onSeekRef.current = onSeek;
   const onTrackPressRef = useRef(onTrackPress);
@@ -214,6 +237,7 @@ export function WaveformView({
         : 0;
   const contentWidth =
     barCount > 0 ? Math.max(viewportWidth, barCount * BAR_STEP) : viewportWidth;
+  contentWidthRef.current = contentWidth;
   const sidePadding = viewportWidth / 2;
   const totalContentWidth = viewportWidth + contentWidth;
   const bandWidth = sidePadding * 2 + contentWidth;
@@ -223,10 +247,7 @@ export function WaveformView({
   );
   const trackHeight = waveformAreaHeight / Math.max(1, tracks.length);
 
-  const scrollX =
-    duration > 0
-      ? Math.max(0, Math.min(contentWidth, (currentTime / duration) * contentWidth))
-      : 0;
+  const scrollX = timeToScrollX(currentTime, contentWidth);
 
   const markerInterval = getMarkerInterval();
   const markerSeconds = useMemo(() => {
@@ -253,8 +274,7 @@ export function WaveformView({
       return;
     }
     const waveformX = locationX - sidePadding;
-    const ratio = Math.max(0, Math.min(1, waveformX / contentWidth));
-    onSeek(ratio * duration);
+    onSeek(scrollXToTime(waveformX, duration));
   };
 
   const handleScrollBeginDrag = () => {
@@ -266,8 +286,7 @@ export function WaveformView({
       return;
     }
     const x = event.nativeEvent.contentOffset.x;
-    const ratio = Math.max(0, Math.min(1, x / contentWidth));
-    onSeekRef.current(ratio * duration);
+    onSeekRef.current(scrollXToTime(x, duration));
   };
 
   const handleScrollEndDrag = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -282,10 +301,10 @@ export function WaveformView({
   };
 
   useEffect(() => {
-    if (viewportWidth <= 0 || isPlaying || isUserScrollingRef.current) {
+    if (viewportWidth <= 0 || isPlaying || isRecording || isUserScrollingRef.current) {
       return;
     }
-    scrollRef.current?.scrollTo({ x: scrollX, animated: !isRecording });
+    scrollRef.current?.scrollTo({ x: scrollX, animated: true });
   }, [scrollX, viewportWidth, isRecording, isPlaying]);
 
   useEffect(() => {
@@ -295,15 +314,35 @@ export function WaveformView({
 
     let raf = 0;
     const tick = () => {
-      const time = getPlaybackTimeRef.current?.() ?? currentTime;
-      const x = Math.max(0, Math.min(contentWidth, (time / duration) * contentWidth));
-      scrollRef.current?.scrollTo({ x, animated: false });
+      const time = getPlaybackTimeRef.current?.() ?? currentTimeRef.current;
+      scrollRef.current?.scrollTo({ x: timeToScrollX(time, contentWidth), animated: false });
       raf = requestAnimationFrame(tick);
     };
 
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [isPlaying, duration, contentWidth, viewportWidth, currentTime]);
+  }, [isPlaying, duration, contentWidth, viewportWidth]);
+
+  useEffect(() => {
+    if (!isRecording || viewportWidth <= 0) {
+      return;
+    }
+
+    let raf = 0;
+    const tick = () => {
+      if (isUserScrollingRef.current) {
+        raf = requestAnimationFrame(tick);
+        return;
+      }
+      const time = getRecordingTimeRef.current?.() ?? currentTimeRef.current;
+      const width = contentWidthRef.current;
+      scrollRef.current?.scrollTo({ x: timeToScrollX(time, width), animated: false });
+      raf = requestAnimationFrame(tick);
+    };
+
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [isRecording, viewportWidth]);
 
   return (
     <View onLayout={handleLayout} style={styles.container}>

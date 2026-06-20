@@ -263,16 +263,21 @@ export default function MemoEditorScreen() {
         isActive: layer.id === activeLayerId,
       }));
 
-    if (isRecording && (replaceMode || stackMode)) {
+    if (isRecording) {
       const recordingTrack: TrackData = {
         id: '__recording__',
         peaks:
           engineState.recordingPeaks.length > 0 ? engineState.recordingPeaks : undefined,
-        startTime: recordingStartTime.current,
-        duration: engineState.recordingDuration,
+        startTime: replaceMode || stackMode ? recordingStartTime.current : 0,
+        duration: Math.max(engineState.recordingDuration, 0.01),
         isActive: true,
       };
-      return [recordingTrack, ...playableTracks.map((track) => ({ ...track, isActive: false }))];
+
+      if (replaceMode || stackMode) {
+        return [recordingTrack, ...playableTracks.map((track) => ({ ...track, isActive: false }))];
+      }
+
+      return [recordingTrack];
     }
 
     if (playableTracks.length === 0) {
@@ -330,6 +335,9 @@ export default function MemoEditorScreen() {
             currentTime={waveformCurrentTime}
             duration={waveformDuration}
             getPlaybackTime={() => engine.getPlaybackTime()}
+            getRecordingTime={() =>
+              recordingStartTime.current + engine.getRecordingDuration()
+            }
             isPlaying={engineState.isPlaying}
             isRecording={isRecording}
             tracks={waveformTracks}

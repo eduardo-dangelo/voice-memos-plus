@@ -8,7 +8,15 @@ import {
   type AudioBufferSourceNode,
 } from 'react-native-audio-api';
 
+import {
+  peakToAbsoluteScale,
+  WAVEFORM_BAR_GAP,
+  WAVEFORM_BAR_WIDTH,
+  WAVEFORM_PIXELS_PER_SECOND,
+} from '@/src/audio/waveform';
+
 const MAX_RECORDING_PEAKS = 150;
+const RECORDING_BAR_STEP = WAVEFORM_BAR_WIDTH + WAVEFORM_BAR_GAP;
 const RECORDING_SAMPLE_RATE = 44100;
 const RECORDING_BUFFER_LENGTH = RECORDING_SAMPLE_RATE * 0.1;
 const PLAYBACK_END_TOLERANCE = 0.05;
@@ -64,7 +72,7 @@ export class MemoAudioEngine {
   private playbackEndAt = 0;
   private playbackContextStartWhen = 0;
   private sessionConfigured = false;
-  private sessionPeakMax = 0.001;
+  private recordingPeaksBuffer: number[] = [];
 
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener);
@@ -81,6 +89,10 @@ export class MemoAudioEngine {
       return this.state.currentTime;
     }
     return this.getElapsedPlaybackTime(this.context);
+  }
+
+  getRecordingDuration(): number {
+    return this.recorder?.getCurrentDuration() ?? this.state.recordingDuration;
   }
 
   private emit(partial: Partial<EngineState>): void {
@@ -222,23 +234,57 @@ export class MemoAudioEngine {
     this.emit({ isPlaying: false, currentTime: endAt });
   }
 
-  private appendRecordingPeak(rawPeak: number): void {
-    const peak = Math.max(rawPeak, 0.001);
-    this.sessionPeakMax = Math.max(this.sessionPeakMax, peak);
-    const normalizedPeak = peak / this.sessionPeakMax;
-    let nextPeaks = [...this.state.recordingPeaks, normalizedPeak];
+  private downsampleRecordingPeaks(peaks: number[]): number[] {
+    if (peaks.length <= MAX_RECORDING_PEAKS) {
+      return peaks;
+    }
+    const bucketSize = Math.ceil(peaks.length / MAX_RECORDING_PEAKS);
+    const downsampled: number[] = [];
+    for (let i = 0; i < peaks.length; i += bucketSize) {
+      const bucket = peaks.slice(i, i + bucketSize);
+      downsampled.push(Math.max(...bucket));
+    }
+    return downsampled.slice(0, MAX_RECORDING_PEAKS);
+  }
 
-    if (nextPeaks.length > MAX_RECORDING_PEAKS) {
-      const bucketSize = Math.ceil(nextPeaks.length / MAX_RECORDING_PEAKS);
-      const downsampled: number[] = [];
-      for (let i = 0; i < nextPeaks.length; i += bucketSize) {
-        const bucket = nextPeaks.slice(i, i + bucketSize);
-        downsampled.push(Math.max(...bucket));
-      }
-      nextPeaks = downsampled.slice(0, MAX_RECORDING_PEAKS);
+  private toAbsolutePeaks(raw: number[]): number[] {
+    return raw.map(peakToAbsoluteScale);
+  }
+
+  private trimRawPeaksToDuration(raw: number[], duration: number): number[] {
+    const barCount = Math.max(
+      1,
+      Math.floor(duration * WAVEFORM_PIXELS_PER_SECOND / RECORDING_BAR_STEP)
+    );
+    return raw.slice(0, barCount);
+  }
+
+  private updateRecordingPeak(rawPeak: number, elapsedSec: number): void {
+    const barIndex = Math.floor(
+      elapsedSec * WAVEFORM_PIXELS_PER_SECOND / RECORDING_BAR_STEP
+    );
+
+    if (barIndex < 0) {
+      return;
     }
 
-    this.emit({ recordingPeaks: nextPeaks });
+    while (this.recordingPeaksBuffer.length <= barIndex) {
+      this.recordingPeaksBuffer.push(0);
+    }
+    this.recordingPeaksBuffer[barIndex] = Math.max(
+      this.recordingPeaksBuffer[barIndex] ?? 0,
+      rawPeak
+    );
+  }
+
+  private emitRecordingProgress(): void {
+    if (!this.recorder) {
+      return;
+    }
+    const duration = this.recorder.getCurrentDuration();
+    const trimmed = this.trimRawPeaksToDuration(this.recordingPeaksBuffer, duration);
+    const peaks = this.toAbsolutePeaks(trimmed);
+    this.emit({ recordingDuration: duration, recordingPeaks: peaks });
   }
 
   async requestPermission(): Promise<boolean> {
@@ -310,7 +356,7 @@ export class MemoAudioEngine {
       throw new Error(result.message);
     }
 
-    this.sessionPeakMax = 0.001;
+    this.recordingPeaksBuffer = [];
     this.recorder.onAudioReady(
       {
         sampleRate: RECORDING_SAMPLE_RATE,
@@ -323,7 +369,8 @@ export class MemoAudioEngine {
         for (let i = 0; i < channelData.length; i++) {
           max = Math.max(max, Math.abs(channelData[i]));
         }
-        this.appendRecordingPeak(max);
+        const elapsedSec = this.recorder?.getCurrentDuration() ?? 0;
+        this.updateRecordingPeak(max, elapsedSec);
       }
     );
 
@@ -335,9 +382,7 @@ export class MemoAudioEngine {
 
     this.emit({ isRecording: true, recordingDuration: 0, recordingPeaks: [], isPlaying: false });
     this.recordingTimer = setInterval(() => {
-      if (this.recorder) {
-        this.emit({ recordingDuration: this.recorder.getCurrentDuration() });
-      }
+      this.emitRecordingProgress();
     }, 50);
   }
 
@@ -346,12 +391,17 @@ export class MemoAudioEngine {
       throw new Error('No active recording');
     }
 
-    const peaks = [...this.state.recordingPeaks];
     this.clearRecordingTimer();
+    this.emitRecordingProgress();
+    const trimmed = this.trimRawPeaksToDuration(
+      this.recordingPeaksBuffer,
+      this.recorder.getCurrentDuration()
+    );
+    const peaks = this.toAbsolutePeaks(this.downsampleRecordingPeaks(trimmed));
     this.recorder.clearOnAudioReady();
     const result = this.recorder.stop();
     this.recorder = null;
-    this.sessionPeakMax = 0.001;
+    this.recordingPeaksBuffer = [];
 
     if (result.status === 'error') {
       throw new Error(result.message);

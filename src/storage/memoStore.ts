@@ -174,7 +174,7 @@ export async function ensureWaveformPeaks(memo: Memo): Promise<Memo> {
   let changed = false;
 
   for (const layer of memo.layers) {
-    if (layer.duration <= 0 || (layer.waveformPeaks && layer.waveformPeaks.length > 0)) {
+    if (layer.duration <= 0) {
       continue;
     }
 
@@ -184,11 +184,19 @@ export async function ensureWaveformPeaks(memo: Memo): Promise<Memo> {
     }
 
     try {
-      layer.waveformPeaks = await computeWaveformPeaks(
+      const nextPeaks = await computeWaveformPeaks(
         file.uri,
         peakCountForDuration(layer.duration)
       );
-      changed = true;
+      const prevPeaks = layer.waveformPeaks;
+      const peaksChanged =
+        !prevPeaks ||
+        prevPeaks.length !== nextPeaks.length ||
+        prevPeaks.some((peak, index) => peak !== nextPeaks[index]);
+      if (peaksChanged) {
+        layer.waveformPeaks = nextPeaks;
+        changed = true;
+      }
     } catch {
       // Leave peaks unset; UI falls back to placeholder bars.
     }
