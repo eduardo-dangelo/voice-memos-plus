@@ -15,6 +15,13 @@ const PLAYBACK_END_TOLERANCE = 0.05;
 const PLAYBACK_SCHEDULE_LEAD = 0.01;
 const PLAYBACK_UI_UPDATE_MS = 50;
 
+export type LoadedLayer = {
+  id: string;
+  path: string;
+  startTime: number;
+  duration: number;
+};
+
 export type EngineState = {
   memoId: string | null;
   isRecording: boolean;
@@ -46,10 +53,9 @@ export class MemoAudioEngine {
   private listeners = new Set<Listener>();
   private context: AudioContext | null = null;
   private recorder: AudioRecorder | null = null;
-  private source: AudioBufferSourceNode | null = null;
-  private loadedPath: string | null = null;
-  private decodedPath: string | null = null;
-  private decodedBuffer: AudioBuffer | null = null;
+  private sources: AudioBufferSourceNode[] = [];
+  private loadedLayers: LoadedLayer[] = [];
+  private layerBuffers = new Map<string, AudioBuffer>();
   private recordingTimer: ReturnType<typeof setInterval> | null = null;
   private playbackRafId: number | null = null;
   private playbackSessionId = 0;
@@ -106,14 +112,14 @@ export class MemoAudioEngine {
     return this.context;
   }
 
-  private getPlaybackEnd(bufferDuration: number): number {
-    const trimEnd = this.state.trimEnd > 0 ? this.state.trimEnd : bufferDuration;
-    return Math.min(trimEnd, bufferDuration);
+  private getPlaybackEnd(timelineDuration: number): number {
+    const trimEnd = this.state.trimEnd > 0 ? this.state.trimEnd : timelineDuration;
+    return Math.min(trimEnd, timelineDuration);
   }
 
-  private isAtPlaybackEnd(bufferDuration?: number): boolean {
-    const endAt = bufferDuration !== undefined
-      ? this.getPlaybackEnd(bufferDuration)
+  private isAtPlaybackEnd(timelineDuration?: number): boolean {
+    const endAt = timelineDuration !== undefined
+      ? this.getPlaybackEnd(timelineDuration)
       : this.getPlaybackEnd(this.state.duration);
     return this.state.currentTime >= endAt - PLAYBACK_END_TOLERANCE;
   }
@@ -166,26 +172,25 @@ export class MemoAudioEngine {
     this.playbackRafId = requestAnimationFrame(tick);
   }
 
-  private stopActiveSource(): void {
-    if (!this.source) {
-      return;
+  private stopActiveSources(): void {
+    for (const source of this.sources) {
+      source.onPositionChanged = null;
+      source.onEnded = null;
+      try {
+        source.stop();
+      } catch {
+        // Source may already be stopped.
+      }
+      source.disconnect();
     }
-    this.source.onPositionChanged = null;
-    this.source.onEnded = null;
-    try {
-      this.source.stop();
-    } catch {
-      // Source may already be stopped.
-    }
-    this.source.disconnect();
-    this.source = null;
+    this.sources = [];
   }
 
-  private invalidateAndStopSource(): void {
+  private invalidateAndStopSources(): void {
     this.invalidatePlaybackSession();
     this.clearPlaybackTimer();
     this.playbackContextStartWhen = 0;
-    this.stopActiveSource();
+    this.stopActiveSources();
   }
 
   private clearRecordingTimer(): void {
@@ -195,21 +200,17 @@ export class MemoAudioEngine {
     }
   }
 
-  private invalidateDecodedBuffer(): void {
-    this.decodedPath = null;
-    this.decodedBuffer = null;
+  private invalidateLayerBuffers(): void {
+    this.layerBuffers.clear();
   }
 
-  private async getDecodedBuffer(context: AudioContext): Promise<AudioBuffer> {
-    if (!this.loadedPath) {
-      throw new Error('No audio loaded');
+  private async getLayerBuffer(context: AudioContext, layer: LoadedLayer): Promise<AudioBuffer> {
+    const cached = this.layerBuffers.get(layer.path);
+    if (cached) {
+      return cached;
     }
-    if (this.decodedPath === this.loadedPath && this.decodedBuffer) {
-      return this.decodedBuffer;
-    }
-    const buffer = await context.decodeAudioData(this.loadedPath);
-    this.decodedPath = this.loadedPath;
-    this.decodedBuffer = buffer;
+    const buffer = await context.decodeAudioData(layer.path);
+    this.layerBuffers.set(layer.path, buffer);
     return buffer;
   }
 
@@ -217,7 +218,7 @@ export class MemoAudioEngine {
     if (sessionId !== this.activePlaybackSessionId) {
       return;
     }
-    this.invalidateAndStopSource();
+    this.invalidateAndStopSources();
     this.emit({ isPlaying: false, currentTime: endAt });
   }
 
@@ -246,33 +247,33 @@ export class MemoAudioEngine {
   }
 
   private stopPlayback(): void {
-    this.invalidateAndStopSource();
+    this.invalidateAndStopSources();
     this.emit({ isPlaying: false });
   }
 
   async loadMemo(
     memoId: string,
-    filePath: string,
-    _duration: number,
+    layers: LoadedLayer[],
     trimStart: number,
-    trimEnd: number
+    trimEnd: number,
+    timelineDuration: number
   ): Promise<void> {
     this.stopPlayback();
-    if (this.loadedPath !== filePath) {
-      this.invalidateDecodedBuffer();
-    }
-    this.loadedPath = filePath;
 
-    const context = await this.ensureContext();
-    const buffer = await this.getDecodedBuffer(context);
-    const authoritativeDuration = buffer.duration;
+    const nextPaths = layers.map((layer) => layer.path).join('|');
+    const currentPaths = this.loadedLayers.map((layer) => layer.path).join('|');
+    if (nextPaths !== currentPaths) {
+      this.invalidateLayerBuffers();
+    }
+
+    this.loadedLayers = layers;
     const trimEndResolved = trimEnd > 0
-      ? Math.min(trimEnd, authoritativeDuration)
-      : authoritativeDuration;
+      ? Math.min(trimEnd, timelineDuration)
+      : timelineDuration;
 
     this.emit({
       memoId,
-      duration: authoritativeDuration,
+      duration: timelineDuration,
       trimStart,
       trimEnd: trimEndResolved,
       currentTime: trimStart,
@@ -282,8 +283,8 @@ export class MemoAudioEngine {
 
   unload(): void {
     this.stopPlayback();
-    this.loadedPath = null;
-    this.invalidateDecodedBuffer();
+    this.loadedLayers = [];
+    this.invalidateLayerBuffers();
     this.emit({ ...initialState });
   }
 
@@ -366,18 +367,18 @@ export class MemoAudioEngine {
   }
 
   async play(): Promise<void> {
-    if (!this.loadedPath || this.state.isRecording) {
+    if (this.loadedLayers.length === 0 || this.state.isRecording) {
       return;
     }
 
     await this.ensureSession();
     const context = await this.ensureContext();
-    this.invalidateAndStopSource();
+    this.invalidateAndStopSources();
 
-    const buffer = await this.getDecodedBuffer(context);
-    const endAt = this.getPlaybackEnd(buffer.duration);
+    const timelineDuration = this.state.duration;
+    const endAt = this.getPlaybackEnd(timelineDuration);
     let startAt = Math.max(this.state.trimStart, this.state.currentTime);
-    if (this.isAtPlaybackEnd(buffer.duration)) {
+    if (this.isAtPlaybackEnd(timelineDuration)) {
       startAt = this.state.trimStart;
       this.emit({ currentTime: startAt });
     }
@@ -390,20 +391,47 @@ export class MemoAudioEngine {
     this.playbackStartAt = startAt;
     this.playbackEndAt = endAt;
     const sessionId = this.activePlaybackSessionId;
-
-    const source = context.createBufferSource();
-    source.buffer = buffer;
-    source.connect(context.destination);
-    source.onPositionChanged = null;
-    source.onEnded = () => {
-      this.finishPlaybackNaturally(endAt, sessionId);
-    };
-
-    this.source = source;
     const when = context.currentTime + PLAYBACK_SCHEDULE_LEAD;
     this.playbackContextStartWhen = when;
-    source.start(when, startAt);
-    source.stop(when + playDuration);
+
+    let scheduledSources = 0;
+
+    for (const layer of this.loadedLayers) {
+      if (layer.duration <= 0) {
+        continue;
+      }
+
+      const layerEnd = layer.startTime + layer.duration;
+      if (startAt >= layerEnd - PLAYBACK_END_TOLERANCE) {
+        continue;
+      }
+      if (endAt <= layer.startTime) {
+        continue;
+      }
+
+      const buffer = await this.getLayerBuffer(context, layer);
+      const bufferOffset = Math.max(0, startAt - layer.startTime);
+      const delay = Math.max(0, layer.startTime - startAt);
+      const layerPlayStart = Math.max(startAt, layer.startTime);
+      const layerPlayDuration = Math.min(layerEnd - layerPlayStart, endAt - layerPlayStart);
+
+      if (layerPlayDuration <= PLAYBACK_END_TOLERANCE) {
+        continue;
+      }
+
+      const source = context.createBufferSource();
+      source.buffer = buffer;
+      source.connect(context.destination);
+      source.start(when + delay, bufferOffset);
+      source.stop(when + delay + layerPlayDuration);
+      this.sources.push(source);
+      scheduledSources += 1;
+    }
+
+    if (scheduledSources === 0) {
+      this.playbackContextStartWhen = 0;
+      return;
+    }
 
     this.startPlaybackTimer(sessionId, context);
   }
@@ -415,7 +443,7 @@ export class MemoAudioEngine {
     const pausedAt = this.context
       ? this.getElapsedPlaybackTime(this.context)
       : this.state.currentTime;
-    this.invalidateAndStopSource();
+    this.invalidateAndStopSources();
     this.emit({ isPlaying: false, currentTime: pausedAt });
   }
 
@@ -438,7 +466,7 @@ export class MemoAudioEngine {
       Math.min(time, this.state.trimEnd || this.state.duration)
     );
     const wasPlaying = this.state.isPlaying;
-    this.invalidateAndStopSource();
+    this.invalidateAndStopSources();
     this.emit({ currentTime: clamped, isPlaying: false });
     if (wasPlaying) {
       void this.play();

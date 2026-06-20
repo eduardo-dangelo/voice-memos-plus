@@ -1,6 +1,9 @@
 import { Directory, File, Paths } from 'expo-file-system';
 
+import type { LoadedLayer } from '@/src/audio/MemoAudioEngine';
+
 import type { Memo } from './types';
+import { getMemoTimelineDuration, getPlayableLayers } from './types';
 
 export function getMemosRoot(): Directory {
   const root = new Directory(Paths.document, 'memos');
@@ -27,6 +30,38 @@ export function getPrimaryLayerFile(memo: Memo): File {
   return getLayerFile(memo.id, layer?.fileName ?? 'layer-0.m4a');
 }
 
+export function getLayerFileById(memo: Memo, layerId: string): File | null {
+  const layer = memo.layers.find((entry) => entry.id === layerId);
+  if (!layer) {
+    return null;
+  }
+  return getLayerFile(memo.id, layer.fileName);
+}
+
 export function layerFileExists(memo: Memo): boolean {
   return getPrimaryLayerFile(memo).exists;
+}
+
+export function getMemoLayersForPlayback(memo: Memo): LoadedLayer[] {
+  return getPlayableLayers(memo).map((layer) => ({
+    id: layer.id,
+    path: getLayerFile(memo.id, layer.fileName).uri,
+    startTime: layer.startTime,
+    duration: layer.duration,
+  }));
+}
+
+export function getMemoPlaybackTimeline(memo: Memo): {
+  layers: LoadedLayer[];
+  duration: number;
+  trimStart: number;
+  trimEnd: number;
+} {
+  const duration = getMemoTimelineDuration(memo);
+  return {
+    layers: getMemoLayersForPlayback(memo),
+    duration,
+    trimStart: memo.trimStart,
+    trimEnd: memo.trimEnd > 0 ? memo.trimEnd : duration,
+  };
 }

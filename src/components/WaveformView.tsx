@@ -24,19 +24,32 @@ const BAR_WIDTH = WAVEFORM_BAR_WIDTH;
 const BAR_GAP = WAVEFORM_BAR_GAP;
 const BAR_STEP = BAR_WIDTH + BAR_GAP;
 const PIXELS_PER_SECOND = WAVEFORM_PIXELS_PER_SECOND;
-const WAVEFORM_HEIGHT = 240;
+const WAVEFORM_HEIGHT_SINGLE = 240;
+const WAVEFORM_HEIGHT_MULTI = 120;
 const MARKER_ROW_HEIGHT = 24;
-const TRACK_HEIGHT = WAVEFORM_HEIGHT + MARKER_ROW_HEIGHT;
 const MIN_LABEL_SPACING = 48;
 
-type Props = {
+function getTrackHeight(trackCount: number): number {
+  return trackCount > 1 ? WAVEFORM_HEIGHT_MULTI : WAVEFORM_HEIGHT_SINGLE;
+}
+
+export type TrackData = {
+  id: string;
   peaks?: number[];
+  startTime: number;
+  duration: number;
+  isActive: boolean;
+};
+
+type Props = {
+  tracks: TrackData[];
   currentTime: number;
   duration: number;
   isRecording?: boolean;
   isPlaying?: boolean;
   getPlaybackTime?: () => number;
   onSeek: (time: number) => void;
+  onTrackPress: (trackId: string) => void;
   onWidthChange?: (width: number) => void;
 };
 
@@ -53,14 +66,96 @@ function getMarkerInterval(): number {
   return 30;
 }
 
+function getTrackBarCount(trackDuration: number, contentWidth: number): number {
+  if (trackDuration <= 0) {
+    return 0;
+  }
+  const targetWidth = trackDuration * PIXELS_PER_SECOND;
+  return Math.max(1, Math.floor(Math.min(contentWidth, targetWidth) / BAR_STEP));
+}
+
+function TrackWaveformRow({
+  track,
+  contentWidth,
+  sidePadding,
+  trackHeight,
+  onPress,
+}: {
+  track: TrackData;
+  contentWidth: number;
+  sidePadding: number;
+  trackHeight: number;
+  onPress: (locationX: number) => void;
+}) {
+  const barCount = getTrackBarCount(track.duration, contentWidth);
+  const trackOffset = track.startTime * PIXELS_PER_SECOND;
+  const trackWidth = barCount * BAR_STEP;
+
+  const normalizedPeaks = useMemo(() => {
+    const source = getPeaksForMemo(track.peaks, barCount);
+    return barCount > 0 ? resamplePeaks(source, barCount) : [];
+  }, [barCount, track.peaks]);
+
+  return (
+    <Pressable
+      onPress={(event) => onPress(event.nativeEvent.locationX)}
+      style={[
+        styles.trackRow,
+        { height: trackHeight },
+        track.isActive ? styles.trackRowActive : null,
+      ]}>
+      <View
+        style={[
+          styles.waveformBand,
+          { width: sidePadding * 2 + contentWidth, height: trackHeight },
+        ]}>
+        <View
+          pointerEvents="none"
+          style={[styles.centerLine, { left: sidePadding, width: contentWidth }]}
+        />
+        {trackWidth > 0 ? (
+          <View
+            pointerEvents="none"
+            style={[
+              styles.barsRow,
+              {
+                marginLeft: sidePadding + trackOffset,
+                width: trackWidth,
+              },
+            ]}>
+            {normalizedPeaks.map((peak, index) => {
+              const barHeight = Math.max(4, peak * (trackHeight - 16));
+              return (
+                <View
+                  key={index}
+                  style={[
+                    styles.bar,
+                    {
+                      height: barHeight,
+                      backgroundColor: track.isActive
+                        ? VoiceMemosColors.accent
+                        : VoiceMemosColors.waveformBar,
+                    },
+                  ]}
+                />
+              );
+            })}
+          </View>
+        ) : null}
+      </View>
+    </Pressable>
+  );
+}
+
 export function WaveformView({
-  peaks,
+  tracks,
   currentTime,
   duration,
   isRecording = false,
   isPlaying = false,
   getPlaybackTime,
   onSeek,
+  onTrackPress,
   onWidthChange,
 }: Props) {
   const scrollRef = useRef<ScrollView>(null);
@@ -69,6 +164,8 @@ export function WaveformView({
   getPlaybackTimeRef.current = getPlaybackTime;
   const onSeekRef = useRef(onSeek);
   onSeekRef.current = onSeek;
+  const onTrackPressRef = useRef(onTrackPress);
+  onTrackPressRef.current = onTrackPress;
   const [viewportWidth, setViewportWidth] = useState(0);
 
   const targetWidth = duration > 0 ? duration * PIXELS_PER_SECOND : 0;
@@ -82,11 +179,9 @@ export function WaveformView({
     barCount > 0 ? Math.max(viewportWidth, barCount * BAR_STEP) : viewportWidth;
   const sidePadding = viewportWidth / 2;
   const totalContentWidth = viewportWidth + contentWidth;
-
-  const normalizedPeaks = useMemo(() => {
-    const source = getPeaksForMemo(peaks, barCount);
-    return barCount > 0 ? resamplePeaks(source, barCount) : [];
-  }, [barCount, peaks]);
+  const trackHeight = getTrackHeight(Math.max(1, tracks.length));
+  const waveformAreaHeight = Math.max(1, tracks.length) * trackHeight;
+  const containerHeight = waveformAreaHeight + MARKER_ROW_HEIGHT;
 
   const scrollX =
     duration > 0
@@ -111,7 +206,8 @@ export function WaveformView({
     onWidthChange?.(nextWidth);
   };
 
-  const handlePress = (locationX: number) => {
+  const handleTrackPress = (trackId: string, locationX: number) => {
+    onTrackPressRef.current(trackId);
     if (duration <= 0 || contentWidth <= 0) {
       return;
     }
@@ -169,7 +265,7 @@ export function WaveformView({
   }, [isPlaying, duration, contentWidth, viewportWidth, currentTime]);
 
   return (
-    <View onLayout={handleLayout} style={styles.container}>
+    <View onLayout={handleLayout} style={[styles.container, { height: containerHeight }]}>
       <ScrollView
         ref={scrollRef}
         horizontal
@@ -182,35 +278,18 @@ export function WaveformView({
         onScrollBeginDrag={handleScrollBeginDrag}
         onScrollEndDrag={handleScrollEndDrag}
         onMomentumScrollEnd={handleMomentumScrollEnd}
-        style={styles.scrollView}>
-        <Pressable
-          onPress={(event) => handlePress(event.nativeEvent.locationX)}
-          style={[styles.scrollContent, { width: totalContentWidth || viewportWidth }]}>
-          <View style={[styles.waveformBand, { width: totalContentWidth || viewportWidth }]}>
-            <View
-              pointerEvents="none"
-              style={[styles.centerLine, { left: sidePadding, width: contentWidth }]}
+        style={[styles.scrollView, { height: containerHeight }]}>
+        <View style={[styles.scrollContent, { width: totalContentWidth || viewportWidth }]}>
+          {tracks.map((track) => (
+            <TrackWaveformRow
+              key={track.id}
+              contentWidth={contentWidth}
+              sidePadding={sidePadding}
+              track={track}
+              trackHeight={trackHeight}
+              onPress={(locationX) => handleTrackPress(track.id, locationX)}
             />
-            <View
-              pointerEvents="none"
-              style={[styles.barsRow, { marginLeft: sidePadding, width: contentWidth }]}>
-              {normalizedPeaks.map((peak, index) => {
-                const barHeight = Math.max(4, peak * (WAVEFORM_HEIGHT - 16));
-                return (
-                  <View
-                    key={index}
-                    style={[
-                      styles.bar,
-                      {
-                        height: barHeight,
-                        backgroundColor: VoiceMemosColors.waveformBar,
-                      },
-                    ]}
-                  />
-                );
-              })}
-            </View>
-          </View>
+          ))}
           <View
             pointerEvents="none"
             style={[styles.markerBand, { width: totalContentWidth || viewportWidth }]}>
@@ -227,9 +306,9 @@ export function WaveformView({
               );
             })}
           </View>
-        </Pressable>
+        </View>
       </ScrollView>
-      <View pointerEvents="none" style={styles.fixedPlayhead}>
+      <View pointerEvents="none" style={[styles.fixedPlayhead, { height: waveformAreaHeight }]}>
         <View style={styles.playheadCap} />
         <View style={styles.playheadLine} />
         <View style={styles.playheadCap} />
@@ -241,17 +320,22 @@ export function WaveformView({
 const styles = StyleSheet.create({
   container: {
     width: '100%',
-    height: TRACK_HEIGHT,
     position: 'relative',
   },
   scrollView: {
-    height: TRACK_HEIGHT,
+    flexGrow: 0,
   },
   scrollContent: {
-    height: TRACK_HEIGHT,
+    flexGrow: 0,
+  },
+  trackRow: {
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  trackRowActive: {
+    borderColor: VoiceMemosColors.accent,
   },
   waveformBand: {
-    height: WAVEFORM_HEIGHT,
     backgroundColor: VoiceMemosColors.waveformBandBackground,
     position: 'relative',
     justifyContent: 'center',
@@ -277,7 +361,6 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: '50%',
     top: 0,
-    height: WAVEFORM_HEIGHT,
     width: 2,
     marginLeft: -1,
     alignItems: 'center',

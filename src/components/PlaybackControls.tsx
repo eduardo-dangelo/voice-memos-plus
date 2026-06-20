@@ -11,6 +11,8 @@ type Props = {
   onPlayPause: () => void;
   onSkipBack: () => void;
   onSkipForward: () => void;
+  onRecordPress?: () => void;
+  recordDisabled?: boolean;
   compact?: boolean;
   showProgressBar?: boolean;
   showTimeLabels?: boolean;
@@ -23,6 +25,8 @@ export function PlaybackControls({
   onPlayPause,
   onSkipBack,
   onSkipForward,
+  onRecordPress,
+  recordDisabled = false,
   compact = false,
   showProgressBar = true,
   showTimeLabels = true,
@@ -49,6 +53,19 @@ export function PlaybackControls({
               tintColor={VoiceMemosColors.text}
             />
           </Pressable>
+          {onRecordPress ? (
+            <Pressable
+              accessibilityLabel="Record"
+              disabled={recordDisabled}
+              onPress={onRecordPress}
+              style={[
+                styles.recordButton,
+                compact && styles.recordButtonCompact,
+                recordDisabled && styles.recordDisabled,
+              ]}>
+              <View style={[styles.recordDot, compact && styles.recordDotCompact]} />
+            </Pressable>
+          ) : null}
           <Pressable accessibilityLabel="Skip forward 15 seconds" onPress={onSkipForward} style={styles.iconButton}>
             <SymbolView name={{ ios: 'goforward.15' }} size={compact ? 24 : 28} tintColor={VoiceMemosColors.text} />
           </Pressable>
@@ -91,6 +108,33 @@ const styles = StyleSheet.create({
   },
   playButton: {
     padding: 4,
+  },
+  recordButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: VoiceMemosColors.recordRed,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recordButtonCompact: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+  },
+  recordDisabled: {
+    opacity: 0.4,
+  },
+  recordDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#FFFFFF',
+  },
+  recordDotCompact: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
   },
   time: {
     width: 52,

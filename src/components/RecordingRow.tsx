@@ -11,7 +11,7 @@ import {
   getShareableFile,
   updateTitle,
 } from '@/src/storage/memoStore';
-import { getPrimaryLayerFile } from '@/src/storage/paths';
+import { getMemoPlaybackTimeline } from '@/src/storage/paths';
 import type { Memo } from '@/src/storage/types';
 import { hasRecording } from '@/src/storage/types';
 import { formatDate, formatDuration } from '@/src/utils/format';
@@ -47,7 +47,9 @@ export function RecordingRow({
   const engineState = useAudioEngineState();
   const isActive = engineState.memoId === memo.id;
   const duration =
-    isActive && engineState.duration > 0 ? engineState.duration : memo.duration;
+    isActive && engineState.duration > 0
+      ? engineState.duration
+      : memo.duration;
   const playable = hasRecording(memo);
 
   const displayTime = useMemo(() => {
@@ -62,8 +64,9 @@ export function RecordingRow({
       return false;
     }
     if (!isActive) {
-      const file = getPrimaryLayerFile(memo);
-      await engine.loadMemo(memo.id, file.uri, memo.duration, 0, memo.duration);
+      const { layers, duration: timelineDuration, trimStart, trimEnd } =
+        getMemoPlaybackTimeline(memo);
+      await engine.loadMemo(memo.id, layers, trimStart, trimEnd, timelineDuration);
     }
     return true;
   };
@@ -83,7 +86,7 @@ export function RecordingRow({
   };
 
   const handleShare = async () => {
-    const file = getShareableFile(memo);
+    const file = await getShareableFile(memo);
     if (!file.exists) {
       return;
     }

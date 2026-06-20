@@ -124,3 +124,55 @@ export async function spliceRecording(
   const result = await decodeAudioData(outputPath);
   return result.duration;
 }
+
+export type MixLayerInput = {
+  path: string;
+  startTime: number;
+};
+
+export async function mixLayersToFile(
+  layers: MixLayerInput[],
+  timelineDuration: number,
+  outputPath: string
+): Promise<void> {
+  if (layers.length === 0) {
+    throw new Error('No layers to mix');
+  }
+
+  const sampleRate = 44100;
+  const numFrames = Math.max(1, Math.ceil(timelineDuration * sampleRate));
+  const context = new AudioContext({ sampleRate });
+  const master = context.createBuffer(1, numFrames, sampleRate);
+  const masterData = master.getChannelData(0);
+
+  for (const layer of layers) {
+    const buffer = await decodeAudioData(layer.path);
+    const layerData = buffer.getChannelData(0);
+    const startSample = Math.floor(layer.startTime * sampleRate);
+
+    for (let i = 0; i < layerData.length; i += 1) {
+      const targetIndex = startSample + i;
+      if (targetIndex >= numFrames) {
+        break;
+      }
+      const mixed = masterData[targetIndex] + layerData[i];
+      masterData[targetIndex] = Math.max(-1, Math.min(1, mixed));
+    }
+  }
+
+  const tempWav = `${outputPath}.mix.wav`;
+  writeWavFromBuffer(master, tempWav);
+  await context.close();
+
+  const outputFile = new File(outputPath);
+  if (outputFile.exists) {
+    outputFile.delete();
+  }
+
+  await concatAudioFiles([tempWav], outputPath);
+
+  const temp = new File(tempWav);
+  if (temp.exists) {
+    temp.delete();
+  }
+}

@@ -1,7 +1,7 @@
 import { Directory, File, Paths } from 'expo-file-system';
 
 import { computeWaveformPeaks, peakCountForDuration, resolveWaveformPeaks } from '@/src/audio/waveform';
-import { spliceRecording } from '@/src/audio/wavUtils';
+import { mixLayersToFile, spliceRecording } from '@/src/audio/wavUtils';
 import { createDefaultTitle } from '@/src/utils/format';
 import { randomId } from '@/src/utils/id';
 
@@ -13,13 +13,16 @@ import {
   getPrimaryLayerFile,
 } from './paths';
 import type { Layer, Memo } from './types';
+import { getMemoTimelineDuration, normalizeLayers } from './types';
 
-function createLayer(order: number): Layer {
+function createLayer(order: number, startTime = 0): Layer {
   return {
     id: randomId(),
     order,
     fileName: `layer-${order}.m4a`,
     label: `Layer ${order + 1}`,
+    startTime,
+    duration: 0,
   };
 }
 
@@ -28,9 +31,16 @@ function readManifest(file: File): Memo | null {
     return null;
   }
   try {
-    const memo = JSON.parse(file.textSync()) as Memo;
-    if (!memo.trimEnd && memo.duration > 0) {
-      memo.trimEnd = memo.duration;
+    const memo = normalizeLayers(JSON.parse(file.textSync()) as Memo);
+    const previousDuration = memo.duration;
+    const timeline = getMemoTimelineDuration(memo);
+    memo.duration = timeline;
+    syncTrimEndToTimeline(memo, previousDuration, timeline);
+    if (memo.trimEnd === 0 && timeline > 0) {
+      memo.trimEnd = timeline;
+    }
+    if (memo.trimEnd > 0 && memo.trimEnd < timeline) {
+      memo.trimEnd = timeline;
     }
     return memo;
   } catch {
@@ -48,6 +58,46 @@ function writeManifest(memo: Memo): void {
     file.create();
   }
   file.write(JSON.stringify(memo, null, 2));
+}
+
+function syncTrimEndToTimeline(memo: Memo, previousDuration: number, timeline: number): void {
+  if (memo.trimEnd === 0) {
+    memo.trimEnd = timeline;
+    return;
+  }
+
+  if (memo.trimEnd > timeline) {
+    memo.trimEnd = timeline;
+    return;
+  }
+
+  const trimWasAtPreviousEnd = memo.trimEnd >= previousDuration - 0.05;
+  if (timeline > previousDuration && trimWasAtPreviousEnd) {
+    memo.trimEnd = timeline;
+  }
+}
+
+function updateMemoTimeline(memo: Memo): void {
+  const previousDuration = memo.duration;
+  const timeline = getMemoTimelineDuration(memo);
+  memo.duration = timeline;
+  syncTrimEndToTimeline(memo, previousDuration, timeline);
+}
+
+async function refreshLayerFromFile(
+  memo: Memo,
+  layer: Layer,
+  capturedPeaks?: number[]
+): Promise<void> {
+  const file = getLayerFile(memo.id, layer.fileName);
+  const { decodeAudioData } = await import('react-native-audio-api');
+  const buffer = await decodeAudioData(file.uri);
+  layer.duration = buffer.duration;
+  layer.waveformPeaks = await resolveWaveformPeaks(
+    file.uri,
+    buffer.duration,
+    capturedPeaks
+  );
 }
 
 export async function listMemos(): Promise<Memo[]> {
@@ -121,25 +171,32 @@ export async function updateTrim(
 }
 
 export async function ensureWaveformPeaks(memo: Memo): Promise<Memo> {
-  const layer = memo.layers[0];
-  if (!layer || layer.waveformPeaks && layer.waveformPeaks.length > 0) {
-    return memo;
+  let changed = false;
+
+  for (const layer of memo.layers) {
+    if (layer.duration <= 0 || (layer.waveformPeaks && layer.waveformPeaks.length > 0)) {
+      continue;
+    }
+
+    const file = getLayerFile(memo.id, layer.fileName);
+    if (!file.exists) {
+      continue;
+    }
+
+    try {
+      layer.waveformPeaks = await computeWaveformPeaks(
+        file.uri,
+        peakCountForDuration(layer.duration)
+      );
+      changed = true;
+    } catch {
+      // Leave peaks unset; UI falls back to placeholder bars.
+    }
   }
 
-  const file = getPrimaryLayerFile(memo);
-  if (!file.exists || memo.duration <= 0) {
-    return memo;
-  }
-
-  try {
-    layer.waveformPeaks = await computeWaveformPeaks(
-      file.uri,
-      peakCountForDuration(memo.duration)
-    );
+  if (changed) {
     memo.updatedAt = new Date().toISOString();
     writeManifest(memo);
-  } catch {
-    // Leave peaks unset; UI falls back to placeholder bars.
   }
 
   return memo;
@@ -158,6 +215,7 @@ export async function saveRecording(
 
   const layer = memo.layers[0] ?? createLayer(0);
   memo.layers = [layer];
+  layer.startTime = 0;
   const dest = getLayerFile(memoId, layer.fileName);
   const source = new File(sourcePath);
 
@@ -166,18 +224,10 @@ export async function saveRecording(
   }
   source.copy(dest);
 
-  const { decodeAudioData } = await import('react-native-audio-api');
-  const buffer = await decodeAudioData(dest.uri);
-  memo.duration = buffer.duration;
+  await refreshLayerFromFile(memo, layer, capturedPeaks);
   memo.trimStart = 0;
-  memo.trimEnd = buffer.duration;
+  updateMemoTimeline(memo);
   memo.updatedAt = new Date().toISOString();
-
-  memo.layers[0].waveformPeaks = await resolveWaveformPeaks(
-    dest.uri,
-    buffer.duration,
-    capturedPeaks
-  );
 
   writeManifest(memo);
   return memo;
@@ -185,6 +235,7 @@ export async function saveRecording(
 
 export async function replaceLayerFile(
   memoId: string,
+  layerId: string,
   sourcePath: string,
   capturedPeaks?: number[]
 ): Promise<Memo> {
@@ -193,7 +244,12 @@ export async function replaceLayerFile(
     throw new Error('Memo not found');
   }
 
-  const dest = getPrimaryLayerFile(memo);
+  const layer = memo.layers.find((entry) => entry.id === layerId);
+  if (!layer) {
+    throw new Error('Layer not found');
+  }
+
+  const dest = getLayerFile(memoId, layer.fileName);
   const source = new File(sourcePath);
 
   if (dest.exists) {
@@ -201,21 +257,71 @@ export async function replaceLayerFile(
   }
   source.copy(dest);
 
-  const { decodeAudioData } = await import('react-native-audio-api');
-  const buffer = await decodeAudioData(dest.uri);
-  memo.duration = buffer.duration;
-  memo.trimStart = 0;
-  memo.trimEnd = buffer.duration;
+  await refreshLayerFromFile(memo, layer, capturedPeaks);
+  updateMemoTimeline(memo);
   memo.updatedAt = new Date().toISOString();
-
-  memo.layers[0].waveformPeaks = await resolveWaveformPeaks(
-    dest.uri,
-    buffer.duration,
-    capturedPeaks
-  );
 
   writeManifest(memo);
   return memo;
+}
+
+export async function addStackedLayer(
+  memoId: string,
+  startTime: number,
+  sourcePath: string,
+  capturedPeaks?: number[]
+): Promise<Memo> {
+  const memo = await getMemo(memoId);
+  if (!memo) {
+    throw new Error('Memo not found');
+  }
+
+  const order = memo.layers.length;
+  const layer = createLayer(order, startTime);
+  const dest = getLayerFile(memoId, layer.fileName);
+  const source = new File(sourcePath);
+
+  if (dest.exists) {
+    dest.delete();
+  }
+  source.copy(dest);
+
+  await refreshLayerFromFile(memo, layer, capturedPeaks);
+  memo.layers.push(layer);
+  updateMemoTimeline(memo);
+  memo.updatedAt = new Date().toISOString();
+  writeManifest(memo);
+  return memo;
+}
+
+export async function replaceLayerSegment(
+  memoId: string,
+  layerId: string,
+  trimStart: number,
+  trimEnd: number,
+  replacementPath: string,
+  capturedPeaks?: number[]
+): Promise<Memo> {
+  const memo = await getMemo(memoId);
+  if (!memo) {
+    throw new Error('Memo not found');
+  }
+
+  const layer = memo.layers.find((entry) => entry.id === layerId);
+  if (!layer) {
+    throw new Error('Layer not found');
+  }
+
+  const original = getLayerFile(memoId, layer.fileName);
+  const output = new File(Paths.cache, `splice-${memoId}-${layerId}.m4a`);
+
+  if (output.exists) {
+    output.delete();
+  }
+
+  await spliceRecording(original.uri, trimStart, trimEnd, replacementPath, output.uri);
+  await replaceLayerFile(memoId, layerId, output.uri, capturedPeaks);
+  return (await getMemo(memoId))!;
 }
 
 export async function deleteMemo(memoId: string): Promise<void> {
@@ -254,27 +360,41 @@ export async function duplicateMemo(memoId: string): Promise<Memo> {
 
 export async function replaceRecordingSegment(
   memoId: string,
+  layerId: string,
   trimStart: number,
   trimEnd: number,
   replacementPath: string,
   capturedPeaks?: number[]
 ): Promise<Memo> {
-  const memo = await getMemo(memoId);
-  if (!memo) {
-    throw new Error('Memo not found');
+  return replaceLayerSegment(
+    memoId,
+    layerId,
+    trimStart,
+    trimEnd,
+    replacementPath,
+    capturedPeaks
+  );
+}
+
+export async function getShareableFile(memo: Memo): Promise<File> {
+  const playableLayers = memo.layers.filter((layer) => layer.duration > 0);
+  if (playableLayers.length <= 1) {
+    return getPrimaryLayerFile(memo);
   }
 
-  const original = getPrimaryLayerFile(memo);
-  const output = new File(Paths.cache, `splice-${memoId}.m4a`);
-
+  const output = new File(Paths.cache, `mix-${memo.id}.m4a`);
   if (output.exists) {
     output.delete();
   }
 
-  await spliceRecording(original.uri, trimStart, trimEnd, replacementPath, output.uri);
-  return replaceLayerFile(memoId, output.uri, capturedPeaks);
-}
+  await mixLayersToFile(
+    playableLayers.map((layer) => ({
+      path: getLayerFile(memo.id, layer.fileName).uri,
+      startTime: layer.startTime,
+    })),
+    getMemoTimelineDuration(memo),
+    output.uri
+  );
 
-export function getShareableFile(memo: Memo): File {
-  return getPrimaryLayerFile(memo);
+  return output;
 }
