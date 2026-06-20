@@ -24,14 +24,8 @@ const BAR_WIDTH = WAVEFORM_BAR_WIDTH;
 const BAR_GAP = WAVEFORM_BAR_GAP;
 const BAR_STEP = BAR_WIDTH + BAR_GAP;
 const PIXELS_PER_SECOND = WAVEFORM_PIXELS_PER_SECOND;
-const WAVEFORM_HEIGHT_SINGLE = 240;
-const WAVEFORM_HEIGHT_MULTI = 120;
 const MARKER_ROW_HEIGHT = 24;
 const MIN_LABEL_SPACING = 48;
-
-function getTrackHeight(trackCount: number): number {
-  return trackCount > 1 ? WAVEFORM_HEIGHT_MULTI : WAVEFORM_HEIGHT_SINGLE;
-}
 
 export type TrackData = {
   id: string;
@@ -74,14 +68,54 @@ function getTrackBarCount(trackDuration: number, contentWidth: number): number {
   return Math.max(1, Math.floor(Math.min(contentWidth, targetWidth) / BAR_STEP));
 }
 
+function TimelineDimRegions({
+  bandWidth,
+  contentWidth,
+  height,
+  sidePadding,
+}: {
+  bandWidth: number;
+  contentWidth: number;
+  height: number | `${number}%`;
+  sidePadding: number;
+}) {
+  const rightDimLeft = sidePadding + contentWidth;
+  const rightDimWidth = Math.max(0, bandWidth - rightDimLeft);
+
+  return (
+    <>
+      {sidePadding > 0 ? (
+        <View
+          pointerEvents="none"
+          style={[
+            styles.dimRegion,
+            { left: 0, top: 0, width: sidePadding, height },
+          ]}
+        />
+      ) : null}
+      {rightDimWidth > 0 ? (
+        <View
+          pointerEvents="none"
+          style={[
+            styles.dimRegion,
+            { left: rightDimLeft, top: 0, width: rightDimWidth, height },
+          ]}
+        />
+      ) : null}
+    </>
+  );
+}
+
 function TrackWaveformRow({
   track,
+  bandWidth,
   contentWidth,
   sidePadding,
   trackHeight,
   onPress,
 }: {
   track: TrackData;
+  bandWidth: number;
   contentWidth: number;
   sidePadding: number;
   trackHeight: number;
@@ -99,16 +133,18 @@ function TrackWaveformRow({
   return (
     <Pressable
       onPress={(event) => onPress(event.nativeEvent.locationX)}
-      style={[
-        styles.trackRow,
-        { height: trackHeight },
-        track.isActive ? styles.trackRowActive : null,
-      ]}>
+      style={[styles.trackRow, { height: trackHeight }]}>
       <View
         style={[
           styles.waveformBand,
-          { width: sidePadding * 2 + contentWidth, height: trackHeight },
+          { width: bandWidth, height: trackHeight },
         ]}>
+        <TimelineDimRegions
+          bandWidth={bandWidth}
+          contentWidth={contentWidth}
+          height={trackHeight}
+          sidePadding={sidePadding}
+        />
         <View
           pointerEvents="none"
           style={[styles.centerLine, { left: sidePadding, width: contentWidth }]}
@@ -167,6 +203,7 @@ export function WaveformView({
   const onTrackPressRef = useRef(onTrackPress);
   onTrackPressRef.current = onTrackPress;
   const [viewportWidth, setViewportWidth] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(0);
 
   const targetWidth = duration > 0 ? duration * PIXELS_PER_SECOND : 0;
   const barCount =
@@ -179,9 +216,12 @@ export function WaveformView({
     barCount > 0 ? Math.max(viewportWidth, barCount * BAR_STEP) : viewportWidth;
   const sidePadding = viewportWidth / 2;
   const totalContentWidth = viewportWidth + contentWidth;
-  const trackHeight = getTrackHeight(Math.max(1, tracks.length));
-  const waveformAreaHeight = Math.max(1, tracks.length) * trackHeight;
-  const containerHeight = waveformAreaHeight + MARKER_ROW_HEIGHT;
+  const bandWidth = sidePadding * 2 + contentWidth;
+  const waveformAreaHeight = Math.max(
+    1,
+    viewportHeight > 0 ? viewportHeight - MARKER_ROW_HEIGHT : 1
+  );
+  const trackHeight = waveformAreaHeight / Math.max(1, tracks.length);
 
   const scrollX =
     duration > 0
@@ -201,9 +241,10 @@ export function WaveformView({
   }, [duration]);
 
   const handleLayout = (event: LayoutChangeEvent) => {
-    const nextWidth = event.nativeEvent.layout.width;
-    setViewportWidth(nextWidth);
-    onWidthChange?.(nextWidth);
+    const { width, height } = event.nativeEvent.layout;
+    setViewportWidth(width);
+    setViewportHeight(height);
+    onWidthChange?.(width);
   };
 
   const handleTrackPress = (trackId: string, locationX: number) => {
@@ -265,7 +306,7 @@ export function WaveformView({
   }, [isPlaying, duration, contentWidth, viewportWidth, currentTime]);
 
   return (
-    <View onLayout={handleLayout} style={[styles.container, { height: containerHeight }]}>
+    <View onLayout={handleLayout} style={styles.container}>
       <ScrollView
         ref={scrollRef}
         horizontal
@@ -278,11 +319,12 @@ export function WaveformView({
         onScrollBeginDrag={handleScrollBeginDrag}
         onScrollEndDrag={handleScrollEndDrag}
         onMomentumScrollEnd={handleMomentumScrollEnd}
-        style={[styles.scrollView, { height: containerHeight }]}>
+        style={styles.scrollView}>
         <View style={[styles.scrollContent, { width: totalContentWidth || viewportWidth }]}>
           {tracks.map((track) => (
             <TrackWaveformRow
               key={track.id}
+              bandWidth={bandWidth}
               contentWidth={contentWidth}
               sidePadding={sidePadding}
               track={track}
@@ -292,7 +334,7 @@ export function WaveformView({
           ))}
           <View
             pointerEvents="none"
-            style={[styles.markerBand, { width: totalContentWidth || viewportWidth }]}>
+            style={[styles.markerBand, { width: bandWidth }]}>
             {markerSeconds.map((second) => {
               const x = sidePadding + second * PIXELS_PER_SECOND;
               const showLabel = second % markerInterval === 0;
@@ -319,26 +361,27 @@ export function WaveformView({
 
 const styles = StyleSheet.create({
   container: {
+    flex: 1,
     width: '100%',
     position: 'relative',
   },
   scrollView: {
-    flexGrow: 0,
+    flex: 1,
   },
   scrollContent: {
-    flexGrow: 0,
+    flexGrow: 1,
   },
   trackRow: {
-    borderWidth: 2,
-    borderColor: 'transparent',
-  },
-  trackRowActive: {
-    borderColor: VoiceMemosColors.accent,
+    overflow: 'hidden',
   },
   waveformBand: {
     backgroundColor: VoiceMemosColors.waveformBandBackground,
     position: 'relative',
     justifyContent: 'center',
+  },
+  dimRegion: {
+    position: 'absolute',
+    backgroundColor: VoiceMemosColors.waveformDimBackground,
   },
   centerLine: {
     position: 'absolute',

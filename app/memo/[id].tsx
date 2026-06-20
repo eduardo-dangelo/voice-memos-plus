@@ -8,7 +8,6 @@ import {
   Alert,
   Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -326,12 +325,7 @@ export default function MemoEditorScreen() {
           />
         </View>
 
-        <ScrollView
-          bounces={false}
-          nestedScrollEnabled
-          contentContainerStyle={styles.tracksScrollContent}
-          showsVerticalScrollIndicator={false}
-          style={styles.tracksScroll}>
+        <View style={styles.tracksArea}>
           <WaveformView
             currentTime={waveformCurrentTime}
             duration={waveformDuration}
@@ -346,7 +340,7 @@ export default function MemoEditorScreen() {
             }}
             onTrackPress={setActiveLayerId}
           />
-        </ScrollView>
+        </View>
 
         <View style={styles.footer}>
           <View style={styles.timeDisplay}>
@@ -416,12 +410,9 @@ const styles = StyleSheet.create({
     color: VoiceMemosColors.text,
     padding: 0,
   },
-  tracksScroll: {
+  tracksArea: {
     flex: 1,
     marginHorizontal: -20,
-  },
-  tracksScrollContent: {
-    flexGrow: 1,
   },
   timeDisplay: {
     alignItems: 'center',
