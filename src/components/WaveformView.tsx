@@ -26,7 +26,25 @@ const BAR_GAP = WAVEFORM_BAR_GAP;
 const BAR_STEP = BAR_WIDTH + BAR_GAP;
 const PIXELS_PER_SECOND = WAVEFORM_PIXELS_PER_SECOND;
 const MARKER_ROW_HEIGHT = 24;
+const PLAYHEAD_CAP_SIZE = 6;
 const MIN_LABEL_SPACING = 48;
+const TIMELINE_HEADROOM_SECONDS = 30;
+const LAYOUT_DURATION_STEP_SECONDS = 30;
+
+function getLayoutDuration(
+  duration: number,
+  currentTime: number,
+  viewportWidth: number,
+  isRecording: boolean
+): number {
+  if (!isRecording) {
+    return duration;
+  }
+  const viewportSeconds = viewportWidth > 0 ? viewportWidth / PIXELS_PER_SECOND : 0;
+  const headroom = Math.max(TIMELINE_HEADROOM_SECONDS, viewportSeconds);
+  const raw = currentTime + headroom;
+  return Math.max(duration, Math.ceil(raw / LAYOUT_DURATION_STEP_SECONDS) * LAYOUT_DURATION_STEP_SECONDS);
+}
 
 export type TrackData = {
   id: string;
@@ -228,7 +246,13 @@ export function WaveformView({
   const [viewportWidth, setViewportWidth] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
 
-  const targetWidth = duration > 0 ? duration * PIXELS_PER_SECOND : 0;
+  const layoutDuration = getLayoutDuration(
+    duration,
+    currentTime,
+    viewportWidth,
+    isRecording
+  );
+  const targetWidth = layoutDuration > 0 ? layoutDuration * PIXELS_PER_SECOND : 0;
   const barCount =
     targetWidth > 0
       ? Math.max(1, Math.floor(targetWidth / BAR_STEP))
@@ -251,15 +275,15 @@ export function WaveformView({
 
   const markerInterval = getMarkerInterval();
   const markerSeconds = useMemo(() => {
-    if (duration <= 0) {
+    if (layoutDuration <= 0) {
       return [];
     }
     const ticks: number[] = [];
-    for (let second = 0; second <= Math.ceil(duration); second += 1) {
+    for (let second = 0; second <= Math.ceil(layoutDuration); second += 1) {
       ticks.push(second);
     }
     return ticks;
-  }, [duration]);
+  }, [layoutDuration]);
 
   const handleLayout = (event: LayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout;
@@ -390,9 +414,9 @@ export function WaveformView({
         </View>
       </ScrollView>
       <View pointerEvents="none" style={[styles.fixedPlayhead, { height: waveformAreaHeight }]}>
-        <View style={styles.playheadCap} />
+        <View style={styles.playheadCapTop} />
         <View style={styles.playheadLine} />
-        <View style={styles.playheadCap} />
+        <View style={styles.playheadCapBottom} />
       </View>
     </View>
   );
@@ -403,6 +427,7 @@ const styles = StyleSheet.create({
     flex: 1,
     width: '100%',
     position: 'relative',
+    overflow: 'visible',
   },
   scrollView: {
     flex: 1,
@@ -447,13 +472,22 @@ const styles = StyleSheet.create({
     marginLeft: -1,
     alignItems: 'center',
     justifyContent: 'space-between',
+    overflow: 'visible',
     zIndex: 10,
   },
-  playheadCap: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+  playheadCapTop: {
+    width: PLAYHEAD_CAP_SIZE,
+    height: PLAYHEAD_CAP_SIZE,
+    borderRadius: PLAYHEAD_CAP_SIZE / 2,
     backgroundColor: VoiceMemosColors.accent,
+    marginTop: -PLAYHEAD_CAP_SIZE / 2,
+  },
+  playheadCapBottom: {
+    width: PLAYHEAD_CAP_SIZE,
+    height: PLAYHEAD_CAP_SIZE,
+    borderRadius: PLAYHEAD_CAP_SIZE / 2,
+    backgroundColor: VoiceMemosColors.accent,
+    marginBottom: -PLAYHEAD_CAP_SIZE / 2,
   },
   playheadLine: {
     flex: 1,
