@@ -90,3 +90,18 @@ export function getPeaksForMemo(memoPeaks: number[] | undefined, fallbackCount =
   }
   return Array.from({ length: fallbackCount }, () => 0.05);
 }
+
+export function slicePeaksForTrim(
+  peaks: number[] | undefined,
+  duration: number,
+  trimIn: number,
+  trimOut: number
+): number[] | undefined {
+  if (!peaks || peaks.length === 0 || duration <= 0) {
+    return peaks;
+  }
+
+  const startIndex = Math.floor((trimIn / duration) * peaks.length);
+  const endIndex = Math.max(startIndex + 1, Math.ceil((trimOut / duration) * peaks.length));
+  return peaks.slice(startIndex, endIndex);
+}

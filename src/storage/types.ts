@@ -1,3 +1,11 @@
+import {
+  createDefaultLayerEffects,
+  normalizeLayerEffects,
+  type LayerEffects,
+} from '@/src/audio/layerEffects';
+
+export type { LayerEffects } from '@/src/audio/layerEffects';
+
 export type Layer = {
   id: string;
   order: number;
@@ -6,6 +14,7 @@ export type Layer = {
   startTime: number;
   duration: number;
   waveformPeaks?: number[];
+  effects?: LayerEffects;
 };
 
 export type Memo = {
@@ -19,8 +28,27 @@ export type Memo = {
   layers: Layer[];
 };
 
+export function getLayerSourceDuration(layer: Layer): number {
+  return layer.duration;
+}
+
+export function getLayerActiveStartTime(layer: Layer): number {
+  const effects = getLayerEffects(layer);
+  return layer.startTime + effects.trimIn;
+}
+
+export function getLayerActiveEndTime(layer: Layer): number {
+  const effects = getLayerEffects(layer);
+  return layer.startTime + effects.trimOut;
+}
+
+export function getLayerActiveDuration(layer: Layer): number {
+  const effects = getLayerEffects(layer);
+  return Math.max(0, effects.trimOut - effects.trimIn);
+}
+
 export function getLayerEndTime(layer: Layer): number {
-  return layer.startTime + layer.duration;
+  return getLayerActiveEndTime(layer);
 }
 
 export function getMemoTimelineDuration(memo: Memo): number {
@@ -38,8 +66,16 @@ export function normalizeLayers(memo: Memo): Memo {
     if (layer.duration === undefined) {
       layer.duration = 0;
     }
+    layer.effects = normalizeLayerEffects(layer);
+    if (layer.duration > 0 && layer.effects.trimOut <= 0) {
+      layer.effects.trimOut = layer.duration;
+    }
   }
   return memo;
+}
+
+export function getLayerEffects(layer: Layer): LayerEffects {
+  return layer.effects ?? createDefaultLayerEffects(layer.duration);
 }
 
 export function getEffectiveDuration(memo: Memo): number {

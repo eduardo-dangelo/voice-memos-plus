@@ -1,6 +1,7 @@
 import { Directory, File, Paths } from 'expo-file-system';
 
 import type { LoadedLayer } from '@/src/audio/MemoAudioEngine';
+import { getLayerEffects } from '@/src/storage/types';
 
 import type { Memo } from './types';
 import { getMemoTimelineDuration, getPlayableLayers } from './types';
@@ -48,6 +49,7 @@ export function getMemoLayersForPlayback(memo: Memo): LoadedLayer[] {
     path: getLayerFile(memo.id, layer.fileName).uri,
     startTime: layer.startTime,
     duration: layer.duration,
+    effects: getLayerEffects(layer),
   }));
 }
 

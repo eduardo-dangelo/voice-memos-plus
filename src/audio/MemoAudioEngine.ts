@@ -2,6 +2,7 @@ import {
   AudioContext,
   AudioManager,
   AudioRecorder,
+  decodeAudioData,
   FileDirectory,
   FileFormat,
   type AudioBuffer,
@@ -14,6 +15,14 @@ import {
   WAVEFORM_BAR_WIDTH,
   WAVEFORM_PIXELS_PER_SECOND,
 } from '@/src/audio/waveform';
+import {
+  applyLayerEffects,
+  buildLayerEffectGraph,
+  connectEffectOutputs,
+  connectSourceToChain,
+  type LayerEffectNodes,
+} from '@/src/audio/layerEffectChain';
+import { normalizeLayerEffects, mergeLayerEffects, hasFullEffectChain, dbToLinear, type LayerEffects } from '@/src/audio/layerEffects';
 
 const MAX_RECORDING_PEAKS = 150;
 const RECORDING_BAR_STEP = WAVEFORM_BAR_WIDTH + WAVEFORM_BAR_GAP;
@@ -28,6 +37,12 @@ export type LoadedLayer = {
   path: string;
   startTime: number;
   duration: number;
+  effects: LayerEffects;
+};
+
+type ActiveLayerPlayback = {
+  layerId: string;
+  nodes: LayerEffectNodes;
 };
 
 export type EngineState = {
@@ -73,6 +88,7 @@ export class MemoAudioEngine {
   private playbackContextStartWhen = 0;
   private sessionConfigured = false;
   private recordingPeaksBuffer: number[] = [];
+  private activeLayerPlayback = new Map<string, ActiveLayerPlayback>();
 
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener);
@@ -196,6 +212,7 @@ export class MemoAudioEngine {
       source.disconnect();
     }
     this.sources = [];
+    this.activeLayerPlayback.clear();
   }
 
   private invalidateAndStopSources(): void {
@@ -221,7 +238,7 @@ export class MemoAudioEngine {
     if (cached) {
       return cached;
     }
-    const buffer = await context.decodeAudioData(layer.path);
+    const buffer = await decodeAudioData(layer.path);
     this.layerBuffers.set(layer.path, buffer);
     return buffer;
   }
@@ -305,12 +322,7 @@ export class MemoAudioEngine {
     timelineDuration: number
   ): Promise<void> {
     this.stopPlayback();
-
-    const nextPaths = layers.map((layer) => layer.path).join('|');
-    const currentPaths = this.loadedLayers.map((layer) => layer.path).join('|');
-    if (nextPaths !== currentPaths) {
-      this.invalidateLayerBuffers();
-    }
+    this.invalidateLayerBuffers();
 
     this.loadedLayers = layers;
     const trimEndResolved = trimEnd > 0
@@ -325,6 +337,25 @@ export class MemoAudioEngine {
       currentTime: trimStart,
       isPlaying: false,
     });
+  }
+
+  updateLayerEffects(layerId: string, partial: Partial<LayerEffects> & {
+    reverb?: Partial<LayerEffects['reverb']>;
+    delay?: Partial<LayerEffects['delay']>;
+    eq?: Partial<LayerEffects['eq']>;
+  }): void {
+    const layer = this.loadedLayers.find((entry) => entry.id === layerId);
+    if (!layer) {
+      return;
+    }
+
+    const current = normalizeLayerEffects({ duration: layer.duration, effects: layer.effects });
+    layer.effects = mergeLayerEffects(current, partial, layer.duration);
+
+    const active = this.activeLayerPlayback.get(layerId);
+    if (active && this.context) {
+      applyLayerEffects(active.nodes, layer.effects, this.context);
+    }
   }
 
   unload(): void {
@@ -421,69 +452,105 @@ export class MemoAudioEngine {
       return;
     }
 
-    await this.ensureSession();
-    const context = await this.ensureContext();
-    this.invalidateAndStopSources();
+    try {
+      await this.ensureSession();
+      const context = await this.ensureContext();
+      this.invalidateAndStopSources();
 
-    const timelineDuration = this.state.duration;
-    const endAt = this.getPlaybackEnd(timelineDuration);
-    let startAt = Math.max(this.state.trimStart, this.state.currentTime);
-    if (this.isAtPlaybackEnd(timelineDuration)) {
-      startAt = this.state.trimStart;
-      this.emit({ currentTime: startAt });
-    }
-
-    const playDuration = endAt - startAt;
-    if (playDuration <= PLAYBACK_END_TOLERANCE) {
-      return;
-    }
-
-    this.playbackStartAt = startAt;
-    this.playbackEndAt = endAt;
-    const sessionId = this.activePlaybackSessionId;
-    const when = context.currentTime + PLAYBACK_SCHEDULE_LEAD;
-    this.playbackContextStartWhen = when;
-
-    let scheduledSources = 0;
-
-    for (const layer of this.loadedLayers) {
-      if (layer.duration <= 0) {
-        continue;
+      const timelineDuration = this.state.duration;
+      const endAt = this.getPlaybackEnd(timelineDuration);
+      let startAt = Math.max(this.state.trimStart, this.state.currentTime);
+      if (this.isAtPlaybackEnd(timelineDuration)) {
+        startAt = this.state.trimStart;
+        this.emit({ currentTime: startAt });
       }
 
-      const layerEnd = layer.startTime + layer.duration;
-      if (startAt >= layerEnd - PLAYBACK_END_TOLERANCE) {
-        continue;
-      }
-      if (endAt <= layer.startTime) {
-        continue;
+      const playDuration = endAt - startAt;
+      if (playDuration <= PLAYBACK_END_TOLERANCE) {
+        return;
       }
 
-      const buffer = await this.getLayerBuffer(context, layer);
-      const bufferOffset = Math.max(0, startAt - layer.startTime);
-      const delay = Math.max(0, layer.startTime - startAt);
-      const layerPlayStart = Math.max(startAt, layer.startTime);
-      const layerPlayDuration = Math.min(layerEnd - layerPlayStart, endAt - layerPlayStart);
+      this.playbackStartAt = startAt;
+      this.playbackEndAt = endAt;
+      const sessionId = this.activePlaybackSessionId;
+      const when = context.currentTime + PLAYBACK_SCHEDULE_LEAD;
+      this.playbackContextStartWhen = when;
 
-      if (layerPlayDuration <= PLAYBACK_END_TOLERANCE) {
-        continue;
+      let scheduledSources = 0;
+
+      for (const layer of this.loadedLayers) {
+        if (layer.duration <= 0) {
+          continue;
+        }
+
+        const buffer = await this.getLayerBuffer(context, layer);
+        const effects = normalizeLayerEffects({ duration: layer.duration, effects: layer.effects });
+        const trimOut = Math.min(effects.trimOut, buffer.duration);
+        const trimIn = Math.min(effects.trimIn, Math.max(0, trimOut - PLAYBACK_END_TOLERANCE));
+        const playbackEffects: LayerEffects = { ...effects, trimIn, trimOut };
+        const activeStart = layer.startTime + trimIn;
+        const activeEnd = layer.startTime + trimOut;
+        if (startAt >= activeEnd - PLAYBACK_END_TOLERANCE) {
+          continue;
+        }
+        if (endAt <= activeStart) {
+          continue;
+        }
+
+        const relativeStart = Math.max(0, startAt - activeStart);
+        const bufferOffset = trimIn + relativeStart;
+        const delay = Math.max(0, activeStart - startAt);
+        const layerPlayStart = Math.max(startAt, activeStart);
+        const layerPlayDuration = Math.min(activeEnd - layerPlayStart, endAt - layerPlayStart);
+
+        if (layerPlayDuration <= PLAYBACK_END_TOLERANCE) {
+          continue;
+        }
+
+        const maxBufferOffset = trimOut - PLAYBACK_END_TOLERANCE;
+        if (bufferOffset >= maxBufferOffset) {
+          continue;
+        }
+
+        const source = context.createBufferSource();
+        source.buffer = buffer;
+
+        if (hasFullEffectChain(playbackEffects)) {
+          const nodes = buildLayerEffectGraph(context, playbackEffects);
+          connectSourceToChain(source, nodes);
+          connectEffectOutputs(nodes, context.destination);
+          this.activeLayerPlayback.set(layer.id, { layerId: layer.id, nodes });
+        } else if (playbackEffects.volumeDb !== 0) {
+          const gain = context.createGain();
+          gain.gain.setValueAtTime(dbToLinear(playbackEffects.volumeDb), context.currentTime);
+          source.connect(gain);
+          gain.connect(context.destination);
+        } else {
+          source.connect(context.destination);
+        }
+
+        const layerPlayLength = Math.min(
+          layerPlayDuration,
+          trimOut - bufferOffset
+        );
+
+        source.start(when + delay, bufferOffset);
+        source.stop(when + delay + layerPlayLength);
+        this.sources.push(source);
+        scheduledSources += 1;
       }
 
-      const source = context.createBufferSource();
-      source.buffer = buffer;
-      source.connect(context.destination);
-      source.start(when + delay, bufferOffset);
-      source.stop(when + delay + layerPlayDuration);
-      this.sources.push(source);
-      scheduledSources += 1;
+      if (scheduledSources === 0) {
+        this.playbackContextStartWhen = 0;
+        return;
+      }
+
+      this.startPlaybackTimer(sessionId, context);
+    } catch (error) {
+      this.invalidateAndStopSources();
+      this.emit({ isPlaying: false });
+      throw error;
     }
-
-    if (scheduledSources === 0) {
-      this.playbackContextStartWhen = 0;
-      return;
-    }
-
-    this.startPlaybackTimer(sessionId, context);
   }
 
   pause(): void {

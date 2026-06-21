@@ -75,7 +75,14 @@ export function RecordingRow({
     if (!(await ensureLoaded())) {
       return;
     }
-    await engine.togglePlayback();
+    try {
+      await engine.togglePlayback();
+    } catch (error) {
+      Alert.alert(
+        'Playback failed',
+        error instanceof Error ? error.message : 'Unknown error'
+      );
+    }
   };
 
   const handleSkip = async (seconds: number) => {

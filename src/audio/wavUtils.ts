@@ -1,26 +1,47 @@
-import { File } from 'expo-file-system';
+import { File, Paths } from 'expo-file-system';
 import {
-  AudioContext,
   AudioBuffer,
+  AudioContext,
   concatAudioFiles,
   decodeAudioData,
 } from 'react-native-audio-api';
 
-function writeWavFromBuffer(buffer: AudioBuffer, outputPath: string): void {
-  const numChannels = buffer.numberOfChannels;
+import { randomId } from '@/src/utils/id';
+
+function getTrimSampleRange(
+  buffer: AudioBuffer,
+  startSec: number,
+  endSec: number
+): { startSample: number; length: number; sampleRate: number } {
   const sampleRate = buffer.sampleRate;
-  const numFrames = buffer.length;
+  const startSample = Math.min(
+    Math.floor(startSec * sampleRate),
+    Math.max(0, buffer.length - 1)
+  );
+  const endSample = Math.min(Math.floor(endSec * sampleRate), buffer.length);
+  const length = Math.max(1, endSample - startSample);
+  return { startSample, length, sampleRate };
+}
+
+function writeWavFromDecodedSlice(
+  buffer: AudioBuffer,
+  startSample: number,
+  length: number,
+  outputPath: string
+): void {
+  const numChannels = buffer.numberOfChannels;
+  const sampleRate = Math.round(buffer.sampleRate);
   const bitsPerSample = 16;
   const blockAlign = (numChannels * bitsPerSample) / 8;
-  const byteRate = sampleRate * blockAlign;
-  const dataSize = numFrames * blockAlign;
+  const dataSize = length * blockAlign;
+  const padByte = dataSize % 2;
   const headerSize = 44;
-  const totalSize = headerSize + dataSize;
+  const totalSize = headerSize + dataSize + padByte;
   const bytes = new Uint8Array(totalSize);
-  const view = new DataView(bytes.buffer);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 
   const writeString = (offset: number, value: string) => {
-    for (let i = 0; i < value.length; i++) {
+    for (let i = 0; i < value.length; i += 1) {
       bytes[offset + i] = value.charCodeAt(i);
     }
   };
@@ -33,19 +54,29 @@ function writeWavFromBuffer(buffer: AudioBuffer, outputPath: string): void {
   view.setUint16(20, 1, true);
   view.setUint16(22, numChannels, true);
   view.setUint32(24, sampleRate, true);
-  view.setUint32(28, byteRate, true);
+  view.setUint32(28, sampleRate * blockAlign, true);
   view.setUint16(32, blockAlign, true);
   view.setUint16(34, bitsPerSample, true);
   writeString(36, 'data');
   view.setUint32(40, dataSize, true);
 
   let offset = headerSize;
-  for (let frame = 0; frame < numFrames; frame++) {
-    for (let channel = 0; channel < numChannels; channel++) {
-      const sample = buffer.getChannelData(channel)[frame];
-      const clamped = Math.max(-1, Math.min(1, sample));
-      view.setInt16(offset, clamped * 0x7fff, true);
+  if (numChannels === 1) {
+    const channelData = buffer.getChannelData(0);
+    for (let i = 0; i < length; i += 1) {
+      const sample = channelData[startSample + i];
+      const clamped = sample <= -1 ? -32768 : sample >= 1 ? 32767 : (sample * 0x7fff) | 0;
+      view.setInt16(offset, clamped, true);
       offset += 2;
+    }
+  } else {
+    for (let frame = 0; frame < length; frame += 1) {
+      for (let channel = 0; channel < numChannels; channel += 1) {
+        const sample = buffer.getChannelData(channel)[startSample + frame];
+        const clamped = sample <= -1 ? -32768 : sample >= 1 ? 32767 : (sample * 0x7fff) | 0;
+        view.setInt16(offset, clamped, true);
+        offset += 2;
+      }
     }
   }
 
@@ -55,6 +86,23 @@ function writeWavFromBuffer(buffer: AudioBuffer, outputPath: string): void {
   }
   file.create();
   file.write(bytes);
+
+  const writtenSize = file.info().size ?? 0;
+  if (writtenSize < headerSize + 1) {
+    throw new Error('Failed to write trimmed audio segment');
+  }
+}
+
+async function normalizeWavForExport(inputWavPath: string, outputWavPath: string): Promise<void> {
+  const outputFile = new File(outputWavPath);
+  if (outputFile.exists) {
+    outputFile.delete();
+  }
+  await concatAudioFiles([inputWavPath], outputWavPath);
+}
+
+function writeWavFromBuffer(buffer: AudioBuffer, outputPath: string): void {
+  writeWavFromDecodedSlice(buffer, 0, buffer.length, outputPath);
 }
 
 async function extractSegmentToWav(
@@ -64,22 +112,46 @@ async function extractSegmentToWav(
   outputPath: string
 ): Promise<void> {
   const buffer = await decodeAudioData(filePath);
-  const sampleRate = buffer.sampleRate;
-  const startSample = Math.floor(startSec * sampleRate);
-  const endSample = Math.floor(endSec * sampleRate);
-  const length = Math.max(1, endSample - startSample);
-  const context = new AudioContext({ sampleRate });
-  const slice = context.createBuffer(buffer.numberOfChannels, length, sampleRate);
+  const { startSample, length } = getTrimSampleRange(buffer, startSec, endSec);
+  writeWavFromDecodedSlice(buffer, startSample, length, outputPath);
+}
 
-  for (let channel = 0; channel < buffer.numberOfChannels; channel++) {
-    const source = buffer.getChannelData(channel);
-    const destination = new Float32Array(length);
-    destination.set(source.subarray(startSample, startSample + length));
-    slice.copyToChannel(destination, channel);
+export async function trimAudioFile(
+  inputPath: string,
+  trimIn: number,
+  trimOut: number,
+  outputPath: string
+): Promise<void> {
+  const buffer = await decodeAudioData(inputPath);
+  const { startSample, length } = getTrimSampleRange(buffer, trimIn, trimOut);
+
+  const tempWav = new File(Paths.cache, `trim-segment-${randomId()}.wav`);
+  if (tempWav.exists) {
+    tempWav.delete();
   }
 
-  writeWavFromBuffer(slice, outputPath);
-  await context.close();
+  writeWavFromDecodedSlice(buffer, startSample, length, tempWav.uri);
+
+  const normalizedWav = new File(Paths.cache, `trim-normalized-${randomId()}.wav`);
+  if (normalizedWav.exists) {
+    normalizedWav.delete();
+  }
+
+  await normalizeWavForExport(tempWav.uri, normalizedWav.uri);
+
+  const outputFile = new File(outputPath);
+  if (outputFile.exists) {
+    outputFile.delete();
+  }
+
+  await normalizedWav.copy(outputFile);
+
+  if (tempWav.exists) {
+    tempWav.delete();
+  }
+  if (normalizedWav.exists) {
+    normalizedWav.delete();
+  }
 }
 
 export async function spliceRecording(
@@ -146,8 +218,8 @@ export async function mixLayersToFile(
   const masterData = master.getChannelData(0);
 
   for (const layer of layers) {
-    const buffer = await decodeAudioData(layer.path);
-    const layerData = buffer.getChannelData(0);
+    const layerBuffer = await decodeAudioData(layer.path);
+    const layerData = layerBuffer.getChannelData(0);
     const startSample = Math.floor(layer.startTime * sampleRate);
 
     for (let i = 0; i < layerData.length; i += 1) {

@@ -1,6 +1,12 @@
 import { Directory, File, Paths } from 'expo-file-system';
 
 import { computeWaveformPeaks, peakCountForDuration, resolveWaveformPeaks } from '@/src/audio/waveform';
+import {
+  createDefaultLayerEffects,
+  isDefaultTrim,
+  mergeLayerEffects,
+  type LayerEffects,
+} from '@/src/audio/layerEffects';
 import { mixLayersToFile, spliceRecording } from '@/src/audio/wavUtils';
 import { createDefaultTitle } from '@/src/utils/format';
 import { randomId } from '@/src/utils/id';
@@ -13,7 +19,7 @@ import {
   getPrimaryLayerFile,
 } from './paths';
 import type { Layer, Memo } from './types';
-import { getMemoTimelineDuration, normalizeLayers } from './types';
+import { getLayerEffects, getMemoTimelineDuration, normalizeLayers } from './types';
 
 function createLayer(order: number, startTime = 0): Layer {
   return {
@@ -98,6 +104,7 @@ async function refreshLayerFromFile(
     buffer.duration,
     capturedPeaks
   );
+  layer.effects = createDefaultLayerEffects(layer.duration);
 }
 
 export async function listMemos(): Promise<Memo[]> {
@@ -169,6 +176,94 @@ export async function updateTrim(
   writeManifest(memo);
   return memo;
 }
+
+export async function updateLayerEffects(
+  memoId: string,
+  layerId: string,
+  partial: Partial<LayerEffects> & {
+    reverb?: Partial<LayerEffects['reverb']>;
+    delay?: Partial<LayerEffects['delay']>;
+    eq?: Partial<LayerEffects['eq']>;
+  }
+): Promise<Memo> {
+  const memo = await getMemo(memoId);
+  if (!memo) {
+    throw new Error('Memo not found');
+  }
+
+  const layer = memo.layers.find((entry) => entry.id === layerId);
+  if (!layer) {
+    throw new Error('Layer not found');
+  }
+
+  const current = getLayerEffects(layer);
+  layer.effects = mergeLayerEffects(current, partial, layer.duration);
+  memo.updatedAt = new Date().toISOString();
+  writeManifest(memo);
+  return memo;
+}
+
+export type TrimBounds = {
+  trimIn: number;
+  trimOut: number;
+  preservedEffects?: Pick<LayerEffects, 'volumeDb' | 'reverb' | 'delay' | 'eq'>;
+};
+
+export async function commitLayerTrim(
+  memoId: string,
+  layerId: string,
+  bounds: TrimBounds
+): Promise<Memo> {
+  const memo = await getMemo(memoId);
+  if (!memo) {
+    throw new Error('Memo not found');
+  }
+
+  const layer = memo.layers.find((entry) => entry.id === layerId);
+  if (!layer) {
+    throw new Error('Layer not found');
+  }
+
+  const layerFile = getLayerFile(memoId, layer.fileName);
+  if (!layerFile.exists) {
+    throw new Error('Layer audio file not found');
+  }
+
+  const trimEffects: Pick<LayerEffects, 'trimIn' | 'trimOut'> = {
+    trimIn: bounds.trimIn,
+    trimOut: bounds.trimOut,
+  };
+
+  if (isDefaultTrim({ ...getLayerEffects(layer), ...trimEffects }, layer.duration)) {
+    return memo;
+  }
+
+  const effects = getLayerEffects(layer);
+  const preservedEffects = bounds.preservedEffects ?? {
+    volumeDb: effects.volumeDb,
+    reverb: { ...effects.reverb },
+    delay: { ...effects.delay },
+    eq: { bands: [...effects.eq.bands] as LayerEffects['eq']['bands'] },
+  };
+
+  layer.effects = mergeLayerEffects(
+    getLayerEffects(layer),
+    {
+      ...preservedEffects,
+      trimIn: bounds.trimIn,
+      trimOut: bounds.trimOut,
+    },
+    layer.duration
+  );
+
+  updateMemoTimeline(memo);
+  memo.updatedAt = new Date().toISOString();
+  writeManifest(memo);
+  return memo;
+}
+
+/** @deprecated Use commitLayerTrim — trim save is non-destructive. */
+export const applyLayerTrim = commitLayerTrim;
 
 export async function ensureWaveformPeaks(memo: Memo): Promise<Memo> {
   let changed = false;
