@@ -1,6 +1,4 @@
-import { useEffect } from 'react';
 import { StyleSheet, View } from 'react-native';
-import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 
 import { VoiceMemosColors } from '@/constants/VoiceMemosColors';
 import type { LayerEffects } from '@/src/audio/layerEffects';
@@ -10,7 +8,7 @@ import { EQEditor } from './editors/EQEditor';
 import { ReverbEditor } from './editors/ReverbEditor';
 import { TrimEditor } from './editors/TrimEditor';
 import { VolumeEditor } from './editors/VolumeEditor';
-import { EDITOR_CANVAS_HEIGHT, getEditorCanvasHeight, type EditorTool } from './types';
+import { getEditorCanvasHeight, type EditorTool } from './types';
 
 type EffectsChange = Partial<LayerEffects> & {
   reverb?: Partial<LayerEffects['reverb']>;
@@ -35,24 +33,15 @@ export function EditorCanvas({
   onTrimSave,
   savingTrim = false,
 }: Props) {
-  const height = useSharedValue(0);
   const canvasHeight = getEditorCanvasHeight(activeTool);
 
-  useEffect(() => {
-    height.value = withSpring(canvasHeight, {
-      damping: 20,
-      stiffness: 220,
-    });
-  }, [activeTool, canvasHeight, height]);
-
-  const animatedStyle = useAnimatedStyle(() => ({
-    height: height.value,
-    opacity: height.value > 0 ? 1 : 0,
-  }));
+  if (canvasHeight === 0) {
+    return null;
+  }
 
   return (
-    <Animated.View style={[styles.container, animatedStyle]}>
-      <View style={[styles.content, { height: canvasHeight || EDITOR_CANVAS_HEIGHT }]}>
+    <View style={[styles.container, { height: canvasHeight }]}>
+      <View style={[styles.content, { height: canvasHeight }]}>
         {activeTool === 'trim' ? (
           <TrimEditor
             effects={effects}
@@ -87,7 +76,7 @@ export function EditorCanvas({
           />
         ) : null}
       </View>
-    </Animated.View>
+    </View>
   );
 }
 
