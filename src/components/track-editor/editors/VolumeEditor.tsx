@@ -1,10 +1,9 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
 import { VoiceMemosColors } from '@/constants/VoiceMemosColors';
-import { formatDb, type LayerEffects } from '@/src/audio/layerEffects';
+import type { LayerEffects } from '@/src/audio/layerEffects';
 
 import { EditorSlider } from '../primitives/EditorSlider';
-import { ValueLabel } from '../primitives/ValueLabel';
 
 type Props = {
   effects: LayerEffects;
@@ -12,15 +11,12 @@ type Props = {
 };
 
 export function VolumeEditor({ effects, onChange }: Props) {
-  const snapPoints = [-24, -12, -6, 0, 6, 12];
+  const snapPoints = [-24, -12, -6, 0, 6, 12, 18, 24];
 
   return (
     <View style={styles.container}>
-      <Pressable onPress={() => onChange(0)}>
-        <ValueLabel size="large" value={formatDb(effects.volumeDb)} />
-      </Pressable>
       <EditorSlider
-        maximumValue={12}
+        maximumValue={24}
         minimumValue={-24}
         showCenterTick
         snapPoints={snapPoints}
@@ -31,7 +27,7 @@ export function VolumeEditor({ effects, onChange }: Props) {
       <View style={styles.labels}>
         <Text style={styles.label}>Mute</Text>
         <Text style={styles.label}>0</Text>
-        <Text style={styles.label}>+12</Text>
+        <Text style={styles.label}>+24</Text>
       </View>
     </View>
   );

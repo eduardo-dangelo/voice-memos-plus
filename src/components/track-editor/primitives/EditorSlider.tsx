@@ -158,7 +158,7 @@ export function EditorSlider({
           styles.thumb,
           isVertical
             ? { top: `${(1 - ratio) * 100}%`, marginTop: -14, alignSelf: 'center' }
-            : { left: `${ratio * 100}%`, marginLeft: -14, top: -10 },
+            : { left: `${ratio * 100}%`, marginLeft: -14, top: '50%', marginTop: -14 },
         ]}
       />
     </View>
