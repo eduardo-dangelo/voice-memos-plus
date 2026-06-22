@@ -31,9 +31,18 @@ import {
   replaceLayerSegment,
   saveRecording,
   updateLayerEffects,
+  updateLayerStartTimes,
   updateTitle,
 } from '@/src/storage/memoStore';
-import { getLayerEffects, getLayerActiveDuration, getLayerActiveStartTime, getMemoTimelineDuration, hasRecording } from '@/src/storage/types';
+import {
+  applyTimelineDeltaToLayers,
+  getEarliestTrimInTimelineDelta,
+  getLayerEffects,
+  getLayerActiveDuration,
+  getLayerActiveStartTime,
+  getMemoTimelineDuration,
+  hasRecording,
+} from '@/src/storage/types';
 import { slicePeaksForTrim } from '@/src/audio/waveform';
 import type { Memo } from '@/src/storage/types';
 import { getMemoPlaybackTimeline } from '@/src/storage/paths';
@@ -63,6 +72,7 @@ export default function MemoEditorScreen() {
     memoId: string;
     layerId: string;
     effects: LayerEffects;
+    layerStartTimes?: Record<string, number>;
   } | null>(null);
 
   const [memo, setMemo] = useState<Memo | null>(null);
@@ -97,17 +107,32 @@ export default function MemoEditorScreen() {
       }
 
       const nextEffects = mergeLayerEffects(getLayerEffects(layer), partial, layer.duration);
+      const trimInChanged = partial.trimIn !== undefined;
+      const timelineDelta = trimInChanged
+        ? getEarliestTrimInTimelineDelta(layer, memo.layers, nextEffects.trimIn)
+        : 0;
+      const shiftedLayers = applyTimelineDeltaToLayers(memo.layers, timelineDelta);
+      const nextLayers = shiftedLayers.map((entry) =>
+        entry.id === activeLayerId ? { ...entry, effects: nextEffects } : entry
+      );
+      const layerStartTimes =
+        timelineDelta !== 0
+          ? Object.fromEntries(nextLayers.map((entry) => [entry.id, entry.startTime]))
+          : undefined;
+
       setMemo({
         ...memo,
-        layers: memo.layers.map((entry) =>
-          entry.id === activeLayerId ? { ...entry, effects: nextEffects } : entry
-        ),
+        layers: nextLayers,
       });
       engine.updateLayerEffects(activeLayerId, partial);
+      if (layerStartTimes) {
+        engine.updateLayerStartTimes(layerStartTimes);
+      }
       pendingEffectsPersist.current = {
         memoId: memo.id,
         layerId: activeLayerId,
         effects: nextEffects,
+        ...(layerStartTimes ? { layerStartTimes } : {}),
       };
 
       if (persistEffectsTimeout.current) {
@@ -122,6 +147,9 @@ export default function MemoEditorScreen() {
           delay: nextEffects.delay,
           eq: nextEffects.eq,
         });
+        if (layerStartTimes) {
+          void updateLayerStartTimes(memo.id, layerStartTimes);
+        }
       }, 300);
     },
     [activeLayerId, engine, memo]
@@ -144,75 +172,118 @@ export default function MemoEditorScreen() {
       delay: pending.effects.delay,
       eq: pending.effects.eq,
     });
+    if (pending.layerStartTimes) {
+      void updateLayerStartTimes(pending.memoId, pending.layerStartTimes);
+    }
   }, []);
 
-  const handleTrimSave = useCallback(async () => {
-    if (!memo || !activeLayerId || !activeLayer || !activeLayerEffects || savingTrim) {
-      if (!savingTrim) {
-        setActiveEditor(null);
+  const commitActiveLayerTrim = useCallback(async (): Promise<boolean> => {
+      if (!memo || !activeLayerId || !activeLayer || !activeLayerEffects || savingTrim) {
+        return false;
       }
-      return;
-    }
 
-    if (persistEffectsTimeout.current) {
-      clearTimeout(persistEffectsTimeout.current);
-      persistEffectsTimeout.current = null;
-    }
+      if (persistEffectsTimeout.current) {
+        clearTimeout(persistEffectsTimeout.current);
+        persistEffectsTimeout.current = null;
+      }
 
-    const trimIsDefault = isDefaultTrim(activeLayerEffects, activeLayer.duration);
+      const trimIsDefault = isDefaultTrim(activeLayerEffects, activeLayer.duration);
 
-    if (trimIsDefault) {
-      flushEffectsPersist();
-      setActiveEditor(null);
-      return;
-    }
+      if (trimIsDefault) {
+        flushEffectsPersist();
+        return true;
+      }
 
-    setSavingTrim(true);
-    engine.pause();
+      setSavingTrim(true);
+      engine.pause();
 
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 0);
-    });
-
-    try {
-      pendingEffectsPersist.current = null;
-      const updated = await commitLayerTrim(memo.id, activeLayerId, {
-        trimIn: activeLayerEffects.trimIn,
-        trimOut: activeLayerEffects.trimOut,
-        preservedEffects: {
-          volumeDb: activeLayerEffects.volumeDb,
-          reverb: activeLayerEffects.reverb,
-          delay: activeLayerEffects.delay,
-          eq: activeLayerEffects.eq,
-        },
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 0);
       });
-      setMemo(updated);
-      const seekTime = Math.min(engine.getPlaybackTime(), getMemoTimelineDuration(updated));
-      await loadMemoIntoEngine(engine, updated, seekTime);
-      setActiveEditor(null);
-    } catch (error) {
-      const reverted = await getMemo(memo.id);
-      if (reverted) {
-        setMemo(reverted);
+
+      try {
         pendingEffectsPersist.current = null;
-        await loadMemoIntoEngine(engine, reverted);
+        const updated = await commitLayerTrim(memo.id, activeLayerId, {
+          trimIn: activeLayerEffects.trimIn,
+          trimOut: activeLayerEffects.trimOut,
+          preservedEffects: {
+            volumeDb: activeLayerEffects.volumeDb,
+            reverb: activeLayerEffects.reverb,
+            delay: activeLayerEffects.delay,
+            eq: activeLayerEffects.eq,
+          },
+        });
+        setMemo(updated);
+        const seekTime = Math.min(engine.getPlaybackTime(), getMemoTimelineDuration(updated));
+        await loadMemoIntoEngine(engine, updated, seekTime);
+        return true;
+      } catch (error) {
+        const reverted = await getMemo(memo.id);
+        if (reverted) {
+          setMemo(reverted);
+          pendingEffectsPersist.current = null;
+          await loadMemoIntoEngine(engine, reverted);
+        }
+        Alert.alert(
+          'Could not apply trim',
+          error instanceof Error ? error.message : 'Unknown error'
+        );
+        return false;
+      } finally {
+        setSavingTrim(false);
       }
-      Alert.alert(
-        'Could not apply trim',
-        error instanceof Error ? error.message : 'Unknown error'
-      );
-    } finally {
-      setSavingTrim(false);
+    },
+    [
+      activeLayer,
+      activeLayerEffects,
+      activeLayerId,
+      engine,
+      flushEffectsPersist,
+      memo,
+      savingTrim,
+    ]
+  );
+
+  const commitTrimIfNeeded = useCallback(async (): Promise<boolean> => {
+    if (
+      activeEditor !== 'trim' ||
+      !activeLayer ||
+      !activeLayerEffects ||
+      isDefaultTrim(activeLayerEffects, activeLayer.duration)
+    ) {
+      flushEffectsPersist();
+      return true;
     }
+    return commitActiveLayerTrim();
   }, [
+    activeEditor,
     activeLayer,
     activeLayerEffects,
-    activeLayerId,
-    engine,
+    commitActiveLayerTrim,
     flushEffectsPersist,
-    memo,
-    savingTrim,
   ]);
+
+  const handleEditorToolChange = useCallback(
+    (tool: EditorTool | null) => {
+      if (savingTrim) {
+        return;
+      }
+
+      if (activeEditor === 'trim' && tool !== 'trim') {
+        void (async () => {
+          const ok = await commitTrimIfNeeded();
+          if (!ok) {
+            return;
+          }
+          setActiveEditor(tool);
+        })();
+        return;
+      }
+
+      setActiveEditor(tool);
+    },
+    [activeEditor, commitTrimIfNeeded, savingTrim]
+  );
 
   const handleTrimChange = useCallback(
     (trimIn: number, trimOut: number) => {
@@ -221,10 +292,23 @@ export default function MemoEditorScreen() {
     [handleEffectsChange]
   );
 
-  const handleTrackPress = useCallback((trackId: string) => {
-    setActiveLayerId(trackId);
-    setActiveEditor(null);
-  }, []);
+  const handleTrackPress = useCallback(
+    (trackId: string) => {
+      if (trackId === activeLayerId || savingTrim) {
+        return;
+      }
+
+      void (async () => {
+        const ok = await commitTrimIfNeeded();
+        if (!ok) {
+          return;
+        }
+
+        setActiveLayerId(trackId);
+      })();
+    },
+    [activeLayerId, commitTrimIfNeeded, savingTrim]
+  );
 
   const loadMemo = useCallback(async () => {
     if (!id) {
@@ -274,11 +358,15 @@ export default function MemoEditorScreen() {
       return;
     }
     engine.pause();
+    const ok = await commitTrimIfNeeded();
+    if (!ok) {
+      return;
+    }
     if (title.trim() && title !== memo.title) {
       await updateTitle(memo.id, title);
     }
     router.back();
-  }, [engine, memo, title]);
+  }, [commitTrimIfNeeded, engine, memo, title]);
 
   const renderDoneButton = useCallback(
     () => (
@@ -422,10 +510,14 @@ export default function MemoEditorScreen() {
   const currentTime = memo && isActiveMemo ? engineState.currentTime : 0;
 
   useEffect(() => {
-    if (isRecording) {
-      setActiveEditor(null);
+    if (!isRecording) {
+      return;
     }
-  }, [isRecording]);
+    void (async () => {
+      await commitTrimIfNeeded();
+      setActiveEditor(null);
+    })();
+  }, [commitTrimIfNeeded, isRecording]);
 
   const showTrackEditor =
     !isRecording && Boolean(activeLayer && activeLayer.duration > 0);
@@ -587,9 +679,7 @@ export default function MemoEditorScreen() {
             layerDuration={activeLayer?.duration ?? 0}
             visible={showTrackEditor}
             onEffectsChange={handleEffectsChange}
-            onToolChange={setActiveEditor}
-            onTrimSave={handleTrimSave}
-            savingTrim={savingTrim}
+            onToolChange={handleEditorToolChange}
           />
         ) : null}
 

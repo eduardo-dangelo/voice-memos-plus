@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 
 import { VoiceMemosColors } from '@/constants/VoiceMemosColors';
-import { clampTrimValues, dbToLinear, shiftTrimWindow } from '@/src/audio/layerEffects';
+import { clampTrimValues, dbToLinear } from '@/src/audio/layerEffects';
 import {
   getPeaksForMemo,
   peakToAbsoluteScale,
@@ -249,30 +249,6 @@ function TrackTrimOverlay({
     onChangeRef.current(next.trimIn, next.trimOut);
   };
 
-  const bodyMoveRef = useRef((_event: GestureResponderEvent, gesture: PanResponderGestureState) => {});
-  bodyMoveRef.current = (_event, gesture) => {
-    const trackData = trackRef.current;
-    const offset = sidePaddingRef.current + trackData.startTime * PIXELS_PER_SECOND;
-    const preliminaryDx = getEffectiveDx(gesture);
-    const preliminary = shiftTrimWindow(
-      startTrimIn.current,
-      startTrimOut.current,
-      preliminaryDx / PIXELS_PER_SECOND,
-      trackData.duration
-    );
-    const preliminaryCenter =
-      offset + ((preliminary.trimIn + preliminary.trimOut) / 2) * PIXELS_PER_SECOND;
-    applyEdgeAutoScroll(preliminaryCenter);
-    const effectiveDx = getEffectiveDx(gesture);
-    const next = shiftTrimWindow(
-      startTrimIn.current,
-      startTrimOut.current,
-      effectiveDx / PIXELS_PER_SECOND,
-      trackData.duration
-    );
-    onChangeRef.current(next.trimIn, next.trimOut);
-  };
-
   const trimPanCapture = {
     onStartShouldSetPanResponder: () => true,
     onStartShouldSetPanResponderCapture: () => true,
@@ -296,16 +272,6 @@ function TrackTrimOverlay({
       ...trimPanCapture,
       onPanResponderGrant: () => beginTrimGestureRef.current(),
       onPanResponderMove: (event, gesture) => rightMoveRef.current(event, gesture),
-      onPanResponderRelease: () => endTrimGestureRef.current(),
-      onPanResponderTerminate: () => endTrimGestureRef.current(),
-    })
-  ).current;
-
-  const bodyResponder = useRef(
-    PanResponder.create({
-      ...trimPanCapture,
-      onPanResponderGrant: () => beginTrimGestureRef.current(),
-      onPanResponderMove: (event, gesture) => bodyMoveRef.current(event, gesture),
       onPanResponderRelease: () => endTrimGestureRef.current(),
       onPanResponderTerminate: () => endTrimGestureRef.current(),
     })
@@ -340,7 +306,7 @@ function TrackTrimOverlay({
         />
       ) : null}
       <View
-        {...bodyResponder.panHandlers}
+        pointerEvents="none"
         style={[
           styles.trimSelection,
           {
@@ -374,6 +340,8 @@ function TrackTrimOverlay({
   );
 }
 
+const TAP_DRAG_THRESHOLD = 10;
+
 function TrackWaveformRow({
   track,
   bandWidth,
@@ -384,6 +352,7 @@ function TrackWaveformRow({
   trimOverlay,
   volumeVisualDb,
   trimScrollHelpers,
+  scrollPriority = false,
 }: {
   track: TrackData;
   bandWidth: number;
@@ -394,7 +363,13 @@ function TrackWaveformRow({
   trimOverlay?: TrimOverlayConfig;
   volumeVisualDb?: number;
   trimScrollHelpers?: TrimScrollHelpers;
+  scrollPriority?: boolean;
 }) {
+  const touchStartRef = useRef({ x: 0, y: 0 });
+  const touchDraggedRef = useRef(false);
+  const onPressRef = useRef(onPress);
+  onPressRef.current = onPress;
+
   const barCount = getTrackBarCount(track.duration, contentWidth);
   const trackOffset = track.startTime * PIXELS_PER_SECOND;
   const trackWidth = barCount * BAR_STEP;
@@ -413,70 +388,102 @@ function TrackWaveformRow({
       : 1;
   const showTrimOverlay = trimOverlay?.layerId === track.id;
 
+  const rowContent = (
+    <View
+      style={[
+        styles.waveformBand,
+        { width: bandWidth, height: trackHeight },
+      ]}>
+      <TimelineDimRegions
+        bandWidth={bandWidth}
+        contentWidth={contentWidth}
+        height={trackHeight}
+        sidePadding={sidePadding}
+      />
+      <View
+        pointerEvents="none"
+        style={[styles.centerLine, { left: sidePadding, width: contentWidth }]}
+      />
+      {trackWidth > 0 ? (
+        <View
+          pointerEvents="none"
+          style={[
+            styles.barsRow,
+            {
+              marginLeft: sidePadding + trackOffset,
+              width: trackWidth,
+            },
+          ]}>
+          {normalizedPeaks.map((peak, index) => {
+            const scaled = peakToAbsoluteScale(peak) * volumeScale;
+            const barHeight =
+              scaled <= 0.01
+                ? 2
+                : Math.max(4, Math.min(trackHeight - 16, scaled * (trackHeight - 16)));
+            return (
+              <View
+                key={index}
+                style={[
+                  styles.bar,
+                  {
+                    height: barHeight,
+                    backgroundColor: track.isActive
+                      ? VoiceMemosColors.accent
+                      : VoiceMemosColors.waveformBar,
+                  },
+                ]}
+              />
+            );
+          })}
+        </View>
+      ) : null}
+      {showTrimOverlay && trimOverlay && trimScrollHelpers ? (
+        <TrackTrimOverlay
+          sidePadding={sidePadding}
+          track={track}
+          trackHeight={trackHeight}
+          trimIn={trimOverlay.trimIn}
+          trimOut={trimOverlay.trimOut}
+          trimScrollHelpers={trimScrollHelpers}
+          onChange={trimOverlay.onChange}
+        />
+      ) : null}
+    </View>
+  );
+
+  if (scrollPriority) {
+    return (
+      <View
+        style={[styles.trackRow, { height: trackHeight }]}
+        onTouchStart={(event) => {
+          touchDraggedRef.current = false;
+          touchStartRef.current = {
+            x: event.nativeEvent.pageX,
+            y: event.nativeEvent.pageY,
+          };
+        }}
+        onTouchMove={(event) => {
+          const dx = Math.abs(event.nativeEvent.pageX - touchStartRef.current.x);
+          const dy = Math.abs(event.nativeEvent.pageY - touchStartRef.current.y);
+          if (dx > TAP_DRAG_THRESHOLD || dy > TAP_DRAG_THRESHOLD) {
+            touchDraggedRef.current = true;
+          }
+        }}
+        onTouchEnd={(event) => {
+          if (!touchDraggedRef.current) {
+            onPressRef.current(event.nativeEvent.locationX);
+          }
+        }}>
+        {rowContent}
+      </View>
+    );
+  }
+
   return (
     <Pressable
       onPress={(event) => onPress(event.nativeEvent.locationX)}
       style={[styles.trackRow, { height: trackHeight }]}>
-      <View
-        style={[
-          styles.waveformBand,
-          { width: bandWidth, height: trackHeight },
-        ]}>
-        <TimelineDimRegions
-          bandWidth={bandWidth}
-          contentWidth={contentWidth}
-          height={trackHeight}
-          sidePadding={sidePadding}
-        />
-        <View
-          pointerEvents="none"
-          style={[styles.centerLine, { left: sidePadding, width: contentWidth }]}
-        />
-        {trackWidth > 0 ? (
-          <View
-            pointerEvents="none"
-            style={[
-              styles.barsRow,
-              {
-                marginLeft: sidePadding + trackOffset,
-                width: trackWidth,
-              },
-            ]}>
-            {normalizedPeaks.map((peak, index) => {
-              const scaled = peakToAbsoluteScale(peak) * volumeScale;
-              const barHeight =
-                scaled <= 0.01
-                  ? 2
-                  : Math.max(4, Math.min(trackHeight - 16, scaled * (trackHeight - 16)));
-              return (
-                <View
-                  key={index}
-                  style={[
-                    styles.bar,
-                    {
-                      height: barHeight,
-                      backgroundColor: track.isActive
-                        ? VoiceMemosColors.accent
-                        : VoiceMemosColors.waveformBar,
-                    },
-                  ]}
-                />
-              );
-            })}
-          </View>
-        ) : null}
-        {showTrimOverlay && trimOverlay && trimScrollHelpers ? (
-          <TrackTrimOverlay
-            sidePadding={sidePadding}
-            track={track}
-            trackHeight={trackHeight}
-            trimIn={trimOverlay.trimIn}
-            trimOut={trimOverlay.trimOut}
-            trimScrollHelpers={trimScrollHelpers}
-            onChange={trimOverlay.onChange}
-          />
-        ) : null}
-      </View>
+      {rowContent}
     </Pressable>
   );
 }
@@ -499,6 +506,7 @@ export function WaveformView({
   const isUserScrollingRef = useRef(false);
   const scrollOffsetRef = useRef(0);
   const trimGestureActiveRef = useRef(false);
+  const [trimGestureActive, setTrimGestureActive] = useState(false);
   const maxScrollXRef = useRef(0);
   const getPlaybackTimeRef = useRef(getPlaybackTime);
   getPlaybackTimeRef.current = getPlaybackTime;
@@ -571,13 +579,16 @@ export function WaveformView({
   };
 
   const handleScrollBeginDrag = () => {
+    if (trimGestureActiveRef.current) {
+      return;
+    }
     isUserScrollingRef.current = true;
   };
 
   const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const x = event.nativeEvent.contentOffset.x;
     scrollOffsetRef.current = x;
-    if (trimOverlay || trimGestureActiveRef.current) {
+    if (trimGestureActiveRef.current) {
       return;
     }
     if (!isUserScrollingRef.current || duration <= 0 || contentWidth <= 0) {
@@ -620,6 +631,7 @@ export function WaveformView({
       },
       onTrimGestureActive: (active: boolean) => {
         trimGestureActiveRef.current = active;
+        setTrimGestureActive(active);
       },
     };
   }, [trimOverlay, viewportWidth]);
@@ -634,6 +646,14 @@ export function WaveformView({
   const handleMomentumScrollEnd = () => {
     isUserScrollingRef.current = false;
   };
+
+  useEffect(() => {
+    if (trimOverlay) {
+      return;
+    }
+    trimGestureActiveRef.current = false;
+    setTrimGestureActive(false);
+  }, [trimOverlay]);
 
   useEffect(() => {
     if (
@@ -692,7 +712,7 @@ export function WaveformView({
         horizontal
         bounces={false}
         nestedScrollEnabled
-        scrollEnabled={!isPlaying && !isRecording && !trimOverlay}
+        scrollEnabled={!isPlaying && !isRecording && !trimGestureActive}
         scrollEventThrottle={16}
         showsHorizontalScrollIndicator={false}
         onScroll={handleScroll}
@@ -709,6 +729,7 @@ export function WaveformView({
               sidePadding={sidePadding}
               track={track}
               trackHeight={trackHeight}
+              scrollPriority={Boolean(trimOverlay && trimOverlay.layerId !== track.id)}
               trimOverlay={trimOverlay}
               trimScrollHelpers={trimScrollHelpers}
               volumeVisualDb={volumeVisualDb}

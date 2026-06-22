@@ -6,7 +6,6 @@ import type { LayerEffects } from '@/src/audio/layerEffects';
 import { DelayEditor } from './editors/DelayEditor';
 import { EQEditor } from './editors/EQEditor';
 import { ReverbEditor } from './editors/ReverbEditor';
-import { TrimEditor } from './editors/TrimEditor';
 import { VolumeEditor } from './editors/VolumeEditor';
 import { getEditorCanvasHeight, type EditorTool } from './types';
 
@@ -21,8 +20,6 @@ type Props = {
   effects: LayerEffects;
   layerDuration: number;
   onEffectsChange: (partial: EffectsChange) => void;
-  onTrimSave?: () => void;
-  savingTrim?: boolean;
 };
 
 export function EditorCanvas({
@@ -30,8 +27,6 @@ export function EditorCanvas({
   effects,
   layerDuration,
   onEffectsChange,
-  onTrimSave,
-  savingTrim = false,
 }: Props) {
   const canvasHeight = getEditorCanvasHeight(activeTool);
 
@@ -42,15 +37,6 @@ export function EditorCanvas({
   return (
     <View style={[styles.container, { height: canvasHeight }]}>
       <View style={[styles.content, { height: canvasHeight }]}>
-        {activeTool === 'trim' ? (
-          <TrimEditor
-            effects={effects}
-            isSaving={savingTrim}
-            layerDuration={layerDuration}
-            onReset={() => onEffectsChange({ trimIn: 0, trimOut: layerDuration })}
-            onSave={() => onTrimSave?.()}
-          />
-        ) : null}
         {activeTool === 'volume' ? (
           <VolumeEditor
             effects={effects}

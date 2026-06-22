@@ -19,7 +19,12 @@ import {
   getPrimaryLayerFile,
 } from './paths';
 import type { Layer, Memo } from './types';
-import { getLayerEffects, getMemoTimelineDuration, normalizeLayers } from './types';
+import {
+  getLayerEffects,
+  getMemoTimelineDuration,
+  normalizeLayers,
+  getEarliestTrimInTimelineDelta,
+} from './types';
 
 function createLayer(order: number, startTime = 0): Layer {
   return {
@@ -203,6 +208,36 @@ export async function updateLayerEffects(
   return memo;
 }
 
+export async function updateLayerStartTimes(
+  memoId: string,
+  updates: Record<string, number>
+): Promise<Memo> {
+  const memo = await getMemo(memoId);
+  if (!memo) {
+    throw new Error('Memo not found');
+  }
+
+  for (const entry of memo.layers) {
+    const nextStartTime = updates[entry.id];
+    if (nextStartTime !== undefined) {
+      entry.startTime = nextStartTime;
+    }
+  }
+
+  updateMemoTimeline(memo);
+  memo.updatedAt = new Date().toISOString();
+  writeManifest(memo);
+  return memo;
+}
+
+export async function updateLayerStartTime(
+  memoId: string,
+  layerId: string,
+  startTime: number
+): Promise<Memo> {
+  return updateLayerStartTimes(memoId, { [layerId]: startTime });
+}
+
 export type TrimBounds = {
   trimIn: number;
   trimOut: number;
@@ -246,6 +281,8 @@ export async function commitLayerTrim(
     eq: { bands: [...effects.eq.bands] as LayerEffects['eq']['bands'] },
   };
 
+  const timelineDelta = getEarliestTrimInTimelineDelta(layer, memo.layers, bounds.trimIn);
+
   layer.effects = mergeLayerEffects(
     getLayerEffects(layer),
     {
@@ -255,6 +292,12 @@ export async function commitLayerTrim(
     },
     layer.duration
   );
+
+  if (timelineDelta !== 0) {
+    for (const entry of memo.layers) {
+      entry.startTime += timelineDelta;
+    }
+  }
 
   updateMemoTimeline(memo);
   memo.updatedAt = new Date().toISOString();

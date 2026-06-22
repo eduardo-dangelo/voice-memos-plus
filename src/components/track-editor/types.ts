@@ -18,12 +18,11 @@ export const EDITOR_TOOLS: {
 ];
 
 export const EDITOR_CANVAS_HEIGHT = 132;
-export const EDITOR_TRIM_CANVAS_HEIGHT = 44;
 export const EDITOR_STRIP_HEIGHT = 56;
 
 export function getEditorCanvasHeight(tool: EditorTool | null): number {
-  if (!tool) {
+  if (!tool || tool === 'trim') {
     return 0;
   }
-  return tool === 'trim' ? EDITOR_TRIM_CANVAS_HEIGHT : EDITOR_CANVAS_HEIGHT;
+  return EDITOR_CANVAS_HEIGHT;
 }

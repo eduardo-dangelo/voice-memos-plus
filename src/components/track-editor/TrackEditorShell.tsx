@@ -17,8 +17,6 @@ type Props = {
     delay?: Partial<LayerEffects['delay']>;
     eq?: Partial<LayerEffects['eq']>;
   }) => void;
-  onTrimSave?: () => void;
-  savingTrim?: boolean;
 };
 
 export function TrackEditorShell({
@@ -28,8 +26,6 @@ export function TrackEditorShell({
   layerDuration,
   onToolChange,
   onEffectsChange,
-  onTrimSave,
-  savingTrim = false,
 }: Props) {
   if (!visible) {
     return null;
@@ -42,8 +38,6 @@ export function TrackEditorShell({
         effects={effects}
         layerDuration={layerDuration}
         onEffectsChange={onEffectsChange}
-        onTrimSave={onTrimSave}
-        savingTrim={savingTrim}
       />
       <EditorToolStrip activeTool={activeTool} onToolChange={onToolChange} />
     </View>

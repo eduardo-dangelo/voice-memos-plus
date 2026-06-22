@@ -358,6 +358,20 @@ export class MemoAudioEngine {
     }
   }
 
+  updateLayerStartTime(layerId: string, startTime: number): void {
+    const layer = this.loadedLayers.find((entry) => entry.id === layerId);
+    if (!layer) {
+      return;
+    }
+    layer.startTime = startTime;
+  }
+
+  updateLayerStartTimes(updates: Record<string, number>): void {
+    for (const [layerId, startTime] of Object.entries(updates)) {
+      this.updateLayerStartTime(layerId, startTime);
+    }
+  }
+
   unload(): void {
     this.stopPlayback();
     this.loadedLayers = [];

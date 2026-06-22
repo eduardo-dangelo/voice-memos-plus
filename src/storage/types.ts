@@ -91,3 +91,101 @@ export function hasRecording(memo: Memo): boolean {
 export function getPlayableLayers(memo: Memo): Layer[] {
   return memo.layers.filter((layer) => layer.duration > 0);
 }
+
+const TIMELINE_EPSILON = 0.001;
+
+function getGlobalEarliestActiveStart(layers: Layer[]): number {
+  const playable = layers.filter((entry) => entry.duration > 0);
+  if (playable.length === 0) {
+    return 0;
+  }
+  return Math.min(...playable.map(getLayerActiveStartTime));
+}
+
+export function isEarliestActiveLayer(layer: Layer, layers: Layer[]): boolean {
+  const playable = layers.filter((entry) => entry.duration > 0);
+  if (playable.length === 0) {
+    return false;
+  }
+  const activeStart = getLayerActiveStartTime(layer);
+  const earliestStart = getGlobalEarliestActiveStart(layers);
+  return activeStart <= earliestStart + TIMELINE_EPSILON;
+}
+
+function isSoleEarliestActiveLayer(layer: Layer, layers: Layer[]): boolean {
+  if (!isEarliestActiveLayer(layer, layers)) {
+    return false;
+  }
+  const activeStart = getLayerActiveStartTime(layer);
+  const playable = layers.filter((entry) => entry.duration > 0);
+  return playable.every(
+    (entry) =>
+      entry.id === layer.id ||
+      getLayerActiveStartTime(entry) > activeStart + TIMELINE_EPSILON
+  );
+}
+
+/** Whole-timeline shift when the earliest layer's beginning trim changes (keeps anchor at 0). */
+function shouldShiftWholeTimelineForEarliestTrim(layer: Layer, layers: Layer[]): boolean {
+  if (!isEarliestActiveLayer(layer, layers)) {
+    return false;
+  }
+  if (isSoleEarliestActiveLayer(layer, layers)) {
+    return true;
+  }
+  // Tied at earliest: only the layer with hidden beginning trim owns the anchor.
+  return getLayerEffects(layer).trimIn > TIMELINE_EPSILON;
+}
+
+/** Whole-timeline shift when restoring trim reveals audio before the anchored position. */
+function shouldShiftWholeTimelineForRestoreTrim(
+  layer: Layer,
+  layers: Layer[],
+  nextTrimIn: number
+): boolean {
+  const currentTrimIn = getLayerEffects(layer).trimIn;
+  if (nextTrimIn >= currentTrimIn - TIMELINE_EPSILON) {
+    return false;
+  }
+  if (currentTrimIn <= TIMELINE_EPSILON) {
+    return false;
+  }
+  const activeStart = getLayerActiveStartTime(layer);
+  const globalEarliest = getGlobalEarliestActiveStart(layers);
+  if (activeStart > globalEarliest + TIMELINE_EPSILON) {
+    return false;
+  }
+  const projectedActiveStart = layer.startTime + nextTrimIn;
+  return projectedActiveStart < activeStart - TIMELINE_EPSILON;
+}
+
+export function getEarliestTrimInTimelineDelta(
+  layer: Layer,
+  layers: Layer[],
+  nextTrimIn: number
+): number {
+  const currentTrimIn = getLayerEffects(layer).trimIn;
+  const deltaTrimIn = nextTrimIn - currentTrimIn;
+  if (Math.abs(deltaTrimIn) <= TIMELINE_EPSILON) {
+    return 0;
+  }
+
+  const shouldShift =
+    shouldShiftWholeTimelineForEarliestTrim(layer, layers) ||
+    shouldShiftWholeTimelineForRestoreTrim(layer, layers, nextTrimIn);
+
+  if (!shouldShift) {
+    return 0;
+  }
+  return -deltaTrimIn;
+}
+
+export function applyTimelineDeltaToLayers(layers: Layer[], delta: number): Layer[] {
+  if (Math.abs(delta) <= TIMELINE_EPSILON) {
+    return layers;
+  }
+  return layers.map((entry) => ({
+    ...entry,
+    startTime: entry.startTime + delta,
+  }));
+}
