@@ -8,14 +8,19 @@ import { EDITOR_TOOLS, EDITOR_STRIP_HEIGHT, type EditorTool } from './types';
 
 type Props = {
   activeTool: EditorTool | null;
+  availableTools?: EditorTool[];
   onToolChange: (tool: EditorTool | null) => void;
 };
 
-export function EditorToolStrip({ activeTool, onToolChange }: Props) {
+export function EditorToolStrip({ activeTool, availableTools, onToolChange }: Props) {
   const handlePress = (tool: EditorTool) => {
     void Haptics.selectionAsync();
     onToolChange(activeTool === tool ? null : tool);
   };
+
+  const tools = availableTools
+    ? EDITOR_TOOLS.filter((tool) => availableTools.includes(tool.id))
+    : EDITOR_TOOLS;
 
   return (
     <View style={styles.container}>
@@ -23,7 +28,7 @@ export function EditorToolStrip({ activeTool, onToolChange }: Props) {
         horizontal
         contentContainerStyle={styles.row}
         showsHorizontalScrollIndicator={false}>
-        {EDITOR_TOOLS.map((tool) => {
+        {tools.map((tool) => {
           const selected = activeTool === tool.id;
           return (
             <Pressable

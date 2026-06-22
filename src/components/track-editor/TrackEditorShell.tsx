@@ -9,6 +9,7 @@ import { type EditorTool } from './types';
 type Props = {
   visible: boolean;
   activeTool: EditorTool | null;
+  availableTools?: EditorTool[];
   effects: LayerEffects;
   layerDuration: number;
   onToolChange: (tool: EditorTool | null) => void;
@@ -22,6 +23,7 @@ type Props = {
 export function TrackEditorShell({
   visible,
   activeTool,
+  availableTools,
   effects,
   layerDuration,
   onToolChange,
@@ -39,7 +41,11 @@ export function TrackEditorShell({
         layerDuration={layerDuration}
         onEffectsChange={onEffectsChange}
       />
-      <EditorToolStrip activeTool={activeTool} onToolChange={onToolChange} />
+      <EditorToolStrip
+        activeTool={activeTool}
+        availableTools={availableTools}
+        onToolChange={onToolChange}
+      />
     </View>
   );
 }

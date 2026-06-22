@@ -36,11 +36,13 @@ import {
 } from '@/src/storage/memoStore';
 import {
   applyTimelineDeltaToLayers,
+  clampLayerStartTime,
   getEarliestTrimInTimelineDelta,
   getLayerEffects,
   getLayerActiveDuration,
   getLayerActiveStartTime,
   getMemoTimelineDuration,
+  getPlayableLayers,
   hasRecording,
 } from '@/src/storage/types';
 import { slicePeaksForTrim } from '@/src/audio/waveform';
@@ -68,11 +70,17 @@ export default function MemoEditorScreen() {
   const autoRecordStarted = useRef(false);
   const recordingStartTime = useRef(0);
   const persistEffectsTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const persistStartTimeTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingEffectsPersist = useRef<{
     memoId: string;
     layerId: string;
     effects: LayerEffects;
     layerStartTimes?: Record<string, number>;
+  } | null>(null);
+  const pendingStartTimePersist = useRef<{
+    memoId: string;
+    layerId: string;
+    startTime: number;
   } | null>(null);
 
   const [memo, setMemo] = useState<Memo | null>(null);
@@ -175,6 +183,19 @@ export default function MemoEditorScreen() {
     if (pending.layerStartTimes) {
       void updateLayerStartTimes(pending.memoId, pending.layerStartTimes);
     }
+  }, []);
+
+  const flushStartTimePersist = useCallback(() => {
+    if (persistStartTimeTimeout.current) {
+      clearTimeout(persistStartTimeTimeout.current);
+      persistStartTimeTimeout.current = null;
+    }
+    const pending = pendingStartTimePersist.current;
+    if (!pending) {
+      return;
+    }
+    pendingStartTimePersist.current = null;
+    void updateLayerStartTimes(pending.memoId, { [pending.layerId]: pending.startTime });
   }, []);
 
   const commitActiveLayerTrim = useCallback(async (): Promise<boolean> => {
@@ -280,9 +301,13 @@ export default function MemoEditorScreen() {
         return;
       }
 
+      if (activeEditor === 'move' && tool !== 'move') {
+        flushStartTimePersist();
+      }
+
       setActiveEditor(tool);
     },
-    [activeEditor, commitTrimIfNeeded, savingTrim]
+    [activeEditor, commitTrimIfNeeded, flushStartTimePersist, savingTrim]
   );
 
   const handleTrimChange = useCallback(
@@ -290,6 +315,58 @@ export default function MemoEditorScreen() {
       handleEffectsChange({ trimIn, trimOut });
     },
     [handleEffectsChange]
+  );
+
+  const handleLayerStartTimeChange = useCallback(
+    (startTime: number) => {
+      if (!memo || !activeLayerId) {
+        return;
+      }
+
+      const layer = memo.layers.find((entry) => entry.id === activeLayerId);
+      if (!layer) {
+        return;
+      }
+
+      const trimIn = getLayerEffects(layer).trimIn;
+      const nextStartTime = clampLayerStartTime(startTime, trimIn);
+      const nextLayers = memo.layers.map((entry) =>
+        entry.id === activeLayerId ? { ...entry, startTime: nextStartTime } : entry
+      );
+      const previousDuration = memo.duration;
+      const timeline = getMemoTimelineDuration({ ...memo, layers: nextLayers });
+      let trimEnd = memo.trimEnd;
+      if (timeline <= 0) {
+        trimEnd = 0;
+      } else if (trimEnd === 0) {
+        trimEnd = timeline;
+      } else if (trimEnd > timeline) {
+        trimEnd = timeline;
+      } else {
+        const trimWasAtPreviousEnd = memo.trimEnd >= previousDuration - 0.05;
+        if (timeline > previousDuration && trimWasAtPreviousEnd) {
+          trimEnd = timeline;
+        }
+      }
+
+      setMemo({ ...memo, layers: nextLayers, duration: timeline, trimEnd });
+      engine.updateLayerStartTime(activeLayerId, nextStartTime);
+      engine.updateTimelineDuration(timeline);
+
+      pendingStartTimePersist.current = {
+        memoId: memo.id,
+        layerId: activeLayerId,
+        startTime: nextStartTime,
+      };
+
+      if (persistStartTimeTimeout.current) {
+        clearTimeout(persistStartTimeTimeout.current);
+      }
+      persistStartTimeTimeout.current = setTimeout(() => {
+        void updateLayerStartTimes(memo.id, { [activeLayerId]: nextStartTime });
+      }, 300);
+    },
+    [activeLayerId, engine, memo]
   );
 
   const handleTrackPress = useCallback(
@@ -304,10 +381,11 @@ export default function MemoEditorScreen() {
           return;
         }
 
+        flushStartTimePersist();
         setActiveLayerId(trackId);
       })();
     },
-    [activeLayerId, commitTrimIfNeeded, savingTrim]
+    [activeLayerId, commitTrimIfNeeded, flushStartTimePersist, savingTrim]
   );
 
   const loadMemo = useCallback(async () => {
@@ -335,6 +413,9 @@ export default function MemoEditorScreen() {
       if (persistEffectsTimeout.current) {
         clearTimeout(persistEffectsTimeout.current);
       }
+      if (persistStartTimeTimeout.current) {
+        clearTimeout(persistStartTimeTimeout.current);
+      }
     };
   }, [engine, loadMemo]);
 
@@ -358,6 +439,7 @@ export default function MemoEditorScreen() {
       return;
     }
     engine.pause();
+    flushStartTimePersist();
     const ok = await commitTrimIfNeeded();
     if (!ok) {
       return;
@@ -366,7 +448,7 @@ export default function MemoEditorScreen() {
       await updateTitle(memo.id, title);
     }
     router.back();
-  }, [commitTrimIfNeeded, engine, memo, title]);
+  }, [commitTrimIfNeeded, engine, flushStartTimePersist, memo, title]);
 
   const renderDoneButton = useCallback(
     () => (
@@ -522,6 +604,20 @@ export default function MemoEditorScreen() {
   const showTrackEditor =
     !isRecording && Boolean(activeLayer && activeLayer.duration > 0);
 
+  const availableTools = useMemo((): EditorTool[] => {
+    const base: EditorTool[] = ['trim', 'volume', 'reverb', 'delay', 'eq'];
+    if (memo && getPlayableLayers(memo).length > 1) {
+      return ['trim', 'move', 'volume', 'reverb', 'delay', 'eq'];
+    }
+    return base;
+  }, [memo]);
+
+  useEffect(() => {
+    if (activeEditor === 'move' && memo && getPlayableLayers(memo).length <= 1) {
+      setActiveEditor(null);
+    }
+  }, [activeEditor, memo]);
+
   const waveformDuration = isRecording
     ? Math.max(duration, recordingStartTime.current + engineState.recordingDuration, 0.01)
     : duration;
@@ -540,6 +636,7 @@ export default function MemoEditorScreen() {
       .map((layer) => {
         const isTrimEditing =
           activeEditor === 'trim' && !savingTrim && layer.id === activeLayerId;
+        const isMoveEditing = activeEditor === 'move' && layer.id === activeLayerId;
 
         if (isTrimEditing) {
           return {
@@ -547,6 +644,24 @@ export default function MemoEditorScreen() {
             peaks: layer.waveformPeaks,
             startTime: layer.startTime,
             duration: layer.duration,
+            isActive: true,
+          };
+        }
+
+        if (isMoveEditing) {
+          const effects = getLayerEffects(layer);
+          const activeDuration = getLayerActiveDuration(layer);
+
+          return {
+            id: layer.id,
+            peaks: slicePeaksForTrim(
+              layer.waveformPeaks,
+              layer.duration,
+              effects.trimIn,
+              effects.trimOut
+            ),
+            startTime: getLayerActiveStartTime(layer),
+            duration: Math.max(activeDuration, 0.01),
             isActive: true,
           };
         }
@@ -658,6 +773,16 @@ export default function MemoEditorScreen() {
                   }
                 : undefined
             }
+            moveOverlay={
+              activeEditor === 'move' && activeLayer && activeLayerEffects
+                ? {
+                    layerId: activeLayer.id,
+                    startTime: activeLayer.startTime,
+                    trimIn: activeLayerEffects.trimIn,
+                    onChange: handleLayerStartTimeChange,
+                  }
+                : undefined
+            }
             volumeVisualDb={
               activeEditor === 'volume' && activeLayerEffects
                 ? activeLayerEffects.volumeDb
@@ -675,6 +800,7 @@ export default function MemoEditorScreen() {
         {activeLayerEffects ? (
           <TrackEditorShell
             activeTool={activeEditor}
+            availableTools={availableTools}
             effects={activeLayerEffects}
             layerDuration={activeLayer?.duration ?? 0}
             visible={showTrackEditor}

@@ -40,6 +40,8 @@ const TRIM_HANDLE_TOUCH = 56;
 const TRIM_EDGE_SCROLL_ZONE = 56;
 const TRIM_EDGE_SCROLL_MAX_SPEED = 12;
 const TRIM_HANDLE_COLOR = '#FFCC00';
+const MOVE_BORDER_WIDTH = 2;
+const MOVE_SELECTION_FILL = 'rgba(0, 122, 255, 0.1)';
 
 export type TrimScrollHelpers = {
   viewportWidth: number;
@@ -53,6 +55,13 @@ export type TrimOverlayConfig = {
   trimIn: number;
   trimOut: number;
   onChange: (trimIn: number, trimOut: number) => void;
+};
+
+export type MoveOverlayConfig = {
+  layerId: string;
+  startTime: number;
+  trimIn: number;
+  onChange: (startTime: number) => void;
 };
 
 function getLayoutDuration(
@@ -90,6 +99,7 @@ type Props = {
   onTrackPress: (trackId: string) => void;
   onWidthChange?: (width: number) => void;
   trimOverlay?: TrimOverlayConfig;
+  moveOverlay?: MoveOverlayConfig;
   volumeVisualDb?: number;
 };
 
@@ -340,6 +350,117 @@ function TrackTrimOverlay({
   );
 }
 
+function TrackMoveOverlay({
+  track,
+  sidePadding,
+  trackHeight,
+  layerStartTime,
+  trimIn,
+  onChange,
+  trimScrollHelpers,
+}: {
+  track: TrackData;
+  sidePadding: number;
+  trackHeight: number;
+  layerStartTime: number;
+  trimIn: number;
+  onChange: (startTime: number) => void;
+  trimScrollHelpers: TrimScrollHelpers;
+}) {
+  const segmentLeft = sidePadding + track.startTime * PIXELS_PER_SECOND;
+  const segmentWidth = track.duration * PIXELS_PER_SECOND;
+  const startLayerStartTime = useRef(layerStartTime);
+  const scrollXAtGrant = useRef(0);
+  const onChangeRef = useRef(onChange);
+  const trimScrollHelpersRef = useRef(trimScrollHelpers);
+  const sidePaddingRef = useRef(sidePadding);
+  const trimInRef = useRef(trimIn);
+  onChangeRef.current = onChange;
+  trimScrollHelpersRef.current = trimScrollHelpers;
+  sidePaddingRef.current = sidePadding;
+  trimInRef.current = trimIn;
+
+  const beginGestureRef = useRef(() => {});
+  beginGestureRef.current = () => {
+    scrollXAtGrant.current = trimScrollHelpersRef.current.getScrollX();
+    startLayerStartTime.current = layerStartTime;
+    trimScrollHelpersRef.current.onTrimGestureActive(true);
+  };
+
+  const endGestureRef = useRef(() => {});
+  endGestureRef.current = () => {
+    trimScrollHelpersRef.current.onTrimGestureActive(false);
+  };
+
+  const getEffectiveDx = (gesture: PanResponderGestureState): number => {
+    const helpers = trimScrollHelpersRef.current;
+    return gesture.dx + (helpers.getScrollX() - scrollXAtGrant.current);
+  };
+
+  const applyEdgeAutoScroll = (contentX: number) => {
+    trimScrollHelpersRef.current.autoScrollForContentX(contentX);
+  };
+
+  const moveRef = useRef((_event: GestureResponderEvent, gesture: PanResponderGestureState) => {});
+  moveRef.current = (_event, gesture) => {
+    const preliminaryDx = getEffectiveDx(gesture);
+    applyEdgeAutoScroll(
+      segmentLeft + preliminaryDx
+    );
+    const effectiveDx = getEffectiveDx(gesture);
+    const nextStartTime = Math.max(
+      -trimInRef.current,
+      startLayerStartTime.current + effectiveDx / PIXELS_PER_SECOND
+    );
+    onChangeRef.current(nextStartTime);
+  };
+
+  const movePanCapture = {
+    onStartShouldSetPanResponder: () => true,
+    onStartShouldSetPanResponderCapture: () => true,
+    onMoveShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponderCapture: () => true,
+    onPanResponderTerminationRequest: () => false,
+  };
+
+  const moveResponder = useRef(
+    PanResponder.create({
+      ...movePanCapture,
+      onPanResponderGrant: () => beginGestureRef.current(),
+      onPanResponderMove: (event, gesture) => moveRef.current(event, gesture),
+      onPanResponderRelease: () => endGestureRef.current(),
+      onPanResponderTerminate: () => endGestureRef.current(),
+    })
+  ).current;
+
+  return (
+    <>
+      <View
+        pointerEvents="none"
+        style={[
+          styles.moveSelection,
+          {
+            left: segmentLeft,
+            width: Math.max(MOVE_BORDER_WIDTH * 2, segmentWidth),
+            height: trackHeight,
+          },
+        ]}
+      />
+      <View
+        {...moveResponder.panHandlers}
+        style={[
+          styles.moveHandle,
+          {
+            left: segmentLeft,
+            width: Math.max(TRIM_HANDLE_TOUCH, segmentWidth),
+            height: trackHeight,
+          },
+        ]}
+      />
+    </>
+  );
+}
+
 const TAP_DRAG_THRESHOLD = 10;
 
 function TrackWaveformRow({
@@ -350,6 +471,7 @@ function TrackWaveformRow({
   trackHeight,
   onPress,
   trimOverlay,
+  moveOverlay,
   volumeVisualDb,
   trimScrollHelpers,
   scrollPriority = false,
@@ -361,6 +483,7 @@ function TrackWaveformRow({
   trackHeight: number;
   onPress: (locationX: number) => void;
   trimOverlay?: TrimOverlayConfig;
+  moveOverlay?: MoveOverlayConfig;
   volumeVisualDb?: number;
   trimScrollHelpers?: TrimScrollHelpers;
   scrollPriority?: boolean;
@@ -387,6 +510,7 @@ function TrackWaveformRow({
       ? dbToLinear(volumeVisualDb)
       : 1;
   const showTrimOverlay = trimOverlay?.layerId === track.id;
+  const showMoveOverlay = moveOverlay?.layerId === track.id;
 
   const rowContent = (
     <View
@@ -448,6 +572,17 @@ function TrackWaveformRow({
           onChange={trimOverlay.onChange}
         />
       ) : null}
+      {showMoveOverlay && moveOverlay && trimScrollHelpers ? (
+        <TrackMoveOverlay
+          layerStartTime={moveOverlay.startTime}
+          sidePadding={sidePadding}
+          track={track}
+          trackHeight={trackHeight}
+          trimIn={moveOverlay.trimIn}
+          trimScrollHelpers={trimScrollHelpers}
+          onChange={moveOverlay.onChange}
+        />
+      ) : null}
     </View>
   );
 
@@ -500,6 +635,7 @@ export function WaveformView({
   onTrackPress,
   onWidthChange,
   trimOverlay,
+  moveOverlay,
   volumeVisualDb,
 }: Props) {
   const scrollRef = useRef<ScrollView>(null);
@@ -597,8 +733,10 @@ export function WaveformView({
     onSeekRef.current(scrollXToTime(x, duration));
   };
 
+  const gestureOverlay = trimOverlay ?? moveOverlay;
+
   const trimScrollHelpers = useMemo<TrimScrollHelpers | undefined>(() => {
-    if (!trimOverlay || viewportWidth <= 0) {
+    if (!gestureOverlay || viewportWidth <= 0) {
       return undefined;
     }
     return {
@@ -634,7 +772,7 @@ export function WaveformView({
         setTrimGestureActive(active);
       },
     };
-  }, [trimOverlay, viewportWidth]);
+  }, [gestureOverlay, viewportWidth]);
 
   const handleScrollEndDrag = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const velocity = event.nativeEvent.velocity?.x ?? 0;
@@ -648,25 +786,25 @@ export function WaveformView({
   };
 
   useEffect(() => {
-    if (trimOverlay) {
+    if (gestureOverlay) {
       return;
     }
     trimGestureActiveRef.current = false;
     setTrimGestureActive(false);
-  }, [trimOverlay]);
+  }, [gestureOverlay]);
 
   useEffect(() => {
     if (
       viewportWidth <= 0 ||
       isPlaying ||
       isRecording ||
-      trimOverlay ||
+      gestureOverlay ||
       isUserScrollingRef.current
     ) {
       return;
     }
     scrollRef.current?.scrollTo({ x: scrollX, animated: true });
-  }, [scrollX, viewportWidth, isRecording, isPlaying, trimOverlay]);
+  }, [scrollX, viewportWidth, isRecording, isPlaying, gestureOverlay]);
 
   useEffect(() => {
     if (!isPlaying || duration <= 0 || viewportWidth <= 0 || contentWidth <= 0) {
@@ -729,7 +867,10 @@ export function WaveformView({
               sidePadding={sidePadding}
               track={track}
               trackHeight={trackHeight}
-              scrollPriority={Boolean(trimOverlay && trimOverlay.layerId !== track.id)}
+              scrollPriority={Boolean(
+                gestureOverlay && gestureOverlay.layerId !== track.id
+              )}
+              moveOverlay={moveOverlay}
               trimOverlay={trimOverlay}
               trimScrollHelpers={trimScrollHelpers}
               volumeVisualDb={volumeVisualDb}
@@ -877,6 +1018,19 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 0,
     width: TRIM_HANDLE_TOUCH,
+    zIndex: 20,
+  },
+  moveSelection: {
+    position: 'absolute',
+    top: 0,
+    borderWidth: MOVE_BORDER_WIDTH,
+    borderColor: VoiceMemosColors.accent,
+    backgroundColor: MOVE_SELECTION_FILL,
+    zIndex: 10,
+  },
+  moveHandle: {
+    position: 'absolute',
+    top: 0,
     zIndex: 20,
   },
 });

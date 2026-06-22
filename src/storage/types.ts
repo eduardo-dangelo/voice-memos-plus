@@ -92,6 +92,10 @@ export function getPlayableLayers(memo: Memo): Layer[] {
   return memo.layers.filter((layer) => layer.duration > 0);
 }
 
+export function clampLayerStartTime(startTime: number, trimIn = 0): number {
+  return Math.max(-trimIn, startTime);
+}
+
 const TIMELINE_EPSILON = 0.001;
 
 function getGlobalEarliestActiveStart(layers: Layer[]): number {

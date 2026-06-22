@@ -372,6 +372,14 @@ export class MemoAudioEngine {
     }
   }
 
+  updateTimelineDuration(timelineDuration: number): void {
+    const trimEnd =
+      this.state.trimEnd > 0
+        ? Math.min(this.state.trimEnd, timelineDuration)
+        : timelineDuration;
+    this.emit({ duration: timelineDuration, trimEnd });
+  }
+
   unload(): void {
     this.stopPlayback();
     this.loadedLayers = [];
