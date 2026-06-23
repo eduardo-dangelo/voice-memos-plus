@@ -1,16 +1,12 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
-import { VoiceMemosColors } from '@/constants/VoiceMemosColors';
 import {
-  EQ_FREQUENCIES,
   EQ_PRESETS,
-  formatEqBand,
-  formatFrequency,
   type EqPreset,
   type LayerEffects,
 } from '@/src/audio/layerEffects';
 
-import { EditorSlider } from '../primitives/EditorSlider';
+import { EqCurveChart } from '../primitives/EqCurveChart';
 import { PresetPills } from '../primitives/PresetPills';
 
 type Props = {
@@ -69,27 +65,7 @@ export function EQEditor({ effects, onChange }: Props) {
         <PresetPills options={PRESETS} selectedId={preset} onSelect={handlePreset} />
       </View>
       {showBands ? (
-        <View style={styles.bandsRow}>
-          {bands.map((bandValue, index) => (
-            <View key={EQ_FREQUENCIES[index]} style={styles.bandColumn}>
-              <Pressable onPress={() => updateBand(index, 0)}>
-                <Text style={styles.bandValue}>{formatEqBand(bandValue)}</Text>
-              </Pressable>
-              <EditorSlider
-                maximumValue={12}
-                minimumValue={-12}
-                orientation="vertical"
-                showCenterTick
-                stepCount={100}
-                gestureSensitivity={1}
-                value={bandValue}
-                onSlidingComplete={(value) => updateBand(index, value)}
-                onValueChange={(value) => updateBand(index, value)}
-              />
-              <Text style={styles.frequency}>{formatFrequency(EQ_FREQUENCIES[index])}</Text>
-            </View>
-          ))}
-        </View>
+        <EqCurveChart bands={bands} onChange={updateBand} />
       ) : null}
     </View>
   );
@@ -106,26 +82,5 @@ const styles = StyleSheet.create({
   },
   presetRow: {
     alignItems: 'center',
-  },
-  bandsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingHorizontal: 4,
-  },
-  bandColumn: {
-    alignItems: 'center',
-    flex: 1,
-    gap: 2,
-  },
-  bandValue: {
-    fontSize: 11,
-    fontWeight: '500',
-    color: VoiceMemosColors.text,
-    fontVariant: ['tabular-nums'],
-    minHeight: 14,
-  },
-  frequency: {
-    fontSize: 10,
-    color: VoiceMemosColors.secondaryText,
   },
 });
