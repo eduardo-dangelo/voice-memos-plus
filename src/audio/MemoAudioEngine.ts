@@ -18,11 +18,15 @@ import {
 import {
   applyLayerEffects,
   buildLayerEffectGraph,
-  connectEffectOutputs,
-  connectSourceToChain,
-  type LayerEffectNodes,
+  connectDelayPathToDestination,
+  connectDryPathToDestination,
+  connectReverbPathToDestination,
+  connectSourceToPath,
+  isDelayPathActive,
+  isReverbPathActive,
+  type LayerEffectGraph,
 } from '@/src/audio/layerEffectChain';
-import { normalizeLayerEffects, mergeLayerEffects, hasFullEffectChain, dbToLinear, type LayerEffects } from '@/src/audio/layerEffects';
+import { normalizeLayerEffects, mergeLayerEffects, type LayerEffects } from '@/src/audio/layerEffects';
 
 const MAX_RECORDING_PEAKS = 150;
 const RECORDING_BAR_STEP = WAVEFORM_BAR_WIDTH + WAVEFORM_BAR_GAP;
@@ -42,7 +46,7 @@ export type LoadedLayer = {
 
 type ActiveLayerPlayback = {
   layerId: string;
-  nodes: LayerEffectNodes;
+  graph: LayerEffectGraph;
 };
 
 export type EngineState = {
@@ -349,12 +353,27 @@ export class MemoAudioEngine {
       return;
     }
 
+    const active = this.activeLayerPlayback.get(layerId);
     const current = normalizeLayerEffects({ duration: layer.duration, effects: layer.effects });
     layer.effects = mergeLayerEffects(current, partial, layer.duration);
+    const nextEffects = normalizeLayerEffects({ duration: layer.duration, effects: layer.effects });
 
-    const active = this.activeLayerPlayback.get(layerId);
+    const needsPathRestart =
+      this.state.isPlaying &&
+      active !== undefined &&
+      ((!active.graph.delay && isDelayPathActive(nextEffects)) ||
+        (!active.graph.reverb && isReverbPathActive(nextEffects)));
+
+    if (needsPathRestart && this.context) {
+      const currentTime = this.getElapsedPlaybackTime(this.context);
+      this.invalidateAndStopSources();
+      this.emit({ currentTime, isPlaying: false });
+      void this.play();
+      return;
+    }
+
     if (active && this.context) {
-      applyLayerEffects(active.nodes, layer.effects, this.context);
+      applyLayerEffects(active.graph, nextEffects, this.context);
     }
   }
 
@@ -534,32 +553,48 @@ export class MemoAudioEngine {
           continue;
         }
 
-        const source = context.createBufferSource();
-        source.buffer = buffer;
-
-        if (hasFullEffectChain(playbackEffects)) {
-          const nodes = buildLayerEffectGraph(context, playbackEffects);
-          connectSourceToChain(source, nodes);
-          connectEffectOutputs(nodes, context.destination);
-          this.activeLayerPlayback.set(layer.id, { layerId: layer.id, nodes });
-        } else if (playbackEffects.volumeDb !== 0) {
-          const gain = context.createGain();
-          gain.gain.setValueAtTime(dbToLinear(playbackEffects.volumeDb), context.currentTime);
-          source.connect(gain);
-          gain.connect(context.destination);
-        } else {
-          source.connect(context.destination);
-        }
+        const graph = buildLayerEffectGraph(context, playbackEffects);
 
         const layerPlayLength = Math.min(
           layerPlayDuration,
           trimOut - bufferOffset
         );
 
-        source.start(when + delay, bufferOffset);
-        source.stop(when + delay + layerPlayLength);
-        this.sources.push(source);
+        const startWhen = when + delay;
+        const stopWhen = startWhen + layerPlayLength;
+
+        const drySource = context.createBufferSource();
+        drySource.buffer = buffer;
+        connectSourceToPath(drySource, graph.dry);
+        connectDryPathToDestination(graph, context.destination);
+        drySource.start(startWhen, bufferOffset);
+        drySource.stop(stopWhen);
+        this.sources.push(drySource);
         scheduledSources += 1;
+
+        if (graph.delay) {
+          const delaySource = context.createBufferSource();
+          delaySource.buffer = buffer;
+          connectSourceToPath(delaySource, graph.delay);
+          connectDelayPathToDestination(graph, context.destination);
+          delaySource.start(startWhen, bufferOffset);
+          delaySource.stop(stopWhen);
+          this.sources.push(delaySource);
+          scheduledSources += 1;
+        }
+
+        if (graph.reverb) {
+          const reverbSource = context.createBufferSource();
+          reverbSource.buffer = buffer;
+          connectSourceToPath(reverbSource, graph.reverb);
+          connectReverbPathToDestination(graph, context.destination);
+          reverbSource.start(startWhen, bufferOffset);
+          reverbSource.stop(stopWhen);
+          this.sources.push(reverbSource);
+          scheduledSources += 1;
+        }
+
+        this.activeLayerPlayback.set(layer.id, { layerId: layer.id, graph });
       }
 
       if (scheduledSources === 0) {

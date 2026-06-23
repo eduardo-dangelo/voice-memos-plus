@@ -1,3 +1,5 @@
+import type { LayerEffects } from '@/src/audio/layerEffects';
+
 export type EditorTool = 'trim' | 'move' | 'volume' | 'reverb' | 'delay' | 'eq';
 
 export const EDITOR_TOOLS: {
@@ -21,16 +23,19 @@ export const EDITOR_TOOLS: {
 
 export const EDITOR_CANVAS_HEIGHT = 132;
 export const EDITOR_CANVAS_HEIGHT_REVERB = 148;
+export const EDITOR_CANVAS_HEIGHT_REVERB_COMPACT = 50;
 export const EDITOR_CANVAS_HEIGHT_DELAY = 188;
 export const EDITOR_STRIP_HEIGHT = 56;
 
-export function getEditorCanvasHeight(tool: EditorTool | null): number {
+export function getEditorCanvasHeight(tool: EditorTool | null, effects?: LayerEffects): number {
   if (!tool || tool === 'trim' || tool === 'move') {
     return 0;
   }
   switch (tool) {
     case 'reverb':
-      return EDITOR_CANVAS_HEIGHT_REVERB;
+      return effects?.reverb.preset === 'custom'
+        ? EDITOR_CANVAS_HEIGHT_REVERB
+        : EDITOR_CANVAS_HEIGHT_REVERB_COMPACT;
     case 'delay':
       return EDITOR_CANVAS_HEIGHT_DELAY;
     default:

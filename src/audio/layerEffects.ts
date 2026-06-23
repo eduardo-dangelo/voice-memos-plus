@@ -1,4 +1,23 @@
-export type ReverbPreset = 'off' | 'room' | 'hall' | 'plate';
+export type ReverbPreset =
+  | 'off'
+  | 'room'
+  | 'hall'
+  | 'plate'
+  | 'chamber'
+  | 'cathedral'
+  | 'spring'
+  | 'custom';
+
+export const REVERB_PRESETS: ReverbPreset[] = [
+  'off',
+  'room',
+  'hall',
+  'plate',
+  'chamber',
+  'cathedral',
+  'spring',
+  'custom',
+];
 export type DelaySync = 'off' | '1/8' | '1/4' | '1/2' | '1/1';
 
 export type LayerReverbEffects = {
@@ -33,13 +52,20 @@ export const MIN_TRIM_SELECTION = 0.5;
 export const TRIM_SNAP_SECONDS = 0.1;
 
 export const REVERB_PRESET_DEFAULTS: Record<
-  Exclude<ReverbPreset, 'off'>,
+  Exclude<ReverbPreset, 'off' | 'custom'>,
   { mix: number; decay: number }
 > = {
   room: { mix: 25, decay: 0.6 },
   hall: { mix: 35, decay: 1.8 },
   plate: { mix: 30, decay: 1.2 },
+  chamber: { mix: 20, decay: 0.4 },
+  cathedral: { mix: 40, decay: 2.5 },
+  spring: { mix: 28, decay: 1.0 },
 };
+
+function isReverbPreset(value: unknown): value is ReverbPreset {
+  return typeof value === 'string' && REVERB_PRESETS.includes(value as ReverbPreset);
+}
 
 export const EQ_PRESETS: Record<string, [number, number, number, number, number]> = {
   flat: [0, 0, 0, 0, 0],
@@ -91,13 +117,24 @@ export function normalizeLayerEffects(
     Math.max(trimIn + MIN_TRIM_SELECTION, layer.effects.trimOut ?? layer.duration)
   );
 
+  const reverbPreset = (() => {
+    const storedPreset = layer.effects.reverb?.preset;
+    if (storedPreset == null) {
+      return defaults.reverb.preset;
+    }
+    return isReverbPreset(storedPreset) ? storedPreset : 'room';
+  })();
+
   return {
     trimIn,
     trimOut: layer.duration > 0 ? trimOut : defaults.trimOut,
     volumeDb: layer.effects.volumeDb ?? 0,
     reverb: {
-      preset: layer.effects.reverb?.preset ?? defaults.reverb.preset,
-      mix: layer.effects.reverb?.mix ?? defaults.reverb.mix,
+      preset: reverbPreset,
+      mix:
+        reverbPreset === 'off'
+          ? 0
+          : (layer.effects.reverb?.mix ?? defaults.reverb.mix),
       decay: layer.effects.reverb?.decay ?? defaults.reverb.decay,
     },
     delay: {

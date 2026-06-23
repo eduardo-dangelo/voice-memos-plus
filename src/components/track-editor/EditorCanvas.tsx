@@ -28,7 +28,8 @@ export function EditorCanvas({
   layerDuration,
   onEffectsChange,
 }: Props) {
-  const canvasHeight = getEditorCanvasHeight(activeTool);
+  const canvasHeight = getEditorCanvasHeight(activeTool, effects);
+  const reverbCompact = activeTool === 'reverb' && effects.reverb.preset !== 'custom';
 
   if (canvasHeight === 0) {
     return null;
@@ -36,7 +37,12 @@ export function EditorCanvas({
 
   return (
     <View style={[styles.container, { height: canvasHeight }]}>
-      <View style={[styles.content, { height: canvasHeight }]}>
+      <View
+        style={[
+          styles.content,
+          { height: canvasHeight },
+          reverbCompact && styles.contentReverbCompact,
+        ]}>
         {activeTool === 'volume' ? (
           <VolumeEditor
             effects={effects}
@@ -75,5 +81,8 @@ const styles = StyleSheet.create({
   content: {
     paddingHorizontal: 16,
     paddingVertical: 4,
+  },
+  contentReverbCompact: {
+    paddingVertical: 2,
   },
 });

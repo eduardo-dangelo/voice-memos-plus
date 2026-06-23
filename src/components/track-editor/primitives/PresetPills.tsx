@@ -12,6 +12,7 @@ export function PresetPills<T extends string>({ options, selectedId, onSelect }:
   return (
     <ScrollView
       horizontal
+      style={styles.scroll}
       contentContainerStyle={styles.row}
       showsHorizontalScrollIndicator={false}>
       {options.map((option) => {
@@ -30,15 +31,22 @@ export function PresetPills<T extends string>({ options, selectedId, onSelect }:
 }
 
 const styles = StyleSheet.create({
+  scroll: {
+    flexGrow: 0,
+    flexShrink: 0,
+  },
   row: {
     flexDirection: 'row',
+    alignItems: 'center',
     gap: 8,
-    paddingHorizontal: 2,
+    paddingHorizontal: 6,
   },
   pill: {
+    alignItems: 'center',
+    justifyContent: 'center',
     paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 16,
+    paddingVertical: 8,
+    borderRadius: 10,
     backgroundColor: VoiceMemosColors.waveformBandBackground,
   },
   pillSelected: {
@@ -47,6 +55,8 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 13,
     fontWeight: '500',
+    lineHeight: 16,
+    includeFontPadding: false,
     color: VoiceMemosColors.text,
   },
   labelSelected: {
