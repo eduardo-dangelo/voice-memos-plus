@@ -1,4 +1,5 @@
-import { Pressable, ScrollView, StyleSheet, Text } from 'react-native';
+import { Pressable, StyleSheet, Text } from 'react-native';
+import { ScrollView } from 'react-native-gesture-handler';
 
 import { VoiceMemosColors } from '@/constants/VoiceMemosColors';
 

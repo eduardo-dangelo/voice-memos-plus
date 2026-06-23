@@ -1,6 +1,6 @@
 import { StyleSheet, View } from 'react-native';
 
-import type { LayerEffects } from '@/src/audio/layerEffects';
+import type { LayerEffects, LayerEffectsChange } from '@/src/audio/layerEffects';
 
 import { EditorCanvas } from './EditorCanvas';
 import { EditorToolStrip } from './EditorToolStrip';
@@ -13,11 +13,7 @@ type Props = {
   effects: LayerEffects;
   layerDuration: number;
   onToolChange: (tool: EditorTool | null) => void;
-  onEffectsChange: (partial: Partial<LayerEffects> & {
-    reverb?: Partial<LayerEffects['reverb']>;
-    delay?: Partial<LayerEffects['delay']>;
-    eq?: Partial<LayerEffects['eq']>;
-  }) => void;
+  onEffectsChange: (partial: LayerEffectsChange) => void;
 };
 
 export function TrackEditorShell({

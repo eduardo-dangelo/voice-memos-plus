@@ -16,7 +16,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { VoiceMemosColors } from '@/constants/VoiceMemosColors';
-import type { LayerEffects } from '@/src/audio/layerEffects';
+import type { LayerEffects, LayerEffectsChange } from '@/src/audio/layerEffects';
 import { isDefaultTrim, mergeLayerEffects } from '@/src/audio/layerEffects';
 import { useAudioEngine, useAudioEngineState } from '@/src/audio/AudioEngineContext';
 import { PlaybackControls } from '@/src/components/PlaybackControls';
@@ -104,40 +104,58 @@ export default function MemoEditorScreen() {
   }, [activeLayer]);
 
   const handleEffectsChange = useCallback(
-    (partial: Parameters<typeof updateLayerEffects>[2]) => {
-      if (!memo || !activeLayerId) {
+    (partial: LayerEffectsChange) => {
+      if (!activeLayerId) {
         return;
       }
 
-      const layer = memo.layers.find((entry) => entry.id === activeLayerId);
-      if (!layer) {
-        return;
-      }
+      let nextEffects: ReturnType<typeof mergeLayerEffects> | null = null;
+      let layerStartTimes: Record<string, number> | undefined;
+      let memoId: string | null = null;
 
-      const nextEffects = mergeLayerEffects(getLayerEffects(layer), partial, layer.duration);
-      const trimInChanged = partial.trimIn !== undefined;
-      const timelineDelta = trimInChanged
-        ? getEarliestTrimInTimelineDelta(layer, memo.layers, nextEffects.trimIn)
-        : 0;
-      const shiftedLayers = applyTimelineDeltaToLayers(memo.layers, timelineDelta);
-      const nextLayers = shiftedLayers.map((entry) =>
-        entry.id === activeLayerId ? { ...entry, effects: nextEffects } : entry
-      );
-      const layerStartTimes =
-        timelineDelta !== 0
-          ? Object.fromEntries(nextLayers.map((entry) => [entry.id, entry.startTime]))
-          : undefined;
+      setMemo((prev) => {
+        if (!prev) {
+          return prev;
+        }
 
-      setMemo({
-        ...memo,
-        layers: nextLayers,
+        const layer = prev.layers.find((entry) => entry.id === activeLayerId);
+        if (!layer) {
+          return prev;
+        }
+
+        const mergedEffects = mergeLayerEffects(getLayerEffects(layer), partial, layer.duration);
+        const trimInChanged = partial.trimIn !== undefined;
+        const timelineDelta = trimInChanged
+          ? getEarliestTrimInTimelineDelta(layer, prev.layers, mergedEffects.trimIn)
+          : 0;
+        const shiftedLayers = applyTimelineDeltaToLayers(prev.layers, timelineDelta);
+        const nextLayers = shiftedLayers.map((entry) =>
+          entry.id === activeLayerId ? { ...entry, effects: mergedEffects } : entry
+        );
+
+        nextEffects = mergedEffects;
+        memoId = prev.id;
+        layerStartTimes =
+          timelineDelta !== 0
+            ? Object.fromEntries(nextLayers.map((entry) => [entry.id, entry.startTime]))
+            : undefined;
+
+        return {
+          ...prev,
+          layers: nextLayers,
+        };
       });
+
+      if (!nextEffects || !memoId) {
+        return;
+      }
+
       engine.updateLayerEffects(activeLayerId, partial);
       if (layerStartTimes) {
         engine.updateLayerStartTimes(layerStartTimes);
       }
       pendingEffectsPersist.current = {
-        memoId: memo.id,
+        memoId,
         layerId: activeLayerId,
         effects: nextEffects,
         ...(layerStartTimes ? { layerStartTimes } : {}),
@@ -147,20 +165,20 @@ export default function MemoEditorScreen() {
         clearTimeout(persistEffectsTimeout.current);
       }
       persistEffectsTimeout.current = setTimeout(() => {
-        void updateLayerEffects(memo.id, activeLayerId, {
-          trimIn: nextEffects.trimIn,
-          trimOut: nextEffects.trimOut,
-          volumeDb: nextEffects.volumeDb,
-          reverb: nextEffects.reverb,
-          delay: nextEffects.delay,
-          eq: nextEffects.eq,
+        void updateLayerEffects(memoId!, activeLayerId, {
+          trimIn: nextEffects!.trimIn,
+          trimOut: nextEffects!.trimOut,
+          volumeDb: nextEffects!.volumeDb,
+          reverb: nextEffects!.reverb,
+          delay: nextEffects!.delay,
+          eq: nextEffects!.eq,
         });
         if (layerStartTimes) {
-          void updateLayerStartTimes(memo.id, layerStartTimes);
+          void updateLayerStartTimes(memoId!, layerStartTimes);
         }
       }, 300);
     },
-    [activeLayerId, engine, memo]
+    [activeLayerId, engine]
   );
 
   const flushEffectsPersist = useCallback(() => {
@@ -617,6 +635,13 @@ export default function MemoEditorScreen() {
       setActiveEditor(null);
     }
   }, [activeEditor, memo]);
+
+  const blockSheetGesture =
+    activeEditor === 'eq' && activeLayerEffects?.eq.preset === 'custom';
+
+  useLayoutEffect(() => {
+    navigation.setOptions({ gestureEnabled: !blockSheetGesture });
+  }, [navigation, blockSheetGesture]);
 
   const waveformDuration = isRecording
     ? Math.max(duration, recordingStartTime.current + engineState.recordingDuration, 0.01)

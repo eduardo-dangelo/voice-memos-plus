@@ -6,6 +6,7 @@ import {
   EQ_PRESETS,
   formatEqBand,
   formatFrequency,
+  type EqPreset,
   type LayerEffects,
 } from '@/src/audio/layerEffects';
 
@@ -14,64 +15,82 @@ import { PresetPills } from '../primitives/PresetPills';
 
 type Props = {
   effects: LayerEffects;
-  onChange: (bands: LayerEffects['eq']['bands']) => void;
+  onChange: (partial: Partial<LayerEffects['eq']>) => void;
 };
 
-const PRESET_OPTIONS = [
-  { id: 'flat', label: 'Flat' },
+const PRESETS: { id: EqPreset; label: string }[] = [
+  { id: 'off', label: 'Off' },
   { id: 'voice', label: 'Voice' },
   { id: 'warm', label: 'Warm' },
   { id: 'bright', label: 'Bright' },
+  { id: 'podcast', label: 'Podcast' },
+  { id: 'bass', label: 'Bass' },
+  { id: 'treble', label: 'Treble' },
+  { id: 'air', label: 'Air' },
+  { id: 'muffled', label: 'Muffled' },
+  { id: 'custom', label: 'Custom' },
 ];
 
+const FLAT_BANDS: LayerEffects['eq']['bands'] = [0, 0, 0, 0, 0];
+
 export function EQEditor({ effects, onChange }: Props) {
-  const { bands } = effects.eq;
+  const { eq } = effects;
+  const { bands, preset } = eq;
+  const showBands = preset === 'custom';
 
   const updateBand = (index: number, value: number) => {
     const next = [...bands] as LayerEffects['eq']['bands'];
     next[index] = value;
-    onChange(next);
+    onChange({ bands: next });
   };
 
-  const handlePreset = (presetId: string) => {
-    const preset = EQ_PRESETS[presetId];
-    if (preset) {
-      onChange([...preset] as LayerEffects['eq']['bands']);
+  const handlePreset = (nextPreset: EqPreset) => {
+    if (nextPreset === 'off') {
+      onChange({ preset: 'off', bands: FLAT_BANDS });
+      return;
     }
+    if (nextPreset === 'custom') {
+      if (preset === 'off') {
+        onChange({ preset: 'custom', bands: FLAT_BANDS });
+      } else {
+        onChange({ preset: 'custom', bands });
+      }
+      return;
+    }
+    onChange({
+      preset: nextPreset,
+      bands: [...EQ_PRESETS[nextPreset]] as LayerEffects['eq']['bands'],
+    });
   };
-
-  const activePreset =
-    PRESET_OPTIONS.find(({ id }) =>
-      EQ_PRESETS[id]?.every((value, index) => Math.abs(value - bands[index]) < 0.5)
-    )?.id ?? 'flat';
 
   return (
-    <View style={styles.container}>
-      <PresetPills
-        options={PRESET_OPTIONS}
-        selectedId={activePreset}
-        onSelect={handlePreset}
-      />
-      <View style={styles.bandsRow}>
-        {bands.map((bandValue, index) => (
-          <View key={EQ_FREQUENCIES[index]} style={styles.bandColumn}>
-            <Pressable onPress={() => updateBand(index, 0)}>
-              <Text style={styles.bandValue}>{formatEqBand(bandValue)}</Text>
-            </Pressable>
-            <EditorSlider
-              maximumValue={12}
-              minimumValue={-12}
-              orientation="vertical"
-              showCenterTick
-              snapPoints={[-12, -6, 0, 6, 12]}
-              value={bandValue}
-              onSlidingComplete={(value) => updateBand(index, value)}
-              onValueChange={(value) => updateBand(index, value)}
-            />
-            <Text style={styles.frequency}>{formatFrequency(EQ_FREQUENCIES[index])}</Text>
-          </View>
-        ))}
+    <View style={[styles.container, !showBands && styles.containerCompact]}>
+      <View style={styles.presetRow}>
+        <PresetPills options={PRESETS} selectedId={preset} onSelect={handlePreset} />
       </View>
+      {showBands ? (
+        <View style={styles.bandsRow}>
+          {bands.map((bandValue, index) => (
+            <View key={EQ_FREQUENCIES[index]} style={styles.bandColumn}>
+              <Pressable onPress={() => updateBand(index, 0)}>
+                <Text style={styles.bandValue}>{formatEqBand(bandValue)}</Text>
+              </Pressable>
+              <EditorSlider
+                maximumValue={12}
+                minimumValue={-12}
+                orientation="vertical"
+                showCenterTick
+                stepCount={100}
+                gestureSensitivity={1}
+                value={bandValue}
+                onSlidingComplete={(value) => updateBand(index, value)}
+                onValueChange={(value) => updateBand(index, value)}
+              />
+              <Text style={styles.frequency}>{formatFrequency(EQ_FREQUENCIES[index])}</Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -81,6 +100,12 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     gap: 4,
+  },
+  containerCompact: {
+    justifyContent: 'center',
+  },
+  presetRow: {
+    alignItems: 'center',
   },
   bandsRow: {
     flexDirection: 'row',

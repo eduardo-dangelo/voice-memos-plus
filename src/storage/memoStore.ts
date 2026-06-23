@@ -6,6 +6,7 @@ import {
   isDefaultTrim,
   mergeLayerEffects,
   type LayerEffects,
+  type LayerEffectsChange,
 } from '@/src/audio/layerEffects';
 import { mixLayersToFile, spliceRecording } from '@/src/audio/wavUtils';
 import { createDefaultTitle } from '@/src/utils/format';
@@ -185,11 +186,7 @@ export async function updateTrim(
 export async function updateLayerEffects(
   memoId: string,
   layerId: string,
-  partial: Partial<LayerEffects> & {
-    reverb?: Partial<LayerEffects['reverb']>;
-    delay?: Partial<LayerEffects['delay']>;
-    eq?: Partial<LayerEffects['eq']>;
-  }
+  partial: LayerEffectsChange
 ): Promise<Memo> {
   const memo = await getMemo(memoId);
   if (!memo) {
@@ -278,7 +275,7 @@ export async function commitLayerTrim(
     volumeDb: effects.volumeDb,
     reverb: { ...effects.reverb },
     delay: { ...effects.delay },
-    eq: { bands: [...effects.eq.bands] as LayerEffects['eq']['bands'] },
+    eq: { preset: effects.eq.preset, bands: [...effects.eq.bands] as LayerEffects['eq']['bands'] },
   };
 
   const timelineDelta = getEarliestTrimInTimelineDelta(layer, memo.layers, bounds.trimIn);

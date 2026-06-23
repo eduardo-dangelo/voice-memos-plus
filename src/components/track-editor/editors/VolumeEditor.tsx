@@ -11,15 +11,12 @@ type Props = {
 };
 
 export function VolumeEditor({ effects, onChange }: Props) {
-  const snapPoints = [-24, -12, -6, 0, 6, 12, 18, 24];
-
   return (
     <View style={styles.container}>
       <EditorSlider
         maximumValue={24}
         minimumValue={-24}
         showCenterTick
-        snapPoints={snapPoints}
         value={effects.volumeDb}
         onSlidingComplete={onChange}
         onValueChange={onChange}

@@ -26,7 +26,7 @@ import {
   isReverbPathActive,
   type LayerEffectGraph,
 } from '@/src/audio/layerEffectChain';
-import { normalizeLayerEffects, mergeLayerEffects, type LayerEffects } from '@/src/audio/layerEffects';
+import { normalizeLayerEffects, mergeLayerEffects, type LayerEffects, type LayerEffectsChange } from '@/src/audio/layerEffects';
 
 const MAX_RECORDING_PEAKS = 150;
 const RECORDING_BAR_STEP = WAVEFORM_BAR_WIDTH + WAVEFORM_BAR_GAP;
@@ -343,11 +343,7 @@ export class MemoAudioEngine {
     });
   }
 
-  updateLayerEffects(layerId: string, partial: Partial<LayerEffects> & {
-    reverb?: Partial<LayerEffects['reverb']>;
-    delay?: Partial<LayerEffects['delay']>;
-    eq?: Partial<LayerEffects['eq']>;
-  }): void {
+  updateLayerEffects(layerId: string, partial: LayerEffectsChange): void {
     const layer = this.loadedLayers.find((entry) => entry.id === layerId);
     if (!layer) {
       return;

@@ -1,5 +1,5 @@
 import * as Haptics from 'expo-haptics';
-import { useCallback, useRef } from 'react';
+import { useRef, useState } from 'react';
 import {
   LayoutChangeEvent,
   PanResponder,
@@ -11,6 +11,10 @@ import {
 
 import { VoiceMemosColors } from '@/constants/VoiceMemosColors';
 
+const THUMB_RADIUS = 14;
+const VERTICAL_TRACK_HEIGHT = 100;
+const DEFAULT_GESTURE_SENSITIVITY = 2;
+
 type Props = {
   value: number;
   minimumValue: number;
@@ -20,6 +24,8 @@ type Props = {
   orientation?: 'horizontal' | 'vertical';
   snapPoints?: number[];
   showCenterTick?: boolean;
+  stepCount?: number;
+  gestureSensitivity?: number;
 };
 
 function clamp(value: number, min: number, max: number): number {
@@ -49,6 +55,12 @@ function maximumSpan(snapPoints: number[]): number {
   return Math.max(...snapPoints) - Math.min(...snapPoints);
 }
 
+function quantizeToStepCount(value: number, min: number, max: number, stepCount: number): number {
+  const step = (max - min) / stepCount;
+  const steps = Math.round((value - min) / step);
+  return clamp(min + steps * step, min, max);
+}
+
 export function EditorSlider({
   value,
   minimumValue,
@@ -58,54 +70,71 @@ export function EditorSlider({
   orientation = 'horizontal',
   snapPoints = [],
   showCenterTick = false,
+  stepCount,
+  gestureSensitivity = DEFAULT_GESTURE_SENSITIVITY,
 }: Props) {
   const trackSize = useRef({ width: 1, height: 1 });
+  const [laneHeight, setLaneHeight] = useState(VERTICAL_TRACK_HEIGHT);
   const startValue = useRef(value);
   const lastSnapped = useRef<number | null>(null);
 
-  const ratioToValue = useCallback(
-    (ratio: number) => {
-      const raw = minimumValue + clamp(ratio, 0, 1) * (maximumValue - minimumValue);
-      if (snapPoints.length === 0) {
-        return raw;
-      }
-      const snapped = snapValue(raw, snapPoints);
-      if (snapped !== lastSnapped.current && snapPoints.some((point) => Math.abs(point - snapped) < 0.01)) {
-        lastSnapped.current = snapped;
-        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      }
-      return snapped;
-    },
-    [maximumValue, minimumValue, snapPoints]
-  );
+  const valueRef = useRef(value);
+  const minimumValueRef = useRef(minimumValue);
+  const maximumValueRef = useRef(maximumValue);
+  const snapPointsRef = useRef(snapPoints);
+  const stepCountRef = useRef(stepCount);
+  const gestureSensitivityRef = useRef(gestureSensitivity);
+  const orientationRef = useRef(orientation);
+  const onValueChangeRef = useRef(onValueChange);
+  const onSlidingCompleteRef = useRef(onSlidingComplete);
 
-  const handleLayout = (event: LayoutChangeEvent) => {
-    trackSize.current = event.nativeEvent.layout;
-  };
+  valueRef.current = value;
+  minimumValueRef.current = minimumValue;
+  maximumValueRef.current = maximumValue;
+  snapPointsRef.current = snapPoints;
+  stepCountRef.current = stepCount;
+  gestureSensitivityRef.current = gestureSensitivity;
+  orientationRef.current = orientation;
+  onValueChangeRef.current = onValueChange;
+  onSlidingCompleteRef.current = onSlidingComplete;
 
-  const updateFromGesture = (
-    gesture: PanResponderGestureState,
-    isComplete: boolean
-  ) => {
+  const applyGesture = (gesture: PanResponderGestureState, isComplete: boolean) => {
     const { width, height } = trackSize.current;
-    const range = maximumValue - minimumValue;
+    const min = minimumValueRef.current;
+    const max = maximumValueRef.current;
+    const range = max - min;
     let next: number;
 
-    if (orientation === 'horizontal') {
+    if (orientationRef.current === 'horizontal') {
       const deltaRatio = width > 0 ? gesture.dx / width : 0;
       next = startValue.current + deltaRatio * range;
     } else {
-      const deltaRatio = height > 0 ? -gesture.dy / height : 0;
+      const travel = Math.max(1, height - THUMB_RADIUS * 2);
+      const deltaRatio = (-gesture.dy / travel) * gestureSensitivityRef.current;
       next = startValue.current + deltaRatio * range;
     }
 
-    next = clamp(next, minimumValue, maximumValue);
-    if (snapPoints.length > 0) {
-      next = snapValue(next, snapPoints);
+    const points = snapPointsRef.current;
+    next = clamp(next, min, max);
+    const steps = stepCountRef.current;
+    if (steps != null && steps > 0) {
+      next = quantizeToStepCount(next, min, max, steps);
     }
-    onValueChange(next);
+    if (points.length > 0) {
+      const snapped = snapValue(next, points);
+      if (
+        snapped !== lastSnapped.current &&
+        points.some((point) => Math.abs(point - snapped) < 0.01)
+      ) {
+        lastSnapped.current = snapped;
+        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      }
+      next = snapped;
+    }
+
+    onValueChangeRef.current(next);
     if (isComplete) {
-      onSlidingComplete?.(next);
+      onSlidingCompleteRef.current?.(next);
     }
   };
 
@@ -114,27 +143,34 @@ export function EditorSlider({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => true,
       onPanResponderGrant: () => {
-        startValue.current = value;
+        startValue.current = valueRef.current;
         lastSnapped.current = null;
       },
       onPanResponderMove: (_event: GestureResponderEvent, gesture: PanResponderGestureState) => {
-        updateFromGesture(gesture, false);
+        applyGesture(gesture, false);
       },
       onPanResponderRelease: (_event: GestureResponderEvent, gesture: PanResponderGestureState) => {
-        updateFromGesture(gesture, true);
+        applyGesture(gesture, true);
       },
-    })
+      onPanResponderTerminationRequest: () => false,
+    }),
   ).current;
+
+  const handleLayout = (event: LayoutChangeEvent) => {
+    const { width, height } = event.nativeEvent.layout;
+    trackSize.current = { width, height };
+    if (orientationRef.current === 'vertical') {
+      setLaneHeight(height);
+    }
+  };
 
   const ratio = (value - minimumValue) / (maximumValue - minimumValue);
   const isVertical = orientation === 'vertical';
+  const thumbTravel = Math.max(0, laneHeight - THUMB_RADIUS * 2);
+  const thumbTop = isVertical ? (1 - ratio) * thumbTravel : undefined;
 
-  return (
-    <View
-      accessibilityRole="adjustable"
-      onLayout={handleLayout}
-      style={[styles.trackContainer, isVertical && styles.trackContainerVertical]}
-      {...panResponder.panHandlers}>
+  const sliderBody = (
+    <>
       <View style={[styles.track, isVertical && styles.trackVertical]}>
         {showCenterTick ? (
           <View
@@ -157,10 +193,32 @@ export function EditorSlider({
         style={[
           styles.thumb,
           isVertical
-            ? { top: `${(1 - ratio) * 100}%`, marginTop: -14, alignSelf: 'center' }
-            : { left: `${ratio * 100}%`, marginLeft: -14, top: '50%', marginTop: -14 },
+            ? { top: thumbTop, alignSelf: 'center' }
+            : {
+                left: `${ratio * 100}%`,
+                marginLeft: -THUMB_RADIUS,
+                top: '50%',
+                marginTop: -THUMB_RADIUS,
+              },
         ]}
       />
+    </>
+  );
+
+  return (
+    <View
+      accessibilityRole="adjustable"
+      style={[styles.trackContainer, isVertical && styles.trackContainerVertical]}
+      {...panResponder.panHandlers}>
+      {isVertical ? (
+        <View style={styles.trackLane} onLayout={handleLayout}>
+          {sliderBody}
+        </View>
+      ) : (
+        <View style={styles.trackLaneHorizontal} onLayout={handleLayout}>
+          {sliderBody}
+        </View>
+      )}
     </View>
   );
 }
@@ -169,14 +227,24 @@ const styles = StyleSheet.create({
   trackContainer: {
     height: 44,
     justifyContent: 'center',
-    paddingHorizontal: 14,
+    paddingHorizontal: THUMB_RADIUS,
   },
   trackContainerVertical: {
     width: 44,
-    height: 100,
+    height: VERTICAL_TRACK_HEIGHT + THUMB_RADIUS * 2,
     paddingHorizontal: 0,
-    paddingVertical: 0,
-    justifyContent: 'flex-end',
+    justifyContent: 'center',
+  },
+  trackLane: {
+    height: VERTICAL_TRACK_HEIGHT,
+    position: 'relative',
+    alignSelf: 'center',
+    width: '100%',
+  },
+  trackLaneHorizontal: {
+    flex: 1,
+    justifyContent: 'center',
+    position: 'relative',
   },
   track: {
     height: 4,
@@ -216,9 +284,9 @@ const styles = StyleSheet.create({
   },
   thumb: {
     position: 'absolute',
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: THUMB_RADIUS * 2,
+    height: THUMB_RADIUS * 2,
+    borderRadius: THUMB_RADIUS,
     backgroundColor: '#FFFFFF',
     shadowColor: '#000000',
     shadowOpacity: 0.15,

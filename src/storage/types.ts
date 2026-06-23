@@ -1,5 +1,4 @@
 import {
-  createDefaultLayerEffects,
   normalizeLayerEffects,
   type LayerEffects,
 } from '@/src/audio/layerEffects';
@@ -75,7 +74,7 @@ export function normalizeLayers(memo: Memo): Memo {
 }
 
 export function getLayerEffects(layer: Layer): LayerEffects {
-  return layer.effects ?? createDefaultLayerEffects(layer.duration);
+  return normalizeLayerEffects({ duration: layer.duration, effects: layer.effects });
 }
 
 export function getEffectiveDuration(memo: Memo): number {

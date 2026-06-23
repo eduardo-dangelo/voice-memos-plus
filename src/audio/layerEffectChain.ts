@@ -61,7 +61,7 @@ const lastReverbPreset = new WeakMap<LayerReverbNodes, ReverbPreset>();
 const pendingReverbIrSync = new WeakMap<LayerReverbNodes, ReturnType<typeof setTimeout>>();
 
 export function isDelayPathActive(effects: LayerEffects): boolean {
-  return effects.delay.mix > 0;
+  return effects.delay.preset !== 'off' && effects.delay.mix > 0;
 }
 
 export function isReverbPathActive(effects: LayerEffects): boolean {
