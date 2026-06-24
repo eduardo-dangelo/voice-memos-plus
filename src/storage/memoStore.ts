@@ -24,6 +24,7 @@ import {
   getLayerEffects,
   getMemoTimelineDuration,
   normalizeLayers,
+  normalizeLoopRegion,
   getEarliestTrimInTimelineDelta,
 } from './types';
 
@@ -54,6 +55,7 @@ function readManifest(file: File): Memo | null {
     if (memo.trimEnd > 0 && memo.trimEnd < timeline) {
       memo.trimEnd = timeline;
     }
+    normalizeLoopRegion(memo, timeline);
     return memo;
   } catch {
     return null;
@@ -165,6 +167,33 @@ export async function updateTitle(memoId: string, title: string): Promise<Memo> 
   memo.updatedAt = new Date().toISOString();
   writeManifest(memo);
   return memo;
+}
+
+export async function updateLoopRegion(
+  memoId: string,
+  loopStart: number,
+  loopEnd: number,
+  loopEnabled: boolean
+): Promise<Memo> {
+  const memo = await getMemo(memoId);
+  if (!memo) {
+    throw new Error('Memo not found');
+  }
+  memo.loopStart = loopStart;
+  memo.loopEnd = loopEnd;
+  memo.loopEnabled = loopEnabled;
+  normalizeLoopRegion(memo, getMemoTimelineDuration(memo));
+  memo.updatedAt = new Date().toISOString();
+  writeManifest(memo);
+  return memo;
+}
+
+export async function deactivateMemoLoop(memoId: string): Promise<Memo | null> {
+  const memo = await getMemo(memoId);
+  if (!memo || !memo.loopEnabled) {
+    return memo;
+  }
+  return updateLoopRegion(memoId, memo.loopStart ?? 0, memo.loopEnd ?? 0, false);
 }
 
 export async function updateTrim(

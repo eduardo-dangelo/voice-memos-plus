@@ -24,8 +24,44 @@ export type Memo = {
   duration: number;
   trimStart: number;
   trimEnd: number;
+  loopStart?: number;
+  loopEnd?: number;
+  loopEnabled?: boolean;
   layers: Layer[];
 };
+
+export const MIN_LOOP_DURATION = 0.25;
+
+export function hasLoopRegion(memo: Pick<Memo, 'loopStart' | 'loopEnd'>): boolean {
+  const start = memo.loopStart ?? 0;
+  const end = memo.loopEnd ?? 0;
+  return end > start + MIN_LOOP_DURATION;
+}
+
+export function normalizeLoopRegion(memo: Memo, timelineDuration: number): void {
+  if (timelineDuration <= 0) {
+    memo.loopStart = 0;
+    memo.loopEnd = 0;
+    memo.loopEnabled = false;
+    return;
+  }
+
+  const start = Math.max(0, Math.min(memo.loopStart ?? 0, timelineDuration));
+  const end = Math.max(0, Math.min(memo.loopEnd ?? 0, timelineDuration));
+
+  if (end <= start + MIN_LOOP_DURATION) {
+    memo.loopStart = 0;
+    memo.loopEnd = 0;
+    memo.loopEnabled = false;
+    return;
+  }
+
+  memo.loopStart = start;
+  memo.loopEnd = end;
+  if (!hasLoopRegion(memo)) {
+    memo.loopEnabled = false;
+  }
+}
 
 export function getLayerSourceDuration(layer: Layer): number {
   return layer.duration;

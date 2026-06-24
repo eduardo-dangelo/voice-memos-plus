@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 
 import { VoiceMemosColors } from '@/constants/VoiceMemosColors';
+import { LoopRegionBar, LOOP_ROW_HEIGHT, type LoopOverlayConfig } from '@/src/components/LoopRegionBar';
 import { clampTrimValues, dbToLinear } from '@/src/audio/layerEffects';
 import {
   getPeaksForMemo,
@@ -42,6 +43,8 @@ const TRIM_EDGE_SCROLL_MAX_SPEED = 12;
 const TRIM_HANDLE_COLOR = '#FFCC00';
 const MOVE_BORDER_WIDTH = 2;
 const MOVE_SELECTION_FILL = 'rgba(0, 122, 255, 0.1)';
+
+export type { LoopOverlayConfig } from '@/src/components/LoopRegionBar';
 
 export type TrimScrollHelpers = {
   viewportWidth: number;
@@ -100,6 +103,7 @@ type Props = {
   onWidthChange?: (width: number) => void;
   trimOverlay?: TrimOverlayConfig;
   moveOverlay?: MoveOverlayConfig;
+  loopOverlay?: LoopOverlayConfig;
   volumeVisualDb?: number;
 };
 
@@ -636,6 +640,7 @@ export function WaveformView({
   onWidthChange,
   trimOverlay,
   moveOverlay,
+  loopOverlay,
   volumeVisualDb,
 }: Props) {
   const scrollRef = useRef<ScrollView>(null);
@@ -680,8 +685,9 @@ export function WaveformView({
   const bandWidth = sidePadding * 2 + contentWidth;
   const waveformAreaHeight = Math.max(
     1,
-    viewportHeight > 0 ? viewportHeight - MARKER_ROW_HEIGHT : 1
+    viewportHeight > 0 ? viewportHeight - MARKER_ROW_HEIGHT - LOOP_ROW_HEIGHT : 1
   );
+  const playheadHeight = waveformAreaHeight + LOOP_ROW_HEIGHT;
   const trackHeight = waveformAreaHeight / Math.max(1, tracks.length);
 
   const scrollX = timeToScrollX(currentTime, contentWidth);
@@ -734,9 +740,10 @@ export function WaveformView({
   };
 
   const gestureOverlay = trimOverlay ?? moveOverlay;
+  const needsTimelineScrollHelpers = Boolean(gestureOverlay || loopOverlay);
 
   const trimScrollHelpers = useMemo<TrimScrollHelpers | undefined>(() => {
-    if (!gestureOverlay || viewportWidth <= 0) {
+    if (!needsTimelineScrollHelpers || viewportWidth <= 0) {
       return undefined;
     }
     return {
@@ -772,7 +779,19 @@ export function WaveformView({
         setTrimGestureActive(active);
       },
     };
-  }, [gestureOverlay, viewportWidth]);
+  }, [needsTimelineScrollHelpers, viewportWidth]);
+
+  const loopScrollHelpers = useMemo(() => {
+    if (!trimScrollHelpers) {
+      return undefined;
+    }
+    return {
+      viewportWidth: trimScrollHelpers.viewportWidth,
+      getScrollX: trimScrollHelpers.getScrollX,
+      autoScrollForContentX: trimScrollHelpers.autoScrollForContentX,
+      onGestureActive: trimScrollHelpers.onTrimGestureActive,
+    };
+  }, [trimScrollHelpers]);
 
   const handleScrollEndDrag = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const velocity = event.nativeEvent.velocity?.x ?? 0;
@@ -786,12 +805,12 @@ export function WaveformView({
   };
 
   useEffect(() => {
-    if (gestureOverlay) {
+    if (gestureOverlay || loopOverlay) {
       return;
     }
     trimGestureActiveRef.current = false;
     setTrimGestureActive(false);
-  }, [gestureOverlay]);
+  }, [gestureOverlay, loopOverlay]);
 
   useEffect(() => {
     if (
@@ -859,6 +878,15 @@ export function WaveformView({
         onMomentumScrollEnd={handleMomentumScrollEnd}
         style={styles.scrollView}>
         <View style={[styles.scrollContent, { width: totalContentWidth || viewportWidth }]}>
+          {loopOverlay && loopScrollHelpers ? (
+            <LoopRegionBar
+              bandWidth={bandWidth}
+              config={loopOverlay}
+              disabled={isPlaying || isRecording}
+              scrollHelpers={loopScrollHelpers}
+              sidePadding={sidePadding}
+            />
+          ) : null}
           {tracks.map((track) => (
             <TrackWaveformRow
               key={track.id}
@@ -895,7 +923,7 @@ export function WaveformView({
           </View>
         </View>
       </ScrollView>
-      <View pointerEvents="none" style={[styles.fixedPlayhead, { height: waveformAreaHeight }]}>
+      <View pointerEvents="none" style={[styles.fixedPlayhead, { height: playheadHeight }]}>
         <View style={styles.playheadCapTop} />
         <View style={styles.playheadLine} />
         <View style={styles.playheadCapBottom} />

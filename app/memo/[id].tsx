@@ -1,7 +1,7 @@
 import * as Haptics from 'expo-haptics';
 import { router, useLocalSearchParams, useNavigation } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import {
   ActionSheetIOS,
   ActivityIndicator,
@@ -32,6 +32,8 @@ import {
   saveRecording,
   updateLayerEffects,
   updateLayerStartTimes,
+  deactivateMemoLoop,
+  updateLoopRegion,
   updateTitle,
 } from '@/src/storage/memoStore';
 import {
@@ -56,10 +58,32 @@ async function loadMemoIntoEngine(
   seekTime?: number
 ): Promise<void> {
   const { layers, duration, trimStart, trimEnd } = getMemoPlaybackTimeline(memo);
-  await engine.loadMemo(memo.id, layers, trimStart, trimEnd, duration);
+  await engine.loadMemo(
+    memo.id,
+    layers,
+    trimStart,
+    trimEnd,
+    duration,
+    memo.loopStart ?? 0,
+    memo.loopEnd ?? 0,
+    memo.loopEnabled ?? false
+  );
   if (seekTime !== undefined) {
     engine.seek(seekTime);
   }
+}
+
+function deactivateLoopForMemo(
+  engine: ReturnType<typeof useAudioEngine>,
+  memo: Memo,
+  setMemo: Dispatch<SetStateAction<Memo | null>>
+): void {
+  if (!memo.loopEnabled) {
+    return;
+  }
+  engine.setLoopEnabled(false);
+  setMemo({ ...memo, loopEnabled: false });
+  void deactivateMemoLoop(memo.id);
 }
 
 export default function MemoEditorScreen() {
@@ -71,6 +95,7 @@ export default function MemoEditorScreen() {
   const recordingStartTime = useRef(0);
   const persistEffectsTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const persistStartTimeTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const persistLoopTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingEffectsPersist = useRef<{
     memoId: string;
     layerId: string;
@@ -84,6 +109,8 @@ export default function MemoEditorScreen() {
   } | null>(null);
 
   const [memo, setMemo] = useState<Memo | null>(null);
+  const memoRef = useRef<Memo | null>(null);
+  memoRef.current = memo;
   const [loading, setLoading] = useState(true);
   const [title, setTitle] = useState('');
   const [replaceMode, setReplaceMode] = useState(false);
@@ -387,6 +414,24 @@ export default function MemoEditorScreen() {
     [activeLayerId, engine, memo]
   );
 
+  const handleLoopChange = useCallback(
+    (loopStart: number, loopEnd: number, loopEnabled: boolean) => {
+      if (!memo) {
+        return;
+      }
+      setMemo({ ...memo, loopStart, loopEnd, loopEnabled });
+      engine.setLoopRegion(loopStart, loopEnd, loopEnabled);
+
+      if (persistLoopTimeout.current) {
+        clearTimeout(persistLoopTimeout.current);
+      }
+      persistLoopTimeout.current = setTimeout(() => {
+        void updateLoopRegion(memo.id, loopStart, loopEnd, loopEnabled);
+      }, 300);
+    },
+    [engine, memo]
+  );
+
   const handleTrackPress = useCallback(
     (trackId: string) => {
       if (trackId === activeLayerId || savingTrim) {
@@ -434,6 +479,14 @@ export default function MemoEditorScreen() {
       if (persistStartTimeTimeout.current) {
         clearTimeout(persistStartTimeTimeout.current);
       }
+      if (persistLoopTimeout.current) {
+        clearTimeout(persistLoopTimeout.current);
+        persistLoopTimeout.current = null;
+      }
+      const current = memoRef.current;
+      if (current) {
+        deactivateLoopForMemo(engine, current, setMemo);
+      }
     };
   }, [engine, loadMemo]);
 
@@ -458,6 +511,11 @@ export default function MemoEditorScreen() {
     }
     engine.pause();
     flushStartTimePersist();
+    if (persistLoopTimeout.current) {
+      clearTimeout(persistLoopTimeout.current);
+      persistLoopTimeout.current = null;
+    }
+    deactivateLoopForMemo(engine, memo, setMemo);
     const ok = await commitTrimIfNeeded();
     if (!ok) {
       return;
@@ -811,6 +869,17 @@ export default function MemoEditorScreen() {
             volumeVisualDb={
               activeEditor === 'volume' && activeLayerEffects
                 ? activeLayerEffects.volumeDb
+                : undefined
+            }
+            loopOverlay={
+              memo && waveformDuration > 0
+                ? {
+                    loopStart: memo.loopStart ?? 0,
+                    loopEnd: memo.loopEnd ?? 0,
+                    loopEnabled: memo.loopEnabled ?? false,
+                    duration: waveformDuration,
+                    onChange: handleLoopChange,
+                  }
                 : undefined
             }
             onSeek={(time) => {

@@ -57,6 +57,9 @@ export type EngineState = {
   duration: number;
   trimStart: number;
   trimEnd: number;
+  loopStart: number;
+  loopEnd: number;
+  loopEnabled: boolean;
   recordingDuration: number;
   recordingPeaks: number[];
 };
@@ -71,6 +74,9 @@ const initialState: EngineState = {
   duration: 0,
   trimStart: 0,
   trimEnd: 0,
+  loopStart: 0,
+  loopEnd: 0,
+  loopEnabled: false,
   recordingDuration: 0,
   recordingPeaks: [],
 };
@@ -149,11 +155,27 @@ export class MemoAudioEngine {
     return Math.min(trimEnd, timelineDuration);
   }
 
+  private hasValidLoop(): boolean {
+    return this.state.loopEnd > this.state.loopStart + PLAYBACK_END_TOLERANCE;
+  }
+
+  private getPlaybackBounds(timelineDuration: number): { start: number; end: number } {
+    if (this.state.loopEnabled && this.hasValidLoop()) {
+      return {
+        start: this.state.loopStart,
+        end: Math.min(this.state.loopEnd, this.getPlaybackEnd(timelineDuration)),
+      };
+    }
+    return {
+      start: this.state.trimStart,
+      end: this.getPlaybackEnd(timelineDuration),
+    };
+  }
+
   private isAtPlaybackEnd(timelineDuration?: number): boolean {
-    const endAt = timelineDuration !== undefined
-      ? this.getPlaybackEnd(timelineDuration)
-      : this.getPlaybackEnd(this.state.duration);
-    return this.state.currentTime >= endAt - PLAYBACK_END_TOLERANCE;
+    const duration = timelineDuration ?? this.state.duration;
+    const bounds = this.getPlaybackBounds(duration);
+    return this.state.currentTime >= bounds.end - PLAYBACK_END_TOLERANCE;
   }
 
   private invalidatePlaybackSession(): void {
@@ -251,6 +273,14 @@ export class MemoAudioEngine {
     if (sessionId !== this.activePlaybackSessionId) {
       return;
     }
+    if (this.state.loopEnabled && this.hasValidLoop()) {
+      this.clearPlaybackTimer();
+      this.stopActiveSources();
+      this.playbackContextStartWhen = 0;
+      this.emit({ currentTime: this.state.loopStart, isPlaying: true });
+      void this.play();
+      return;
+    }
     this.invalidateAndStopSources();
     this.emit({ isPlaying: false, currentTime: endAt });
   }
@@ -323,7 +353,10 @@ export class MemoAudioEngine {
     layers: LoadedLayer[],
     trimStart: number,
     trimEnd: number,
-    timelineDuration: number
+    timelineDuration: number,
+    loopStart = 0,
+    loopEnd = 0,
+    loopEnabled = false
   ): Promise<void> {
     this.stopPlayback();
     this.invalidateLayerBuffers();
@@ -338,9 +371,30 @@ export class MemoAudioEngine {
       duration: timelineDuration,
       trimStart,
       trimEnd: trimEndResolved,
+      loopStart,
+      loopEnd,
+      loopEnabled,
       currentTime: trimStart,
       isPlaying: false,
     });
+  }
+
+  setLoopRegion(start: number, end: number, enabled?: boolean): void {
+    const duration = this.state.duration;
+    const clampedStart = Math.max(0, Math.min(start, duration));
+    const clampedEnd = Math.max(0, Math.min(end, duration));
+    const partial: Partial<EngineState> = {
+      loopStart: clampedStart,
+      loopEnd: clampedEnd,
+    };
+    if (enabled !== undefined) {
+      partial.loopEnabled = enabled;
+    }
+    this.emit(partial);
+  }
+
+  setLoopEnabled(enabled: boolean): void {
+    this.emit({ loopEnabled: enabled });
   }
 
   updateLayerEffects(layerId: string, partial: LayerEffectsChange): void {
@@ -392,7 +446,17 @@ export class MemoAudioEngine {
       this.state.trimEnd > 0
         ? Math.min(this.state.trimEnd, timelineDuration)
         : timelineDuration;
-    this.emit({ duration: timelineDuration, trimEnd });
+    let loopStart = this.state.loopStart;
+    let loopEnd = this.state.loopEnd;
+    let loopEnabled = this.state.loopEnabled;
+    loopStart = Math.max(0, Math.min(loopStart, timelineDuration));
+    loopEnd = Math.max(0, Math.min(loopEnd, timelineDuration));
+    if (loopEnd <= loopStart + PLAYBACK_END_TOLERANCE) {
+      loopStart = 0;
+      loopEnd = 0;
+      loopEnabled = false;
+    }
+    this.emit({ duration: timelineDuration, trimEnd, loopStart, loopEnd, loopEnabled });
   }
 
   unload(): void {
@@ -495,10 +559,19 @@ export class MemoAudioEngine {
       this.invalidateAndStopSources();
 
       const timelineDuration = this.state.duration;
-      const endAt = this.getPlaybackEnd(timelineDuration);
-      let startAt = Math.max(this.state.trimStart, this.state.currentTime);
-      if (this.isAtPlaybackEnd(timelineDuration)) {
-        startAt = this.state.trimStart;
+      const bounds = this.getPlaybackBounds(timelineDuration);
+      const endAt = bounds.end;
+      let startAt = Math.max(bounds.start, this.state.currentTime);
+      if (
+        this.state.loopEnabled &&
+        this.hasValidLoop() &&
+        (this.state.currentTime < bounds.start ||
+          this.state.currentTime >= bounds.end - PLAYBACK_END_TOLERANCE)
+      ) {
+        startAt = bounds.start;
+        this.emit({ currentTime: startAt });
+      } else if (this.isAtPlaybackEnd(timelineDuration)) {
+        startAt = bounds.start;
         this.emit({ currentTime: startAt });
       }
 
@@ -624,17 +697,22 @@ export class MemoAudioEngine {
     }
 
     if (this.isAtPlaybackEnd()) {
-      this.emit({ currentTime: this.state.trimStart });
+      const bounds = this.getPlaybackBounds(this.state.duration);
+      this.emit({ currentTime: bounds.start });
     }
 
     return this.play();
   }
 
   seek(time: number): void {
-    const clamped = Math.max(
-      this.state.trimStart,
-      Math.min(time, this.state.trimEnd || this.state.duration)
-    );
+    const bounds = this.getPlaybackBounds(this.state.duration);
+    const minTime =
+      this.state.loopEnabled && this.hasValidLoop() ? bounds.start : this.state.trimStart;
+    const maxTime =
+      this.state.loopEnabled && this.hasValidLoop()
+        ? bounds.end
+        : this.state.trimEnd || this.state.duration;
+    const clamped = Math.max(minTime, Math.min(time, maxTime));
     const wasPlaying = this.state.isPlaying;
     this.invalidateAndStopSources();
     this.emit({ currentTime: clamped, isPlaying: false });

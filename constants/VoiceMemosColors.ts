@@ -12,4 +12,5 @@ export const VoiceMemosColors = {
   waveformBar: '#b6b6b6',
   waveformMarkerBackground: '#FFFFFF',
   waveformCenterLine: 'rgba(0, 0, 0, 0.12)',
+  loopBandBackground: '#f0f0f0',
 };
