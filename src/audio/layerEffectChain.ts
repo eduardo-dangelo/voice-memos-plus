@@ -22,23 +22,20 @@ export type LayerEffectPathNodes = {
   eqFilters: BiquadFilterNode[];
 };
 
-export type LayerDryNodes = LayerEffectPathNodes & {
-  dryGain: GainNode;
-};
-
-export type LayerDelayNodes = LayerEffectPathNodes & {
+export type LayerDelayNodes = {
   delayNode: DelayNode;
   delayFeedback: GainNode;
   delayWet: GainNode;
 };
 
-export type LayerReverbNodes = LayerEffectPathNodes & {
+export type LayerReverbNodes = {
   reverbConvolver: ConvolverNode;
   reverbWet: GainNode;
 };
 
 export type LayerEffectGraph = {
-  dry: LayerDryNodes;
+  input: LayerEffectPathNodes;
+  dryGain: GainNode;
   delay?: LayerDelayNodes;
   reverb?: LayerReverbNodes;
 };
@@ -53,8 +50,8 @@ const REVERB_DURATION: Record<Exclude<ReverbPreset, 'off' | 'custom'>, number> =
 };
 
 const REVERB_IR_THROTTLE_MS = 80;
-const MINIMAL_REVERB_IR_KEY = 'off';
 
+const reverbIrCache = new Map<string, AudioBuffer>();
 const lastReverbIrKey = new WeakMap<LayerReverbNodes, string>();
 const lastReverbIrSyncAt = new WeakMap<LayerReverbNodes, number>();
 const lastReverbPreset = new WeakMap<LayerReverbNodes, ReverbPreset>();
@@ -68,18 +65,20 @@ export function isReverbPathActive(effects: LayerEffects): boolean {
   return effects.reverb.preset !== 'off' && effects.reverb.mix > 0;
 }
 
+export function delayBusKey(effects: LayerEffects): string {
+  const { preset, sync, timeMs, feedback } = effects.delay;
+  return `${preset}:${sync}:${timeMs}:${feedback}`;
+}
+
+export function reverbBusKey(effects: LayerEffects): string {
+  return `${effects.reverb.preset}:${effects.reverb.decay.toFixed(2)}`;
+}
+
 function getEffectiveReverbMix(effects: LayerEffects): number {
   if (effects.reverb.preset === 'off') {
     return 0;
   }
   return Math.min(1, Math.max(0, effects.reverb.mix / 100));
-}
-
-function createMinimalImpulseResponse(context: AudioContext): AudioBuffer {
-  const sampleRate = context.sampleRate;
-  const impulse = context.createBuffer(1, 1, sampleRate);
-  impulse.getChannelData(0)[0] = 1;
-  return impulse;
 }
 
 function createImpulseResponse(
@@ -100,7 +99,7 @@ function createImpulseResponse(
   return impulse;
 }
 
-function reverbIrKey(preset: ReverbPreset, decay: number): string {
+export function reverbIrKey(preset: ReverbPreset, decay: number): string {
   return `${preset}:${decay.toFixed(2)}`;
 }
 
@@ -111,7 +110,26 @@ function getReverbDurationSec(preset: ReverbPreset, decay: number): number {
   return REVERB_DURATION[preset] * Math.max(0.3, decay);
 }
 
-function buildInputEqPath(context: AudioContext): LayerEffectPathNodes {
+export function getOrCreateImpulseResponse(
+  context: AudioContext,
+  preset: Exclude<ReverbPreset, 'off'>,
+  decay: number
+): AudioBuffer {
+  const key = reverbIrKey(preset, decay);
+  const cached = reverbIrCache.get(key);
+  if (cached) {
+    return cached;
+  }
+  const impulse = createImpulseResponse(
+    context,
+    getReverbDurationSec(preset, decay),
+    decay
+  );
+  reverbIrCache.set(key, impulse);
+  return impulse;
+}
+
+export function buildInputEqPath(context: AudioContext): LayerEffectPathNodes {
   const gain = context.createGain();
   const eqFilters = EQ_FREQUENCIES.map((frequency) => {
     const filter = context.createBiquadFilter();
@@ -129,41 +147,41 @@ function buildInputEqPath(context: AudioContext): LayerEffectPathNodes {
   return { gain, eqFilters };
 }
 
-function buildDryPath(context: AudioContext): LayerDryNodes {
-  const path = buildInputEqPath(context);
-  const dryGain = context.createGain();
-  const postEq = path.eqFilters[path.eqFilters.length - 1];
-  postEq.connect(dryGain);
-  return { ...path, dryGain };
-}
-
-function buildDelayPath(context: AudioContext): LayerDelayNodes {
-  const path = buildInputEqPath(context);
+function buildDelayNodes(context: AudioContext, postEq: BiquadFilterNode): LayerDelayNodes {
   const delayNode = context.createDelay(2);
   const delayFeedback = context.createGain();
   const delayWet = context.createGain();
-  const postEq = path.eqFilters[path.eqFilters.length - 1];
 
   postEq.connect(delayNode);
   delayNode.connect(delayWet);
   delayNode.connect(delayFeedback);
   delayFeedback.connect(delayNode);
 
-  return { ...path, delayNode, delayFeedback, delayWet };
+  return { delayNode, delayFeedback, delayWet };
 }
 
-function buildReverbPath(context: AudioContext, effects: LayerEffects): LayerReverbNodes {
-  const path = buildInputEqPath(context);
+function buildReverbNodes(
+  context: AudioContext,
+  postEq: BiquadFilterNode,
+  effects: LayerEffects
+): LayerReverbNodes {
   const reverbConvolver = context.createConvolver();
   const reverbWet = context.createGain();
-  const postEq = path.eqFilters[path.eqFilters.length - 1];
 
   postEq.connect(reverbConvolver);
   reverbConvolver.connect(reverbWet);
 
-  const nodes: LayerReverbNodes = { ...path, reverbConvolver, reverbWet };
+  const nodes: LayerReverbNodes = { reverbConvolver, reverbWet };
   syncReverbConvolver(nodes, effects, context);
   return nodes;
+}
+
+function cloneImpulseBuffer(context: AudioContext, source: AudioBuffer): AudioBuffer {
+  const clone = context.createBuffer(source.numberOfChannels, source.length, source.sampleRate);
+  for (let channel = 0; channel < source.numberOfChannels; channel += 1) {
+    clone.copyToChannel(source.getChannelData(channel), channel);
+  }
+  return clone;
 }
 
 function assignReverbImpulse(
@@ -173,14 +191,14 @@ function assignReverbImpulse(
   context: AudioContext
 ): void {
   const key = reverbIrKey(preset, decay);
-  const reverbDuration = getReverbDurationSec(preset, decay);
-  nodes.reverbConvolver.buffer = createImpulseResponse(context, reverbDuration, decay);
+  const impulse = getOrCreateImpulseResponse(context, preset, decay);
+  nodes.reverbConvolver.buffer = cloneImpulseBuffer(context, impulse);
   lastReverbIrKey.set(nodes, key);
   lastReverbPreset.set(nodes, preset);
   lastReverbIrSyncAt.set(nodes, Date.now());
 }
 
-function syncReverbConvolver(
+export function syncReverbConvolver(
   nodes: LayerReverbNodes,
   effects: LayerEffects,
   context: AudioContext
@@ -229,7 +247,7 @@ function syncReverbConvolver(
   assignReverbImpulse(nodes, preset, decay, context);
 }
 
-function applyPathInputEffects(
+export function applyPathInputEffects(
   path: LayerEffectPathNodes,
   effects: LayerEffects,
   context: AudioContext
@@ -241,20 +259,41 @@ function applyPathInputEffects(
   });
 }
 
+function applyDelayParams(
+  delay: LayerDelayNodes,
+  effects: LayerEffects,
+  context: AudioContext
+): void {
+  const now = context.currentTime;
+  const delayTimeSec =
+    effects.delay.sync === 'off'
+      ? effects.delay.timeMs / 1000
+      : syncDelayTimeMs(effects.delay.sync) / 1000;
+
+  delay.delayNode.delayTime.setValueAtTime(Math.min(2, Math.max(0, delayTimeSec)), now);
+  delay.delayFeedback.gain.setValueAtTime(
+    Math.min(0.85, Math.max(0, effects.delay.feedback / 100)),
+    now
+  );
+}
+
 export function buildLayerEffectGraph(
   context: AudioContext,
   effects: LayerEffects
 ): LayerEffectGraph {
-  const graph: LayerEffectGraph = {
-    dry: buildDryPath(context),
-  };
+  const input = buildInputEqPath(context);
+  const dryGain = context.createGain();
+  const postEq = input.eqFilters[input.eqFilters.length - 1];
+  postEq.connect(dryGain);
+
+  const graph: LayerEffectGraph = { input, dryGain };
 
   if (isDelayPathActive(effects)) {
-    graph.delay = buildDelayPath(context);
+    graph.delay = buildDelayNodes(context, postEq);
   }
 
   if (isReverbPathActive(effects)) {
-    graph.reverb = buildReverbPath(context, effects);
+    graph.reverb = buildReverbNodes(context, postEq, effects);
   }
 
   applyLayerEffects(graph, effects, context);
@@ -270,32 +309,28 @@ export function applyLayerEffects(
   const reverbMix = getEffectiveReverbMix(effects);
   const now = context.currentTime;
 
-  applyPathInputEffects(graph.dry, effects, context);
-  graph.dry.dryGain.gain.setValueAtTime(Math.max(0, 1 - delayMix - reverbMix), now);
+  applyPathInputEffects(graph.input, effects, context);
+  graph.dryGain.gain.setValueAtTime(Math.max(0, 1 - delayMix - reverbMix), now);
 
   if (graph.delay) {
-    applyPathInputEffects(graph.delay, effects, context);
-
-    const delayTimeSec =
-      effects.delay.sync === 'off'
-        ? effects.delay.timeMs / 1000
-        : syncDelayTimeMs(effects.delay.sync) / 1000;
-
-    graph.delay.delayNode.delayTime.setValueAtTime(Math.min(2, Math.max(0, delayTimeSec)), now);
-    graph.delay.delayFeedback.gain.setValueAtTime(
-      Math.min(0.85, Math.max(0, effects.delay.feedback / 100)),
-      now
-    );
+    applyDelayParams(graph.delay, effects, context);
     graph.delay.delayWet.gain.setValueAtTime(delayMix, now);
   }
 
   if (graph.reverb) {
-    applyPathInputEffects(graph.reverb, effects, context);
     syncReverbConvolver(graph.reverb, effects, context);
     graph.reverb.reverbWet.gain.setValueAtTime(reverbMix, now);
   }
 }
 
+export function connectSourceToGraph(
+  source: AudioBufferSourceNode,
+  graph: LayerEffectGraph
+): void {
+  source.connect(graph.input.gain);
+}
+
+/** @deprecated Use connectSourceToGraph */
 export function connectSourceToPath(
   source: AudioBufferSourceNode,
   path: LayerEffectPathNodes
@@ -307,7 +342,7 @@ export function connectDryPathToDestination(
   graph: LayerEffectGraph,
   destination: AudioNode
 ): void {
-  graph.dry.dryGain.connect(destination);
+  graph.dryGain.connect(destination);
 }
 
 export function connectDelayPathToDestination(
@@ -326,4 +361,8 @@ export function connectReverbPathToDestination(
 
 export function getEffectiveLayerTimelineDuration(effects: LayerEffects): number {
   return Math.max(0, effects.trimOut - effects.trimIn);
+}
+
+export function clearReverbIrCache(): void {
+  reverbIrCache.clear();
 }

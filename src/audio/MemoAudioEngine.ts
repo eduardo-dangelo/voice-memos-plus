@@ -18,10 +18,11 @@ import {
 import {
   applyLayerEffects,
   buildLayerEffectGraph,
+  clearReverbIrCache,
   connectDelayPathToDestination,
   connectDryPathToDestination,
   connectReverbPathToDestination,
-  connectSourceToPath,
+  connectSourceToGraph,
   isDelayPathActive,
   isReverbPathActive,
   type LayerEffectGraph,
@@ -47,6 +48,15 @@ export type LoadedLayer = {
 type ActiveLayerPlayback = {
   layerId: string;
   graph: LayerEffectGraph;
+};
+
+type LayerPlaybackPlan = {
+  layer: LoadedLayer;
+  buffer: AudioBuffer;
+  playbackEffects: LayerEffects;
+  bufferOffset: number;
+  delay: number;
+  layerPlayLength: number;
 };
 
 export type EngineState = {
@@ -148,6 +158,10 @@ export class MemoAudioEngine {
       await this.context.resume();
     }
     return this.context;
+  }
+
+  private getLoadedLayerEffects(layer: LoadedLayer): LayerEffects {
+    return normalizeLayerEffects({ duration: layer.duration, effects: layer.effects });
   }
 
   private getPlaybackEnd(timelineDuration: number): number {
@@ -269,6 +283,60 @@ export class MemoAudioEngine {
     return buffer;
   }
 
+  private buildPlaybackPlans(
+    startAt: number,
+    endAt: number
+  ): Omit<LayerPlaybackPlan, 'buffer'>[] {
+    const plans: Omit<LayerPlaybackPlan, 'buffer'>[] = [];
+
+    for (const layer of this.loadedLayers) {
+      if (layer.duration <= 0) {
+        continue;
+      }
+
+      const effects = this.getLoadedLayerEffects(layer);
+      const trimOut = Math.min(effects.trimOut, layer.duration);
+      const trimIn = Math.min(effects.trimIn, Math.max(0, trimOut - PLAYBACK_END_TOLERANCE));
+      const playbackEffects: LayerEffects = { ...effects, trimIn, trimOut };
+      const activeStart = layer.startTime + trimIn;
+      const activeEnd = layer.startTime + trimOut;
+
+      if (startAt >= activeEnd - PLAYBACK_END_TOLERANCE) {
+        continue;
+      }
+      if (endAt <= activeStart) {
+        continue;
+      }
+
+      const relativeStart = Math.max(0, startAt - activeStart);
+      const bufferOffset = trimIn + relativeStart;
+      const delay = Math.max(0, activeStart - startAt);
+      const layerPlayStart = Math.max(startAt, activeStart);
+      const layerPlayDuration = Math.min(activeEnd - layerPlayStart, endAt - layerPlayStart);
+
+      if (layerPlayDuration <= PLAYBACK_END_TOLERANCE) {
+        continue;
+      }
+
+      const maxBufferOffset = trimOut - PLAYBACK_END_TOLERANCE;
+      if (bufferOffset >= maxBufferOffset) {
+        continue;
+      }
+
+      const layerPlayLength = Math.min(layerPlayDuration, trimOut - bufferOffset);
+
+      plans.push({
+        layer,
+        playbackEffects,
+        bufferOffset,
+        delay,
+        layerPlayLength,
+      });
+    }
+
+    return plans;
+  }
+
   private finishPlaybackNaturally(endAt: number, sessionId: number): void {
     if (sessionId !== this.activePlaybackSessionId) {
       return;
@@ -359,6 +427,7 @@ export class MemoAudioEngine {
     loopEnabled = false
   ): Promise<void> {
     this.stopPlayback();
+    clearReverbIrCache();
     this.invalidateLayerBuffers();
 
     this.loadedLayers = layers;
@@ -404,9 +473,9 @@ export class MemoAudioEngine {
     }
 
     const active = this.activeLayerPlayback.get(layerId);
-    const current = normalizeLayerEffects({ duration: layer.duration, effects: layer.effects });
+    const current = this.getLoadedLayerEffects(layer);
     layer.effects = mergeLayerEffects(current, partial, layer.duration);
-    const nextEffects = normalizeLayerEffects({ duration: layer.duration, effects: layer.effects });
+    const nextEffects = this.getLoadedLayerEffects(layer);
 
     const needsPathRestart =
       this.state.isPlaying &&
@@ -462,6 +531,7 @@ export class MemoAudioEngine {
   unload(): void {
     this.stopPlayback();
     this.loadedLayers = [];
+    clearReverbIrCache();
     this.invalidateLayerBuffers();
     this.emit({ ...initialState });
   }
@@ -586,84 +656,76 @@ export class MemoAudioEngine {
       const when = context.currentTime + PLAYBACK_SCHEDULE_LEAD;
       this.playbackContextStartWhen = when;
 
+      const planSpecs = this.buildPlaybackPlans(startAt, endAt);
+      if (planSpecs.length === 0) {
+        this.playbackContextStartWhen = 0;
+        return;
+      }
+
+      const plans = await Promise.all(
+        planSpecs.map(async (plan) => {
+          const buffer = await this.getLayerBuffer(context, plan.layer);
+          const trimOut = Math.min(plan.playbackEffects.trimOut, buffer.duration);
+          const trimIn = Math.min(
+            plan.playbackEffects.trimIn,
+            Math.max(0, trimOut - PLAYBACK_END_TOLERANCE)
+          );
+          const playbackEffects: LayerEffects = { ...plan.playbackEffects, trimIn, trimOut };
+          const activeStart = plan.layer.startTime + trimIn;
+          const activeEnd = plan.layer.startTime + trimOut;
+          const relativeStart = Math.max(0, startAt - activeStart);
+          const bufferOffset = trimIn + relativeStart;
+          const maxBufferOffset = trimOut - PLAYBACK_END_TOLERANCE;
+
+          if (bufferOffset >= maxBufferOffset) {
+            return null;
+          }
+
+          const layerPlayLength = Math.min(plan.layerPlayLength, trimOut - bufferOffset);
+          if (layerPlayLength <= PLAYBACK_END_TOLERANCE) {
+            return null;
+          }
+
+          return {
+            layer: plan.layer,
+            buffer,
+            playbackEffects,
+            bufferOffset,
+            delay: plan.delay,
+            layerPlayLength,
+          };
+        })
+      );
+
+      const resolvedPlans = plans.filter(
+        (plan): plan is LayerPlaybackPlan => plan !== null
+      );
+
+      if (resolvedPlans.length === 0) {
+        this.playbackContextStartWhen = 0;
+        return;
+      }
+
       let scheduledSources = 0;
 
-      for (const layer of this.loadedLayers) {
-        if (layer.duration <= 0) {
-          continue;
-        }
+      for (const plan of resolvedPlans) {
+        const graph = buildLayerEffectGraph(context, plan.playbackEffects);
 
-        const buffer = await this.getLayerBuffer(context, layer);
-        const effects = normalizeLayerEffects({ duration: layer.duration, effects: layer.effects });
-        const trimOut = Math.min(effects.trimOut, buffer.duration);
-        const trimIn = Math.min(effects.trimIn, Math.max(0, trimOut - PLAYBACK_END_TOLERANCE));
-        const playbackEffects: LayerEffects = { ...effects, trimIn, trimOut };
-        const activeStart = layer.startTime + trimIn;
-        const activeEnd = layer.startTime + trimOut;
-        if (startAt >= activeEnd - PLAYBACK_END_TOLERANCE) {
-          continue;
-        }
-        if (endAt <= activeStart) {
-          continue;
-        }
+        const startWhen = when + plan.delay;
+        const stopWhen = startWhen + plan.layerPlayLength;
 
-        const relativeStart = Math.max(0, startAt - activeStart);
-        const bufferOffset = trimIn + relativeStart;
-        const delay = Math.max(0, activeStart - startAt);
-        const layerPlayStart = Math.max(startAt, activeStart);
-        const layerPlayDuration = Math.min(activeEnd - layerPlayStart, endAt - layerPlayStart);
-
-        if (layerPlayDuration <= PLAYBACK_END_TOLERANCE) {
-          continue;
-        }
-
-        const maxBufferOffset = trimOut - PLAYBACK_END_TOLERANCE;
-        if (bufferOffset >= maxBufferOffset) {
-          continue;
-        }
-
-        const graph = buildLayerEffectGraph(context, playbackEffects);
-
-        const layerPlayLength = Math.min(
-          layerPlayDuration,
-          trimOut - bufferOffset
-        );
-
-        const startWhen = when + delay;
-        const stopWhen = startWhen + layerPlayLength;
-
-        const drySource = context.createBufferSource();
-        drySource.buffer = buffer;
-        connectSourceToPath(drySource, graph.dry);
+        const source = context.createBufferSource();
+        source.buffer = plan.buffer;
+        connectSourceToGraph(source, graph);
         connectDryPathToDestination(graph, context.destination);
-        drySource.start(startWhen, bufferOffset);
-        drySource.stop(stopWhen);
-        this.sources.push(drySource);
+        connectDelayPathToDestination(graph, context.destination);
+        connectReverbPathToDestination(graph, context.destination);
+        source.start(startWhen, plan.bufferOffset);
+        source.stop(stopWhen);
+        this.sources.push(source);
         scheduledSources += 1;
 
-        if (graph.delay) {
-          const delaySource = context.createBufferSource();
-          delaySource.buffer = buffer;
-          connectSourceToPath(delaySource, graph.delay);
-          connectDelayPathToDestination(graph, context.destination);
-          delaySource.start(startWhen, bufferOffset);
-          delaySource.stop(stopWhen);
-          this.sources.push(delaySource);
-          scheduledSources += 1;
-        }
-
-        if (graph.reverb) {
-          const reverbSource = context.createBufferSource();
-          reverbSource.buffer = buffer;
-          connectSourceToPath(reverbSource, graph.reverb);
-          connectReverbPathToDestination(graph, context.destination);
-          reverbSource.start(startWhen, bufferOffset);
-          reverbSource.stop(stopWhen);
-          this.sources.push(reverbSource);
-          scheduledSources += 1;
-        }
-
-        this.activeLayerPlayback.set(layer.id, { layerId: layer.id, graph });
+        this.activeLayerPlayback.set(plan.layer.id, { layerId: plan.layer.id, graph });
       }
 
       if (scheduledSources === 0) {

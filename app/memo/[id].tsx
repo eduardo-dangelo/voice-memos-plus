@@ -19,6 +19,10 @@ import { VoiceMemosColors } from '@/constants/VoiceMemosColors';
 import type { LayerEffects, LayerEffectsChange } from '@/src/audio/layerEffects';
 import { isDefaultTrim, mergeLayerEffects } from '@/src/audio/layerEffects';
 import { useAudioEngine, useAudioEngineState } from '@/src/audio/AudioEngineContext';
+import {
+  maybeShowPerformanceWarning,
+  resetPerformanceWarningState,
+} from '@/src/audio/performanceWarning';
 import { PlaybackControls } from '@/src/components/PlaybackControls';
 import { TrackEditorShell } from '@/src/components/track-editor/TrackEditorShell';
 import type { EditorTool } from '@/src/components/track-editor/types';
@@ -470,8 +474,16 @@ export default function MemoEditorScreen() {
   }, [engine, id]);
 
   useEffect(() => {
+    if (!memo || !hasRecording(memo)) {
+      return;
+    }
+    maybeShowPerformanceWarning(memo);
+  }, [memo]);
+
+  useEffect(() => {
     void loadMemo();
     return () => {
+      resetPerformanceWarningState();
       engine.pause();
       if (persistEffectsTimeout.current) {
         clearTimeout(persistEffectsTimeout.current);
