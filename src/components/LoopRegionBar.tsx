@@ -8,7 +8,7 @@ import {
   type PanResponderGestureState,
 } from 'react-native';
 
-import { VoiceMemosColors } from '@/constants/VoiceMemosColors';
+import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 import { WAVEFORM_PIXELS_PER_SECOND } from '@/src/audio/waveform';
 import { MIN_LOOP_DURATION } from '@/src/storage/types';
 
@@ -53,10 +53,12 @@ function LoopRulerTicks({
   sidePadding,
   duration,
   height,
+  styles,
 }: {
   sidePadding: number;
   duration: number;
   height: number;
+  styles: ReturnType<typeof createLoopRegionStyles>;
 }) {
   const seconds = useMemo(() => {
     if (duration <= 0) {
@@ -90,6 +92,8 @@ export function LoopRegionBar({
   scrollHelpers,
   disabled = false,
 }: Props) {
+  const colors = useVoiceMemosColors();
+  const styles = useMemo(() => createLoopRegionStyles(colors), [colors]);
   const { loopStart, loopEnd, loopEnabled, duration, onChange } = config;
   const hasRegion = loopEnd > loopStart + MIN_LOOP_DURATION;
 
@@ -334,12 +338,12 @@ export function LoopRegionBar({
   const regionWidth = displayHasRegion ? Math.max(2, regionRight - regionLeft) : 0;
   const regionFillColor = displayEnabled
     ? LOOP_ENABLED_FILL
-    : VoiceMemosColors.waveformInactive;
+    : colors.waveformInactive;
 
   return (
     <View style={[styles.bar, { width: bandWidth, height: LOOP_ROW_HEIGHT }]}>
       <View pointerEvents="none" style={[styles.rulerLayer, { width: bandWidth, height: LOOP_ROW_HEIGHT }]}>
-        <LoopRulerTicks duration={duration} height={LOOP_ROW_HEIGHT} sidePadding={sidePadding} />
+        <LoopRulerTicks duration={duration} height={LOOP_ROW_HEIGHT} sidePadding={sidePadding} styles={styles} />
       </View>
 
       {displayHasRegion ? (
@@ -398,49 +402,51 @@ export function LoopRegionBar({
   );
 }
 
-const styles = StyleSheet.create({
-  bar: {
-    backgroundColor: VoiceMemosColors.loopBandBackground,
-    position: 'relative',
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: VoiceMemosColors.waveformCenterLine,
-  },
-  rulerLayer: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    zIndex: 2,
-  },
-  rulerMarker: {
-    position: 'absolute',
-    top: 0,
-    alignItems: 'center',
-  },
-  rulerTick: {
-    width: 1,
-    backgroundColor: VoiceMemosColors.secondaryText,
-    opacity: 0.35,
-  },
-  createLayer: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    zIndex: 1,
-  },
-  regionFill: {
-    position: 'absolute',
-    top: 0,
-    zIndex: 3,
-  },
-  regionTapTarget: {
-    position: 'absolute',
-    top: 0,
-    zIndex: 4,
-  },
-  edgeHandle: {
-    position: 'absolute',
-    top: 0,
-    width: LOOP_HANDLE_TOUCH,
-    zIndex: 5,
-  },
-});
+function createLoopRegionStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
+  return StyleSheet.create({
+    bar: {
+      backgroundColor: colors.loopBandBackground,
+      position: 'relative',
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.waveformCenterLine,
+    },
+    rulerLayer: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      zIndex: 2,
+    },
+    rulerMarker: {
+      position: 'absolute',
+      top: 0,
+      alignItems: 'center',
+    },
+    rulerTick: {
+      width: 1,
+      backgroundColor: colors.secondaryText,
+      opacity: 0.35,
+    },
+    createLayer: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      zIndex: 1,
+    },
+    regionFill: {
+      position: 'absolute',
+      top: 0,
+      zIndex: 3,
+    },
+    regionTapTarget: {
+      position: 'absolute',
+      top: 0,
+      zIndex: 4,
+    },
+    edgeHandle: {
+      position: 'absolute',
+      top: 0,
+      width: LOOP_HANDLE_TOUCH,
+      zIndex: 5,
+    },
+  });
+}

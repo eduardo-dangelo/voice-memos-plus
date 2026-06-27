@@ -1,7 +1,8 @@
+import { useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
-import { VoiceMemosColors } from '@/constants/VoiceMemosColors';
 import type { LayerEffects } from '@/src/audio/layerEffects';
+import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
 import { EditorSlider } from '../primitives/EditorSlider';
 
@@ -11,6 +12,9 @@ type Props = {
 };
 
 export function VolumeEditor({ effects, onChange }: Props) {
+  const colors = useVoiceMemosColors();
+  const styles = useStyles(colors);
+
   return (
     <View style={styles.container}>
       <EditorSlider
@@ -30,19 +34,25 @@ export function VolumeEditor({ effects, onChange }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: 'center',
-    gap: 2,
-  },
-  labels: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingHorizontal: 14,
-  },
-  label: {
-    fontSize: 11,
-    color: VoiceMemosColors.secondaryText,
-  },
-});
+function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
+  return useMemo(
+    () =>
+      StyleSheet.create({
+        container: {
+          flex: 1,
+          justifyContent: 'center',
+          gap: 2,
+        },
+        labels: {
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+          paddingHorizontal: 14,
+        },
+        label: {
+          fontSize: 11,
+          color: colors.secondaryText,
+        },
+      }),
+    [colors]
+  );
+}

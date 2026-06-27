@@ -6,11 +6,12 @@
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "voicememosplus",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "platforms": ["ios"],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.voicememosplus.app",
+      "userInterfaceStyle": "automatic",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Voice Memos Plus needs microphone access to record audio.",
         "ITSAppUsesNonExemptEncryption": false

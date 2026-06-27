@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   LayoutChangeEvent,
   NativeScrollEvent,
@@ -13,7 +13,7 @@ import {
   type PanResponderGestureState,
 } from 'react-native';
 
-import { VoiceMemosColors, colorWithAlpha } from '@/constants/VoiceMemosColors';
+import { colorWithAlpha, type VoiceMemosColorScheme } from '@/constants/VoiceMemosColors';
 import { LoopRegionBar, LOOP_ROW_HEIGHT, type LoopOverlayConfig } from '@/src/components/LoopRegionBar';
 import { clampTrimValues, dbToLinear } from '@/src/audio/layerEffects';
 import {
@@ -25,6 +25,7 @@ import {
   WAVEFORM_PIXELS_PER_SECOND,
 } from '@/src/audio/waveform';
 import { formatMarkerTime } from '@/src/utils/format';
+import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
 const BAR_WIDTH = WAVEFORM_BAR_WIDTH;
 const BAR_GAP = WAVEFORM_BAR_GAP;
@@ -42,6 +43,21 @@ const TRIM_EDGE_SCROLL_ZONE = 56;
 const TRIM_EDGE_SCROLL_MAX_SPEED = 12;
 const TRIM_HANDLE_COLOR = '#FFCC00';
 const MOVE_BORDER_WIDTH = 2;
+
+type WaveformTheme = {
+  colors: VoiceMemosColorScheme;
+  styles: ReturnType<typeof createWaveformStyles>;
+};
+
+const WaveformThemeContext = createContext<WaveformTheme | null>(null);
+
+function useWaveformTheme(): WaveformTheme {
+  const theme = useContext(WaveformThemeContext);
+  if (!theme) {
+    throw new Error('useWaveformTheme must be used within WaveformView');
+  }
+  return theme;
+}
 
 export type { LoopOverlayConfig } from '@/src/components/LoopRegionBar';
 
@@ -171,6 +187,7 @@ function TimelineDimRegions({
   height: number | `${number}%`;
   sidePadding: number;
 }) {
+  const { styles } = useWaveformTheme();
   const rightDimLeft = sidePadding + contentWidth;
   const rightDimWidth = Math.max(0, bandWidth - rightDimLeft);
 
@@ -215,6 +232,7 @@ function TrackTrimOverlay({
   onChange: (trimIn: number, trimOut: number) => void;
   trimScrollHelpers: TrimScrollHelpers;
 }) {
+  const { styles } = useWaveformTheme();
   const trackOffset = sidePadding + track.startTime * PIXELS_PER_SECOND;
   const trimLeft = trackOffset + trimIn * PIXELS_PER_SECOND;
   const trimRight = trackOffset + trimOut * PIXELS_PER_SECOND;
@@ -397,6 +415,7 @@ function TrackMoveOverlay({
   onChange: (startTime: number) => void;
   trimScrollHelpers: TrimScrollHelpers;
 }) {
+  const { styles } = useWaveformTheme();
   const segmentLeft = sidePadding + track.startTime * PIXELS_PER_SECOND;
   const segmentWidth = track.duration * PIXELS_PER_SECOND;
   const startLayerStartTime = useRef(layerStartTime);
@@ -496,18 +515,18 @@ function TrackMoveOverlay({
 const TAP_DRAG_THRESHOLD = 10;
 const LONG_PRESS_DELAY_MS = 400;
 
-function getTrackBarColor(track: TrackData): string {
+function getTrackBarColor(track: TrackData, colors: VoiceMemosColorScheme): string {
   if (track.isMuted) {
-    return VoiceMemosColors.waveformBar;
+    return colors.waveformBar;
   }
-  return track.color ?? VoiceMemosColors.accent;
+  return track.color ?? colors.accent;
 }
 
-function getTrackBandBackground(track: TrackData): string {
+function getTrackBandBackground(track: TrackData, colors: VoiceMemosColorScheme): string {
   if (track.isActive) {
-    return colorWithAlpha(track.color ?? VoiceMemosColors.accent, 0.08);
+    return colorWithAlpha(track.color ?? colors.accent, 0.08);
   }
-  return VoiceMemosColors.waveformBandBackground;
+  return colors.waveformBandBackground;
 }
 
 function TrackWaveformRow({
@@ -537,6 +556,7 @@ function TrackWaveformRow({
   trimScrollHelpers?: TrimScrollHelpers;
   scrollPriority?: boolean;
 }) {
+  const { styles, colors } = useWaveformTheme();
   const touchStartRef = useRef({ x: 0, y: 0 });
   const touchDraggedRef = useRef(false);
   const longPressTriggeredRef = useRef(false);
@@ -571,9 +591,9 @@ function TrackWaveformRow({
       : 1;
   const showTrimOverlay = trimOverlay?.layerId === track.id;
   const showMoveOverlay = moveOverlay?.layerId === track.id;
-  const barColor = getTrackBarColor(track);
-  const bandBackground = getTrackBandBackground(track);
-  const trackColor = track.color ?? VoiceMemosColors.accent;
+  const barColor = getTrackBarColor(track, colors);
+  const bandBackground = getTrackBandBackground(track, colors);
+  const trackColor = track.color ?? colors.accent;
 
   const rowContent = (
     <View
@@ -729,6 +749,9 @@ export function WaveformView({
   loopOverlay,
   volumeVisualDb,
 }: Props) {
+  const colors = useVoiceMemosColors();
+  const styles = useMemo(() => createWaveformStyles(colors), [colors]);
+  const theme = useMemo(() => ({ colors, styles }), [colors, styles]);
   const scrollRef = useRef<ScrollView>(null);
   const isUserScrollingRef = useRef(false);
   const scrollOffsetRef = useRef(0);
@@ -958,6 +981,7 @@ export function WaveformView({
   }, [isRecording, viewportWidth]);
 
   return (
+    <WaveformThemeContext.Provider value={theme}>
     <View onLayout={handleLayout} style={styles.container}>
       <ScrollView
         ref={scrollRef}
@@ -1033,10 +1057,12 @@ export function WaveformView({
         <View style={styles.playheadCapBottom} />
       </View>
     </View>
+    </WaveformThemeContext.Provider>
   );
 }
 
-const styles = StyleSheet.create({
+function createWaveformStyles(colors: VoiceMemosColorScheme) {
+  return StyleSheet.create({
   container: {
     flex: 1,
     width: '100%',
@@ -1060,19 +1086,19 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 4,
     fontSize: 11,
-    color: VoiceMemosColors.secondaryText,
+    color: colors.secondaryText,
     zIndex: 5,
   },
   dimRegion: {
     position: 'absolute',
-    backgroundColor: VoiceMemosColors.waveformDimBackground,
+    backgroundColor: colors.waveformDimBackground,
   },
   centerLine: {
     position: 'absolute',
     top: '50%',
     height: 1,
     marginTop: -0.5,
-    backgroundColor: VoiceMemosColors.waveformCenterLine,
+    backgroundColor: colors.waveformCenterLine,
   },
   barsRow: {
     flexDirection: 'row',
@@ -1099,24 +1125,24 @@ const styles = StyleSheet.create({
     width: PLAYHEAD_CAP_SIZE,
     height: PLAYHEAD_CAP_SIZE,
     borderRadius: PLAYHEAD_CAP_SIZE / 2,
-    backgroundColor: VoiceMemosColors.accent,
+    backgroundColor: colors.accent,
     marginTop: -PLAYHEAD_CAP_SIZE / 2,
   },
   playheadCapBottom: {
     width: PLAYHEAD_CAP_SIZE,
     height: PLAYHEAD_CAP_SIZE,
     borderRadius: PLAYHEAD_CAP_SIZE / 2,
-    backgroundColor: VoiceMemosColors.accent,
+    backgroundColor: colors.accent,
     marginBottom: -PLAYHEAD_CAP_SIZE / 2,
   },
   playheadLine: {
     flex: 1,
     width: 2,
-    backgroundColor: VoiceMemosColors.accent,
+    backgroundColor: colors.accent,
   },
   markerBand: {
     height: MARKER_ROW_HEIGHT,
-    backgroundColor: VoiceMemosColors.waveformMarkerBackground,
+    backgroundColor: colors.waveformMarkerBackground,
     position: 'relative',
   },
   marker: {
@@ -1127,19 +1153,19 @@ const styles = StyleSheet.create({
   markerTick: {
     width: 1,
     height: 6,
-    backgroundColor: VoiceMemosColors.secondaryText,
+    backgroundColor: colors.secondaryText,
     opacity: 0.35,
   },
   markerLabel: {
     marginTop: 2,
     fontSize: 10,
-    color: VoiceMemosColors.secondaryText,
+    color: colors.secondaryText,
     fontVariant: ['tabular-nums'],
   },
   trimDim: {
     position: 'absolute',
     top: 0,
-    backgroundColor: 'rgba(255, 255, 255, 0.55)',
+    backgroundColor: colors.trimDimOverlay,
   },
   trimSelection: {
     position: 'absolute',
@@ -1169,4 +1195,5 @@ const styles = StyleSheet.create({
     top: 0,
     zIndex: 20,
   },
-});
+  });
+}

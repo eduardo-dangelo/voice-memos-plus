@@ -1,12 +1,13 @@
+import { useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
-import { VoiceMemosColors } from '@/constants/VoiceMemosColors';
 import {
   getDelayPresetDefaults,
   syncDelayTimeMs,
   type DelayPreset,
   type LayerEffects,
 } from '@/src/audio/layerEffects';
+import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
 import { EditorSlider } from '../primitives/EditorSlider';
 import { PresetPills } from '../primitives/PresetPills';
@@ -32,6 +33,8 @@ const PRESETS: { id: DelayPreset; label: string }[] = [
 const CUSTOM_DEFAULTS = { timeMs: 320, mix: 25, feedback: 40, sync: 'off' as const };
 
 export function DelayEditor({ effects, onChange }: Props) {
+  const colors = useVoiceMemosColors();
+  const styles = useStyles(colors);
   const { delay } = effects;
   const showSliders = delay.preset === 'custom';
   const displayTimeMs = delay.sync === 'off' ? delay.timeMs : syncDelayTimeMs(delay.sync);
@@ -110,36 +113,42 @@ export function DelayEditor({ effects, onChange }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: 'center',
-    gap: 6,
-  },
-  containerCompact: {
-    justifyContent: 'center',
-  },
-  presetRow: {
-    alignItems: 'center',
-  },
-  sliderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  sliderLabel: {
-    width: 56,
-    fontSize: 13,
-    color: VoiceMemosColors.secondaryText,
-  },
-  sliderTrack: {
-    flex: 1,
-  },
-  sliderValue: {
-    width: 52,
-    fontSize: 12,
-    color: VoiceMemosColors.secondaryText,
-    textAlign: 'right',
-    fontVariant: ['tabular-nums'],
-  },
-});
+function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
+  return useMemo(
+    () =>
+      StyleSheet.create({
+        container: {
+          flex: 1,
+          justifyContent: 'center',
+          gap: 6,
+        },
+        containerCompact: {
+          justifyContent: 'center',
+        },
+        presetRow: {
+          alignItems: 'center',
+        },
+        sliderRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 8,
+        },
+        sliderLabel: {
+          width: 56,
+          fontSize: 13,
+          color: colors.secondaryText,
+        },
+        sliderTrack: {
+          flex: 1,
+        },
+        sliderValue: {
+          width: 52,
+          fontSize: 12,
+          color: colors.secondaryText,
+          textAlign: 'right',
+          fontVariant: ['tabular-nums'],
+        },
+      }),
+    [colors]
+  );
+}

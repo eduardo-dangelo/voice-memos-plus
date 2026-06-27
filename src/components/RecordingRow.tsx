@@ -3,7 +3,6 @@ import { useMemo } from 'react';
 import { ActionSheetIOS, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { LinearTransition } from 'react-native-reanimated';
 
-import { VoiceMemosColors } from '@/constants/VoiceMemosColors';
 import { useAudioEngine, useAudioEngineState } from '@/src/audio/AudioEngineContext';
 import {
   deleteMemo,
@@ -15,6 +14,7 @@ import { getMemoPlaybackTimeline } from '@/src/storage/paths';
 import type { Memo } from '@/src/storage/types';
 import { hasRecording } from '@/src/storage/types';
 import { formatDate, formatDuration } from '@/src/utils/format';
+import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 import * as Sharing from 'expo-sharing';
 
 import { Collapsible } from './Collapsible';
@@ -43,6 +43,8 @@ export function RecordingRow({
   onDeleted,
   onUpdated,
 }: Props) {
+  const colors = useVoiceMemosColors();
+  const styles = useStyles(colors);
   const engine = useAudioEngine();
   const engineState = useAudioEngineState();
   const isActive = engineState.memoId === memo.id;
@@ -173,7 +175,7 @@ export function RecordingRow({
           <SymbolView
             name={{ ios: selected ? 'checkmark.circle.fill' : 'circle' }}
             size={22}
-            tintColor={selected ? VoiceMemosColors.accent : VoiceMemosColors.secondaryText}
+            tintColor={selected ? colors.accent : colors.secondaryText}
           />
         ) : null}
         <View style={styles.meta}>
@@ -186,7 +188,7 @@ export function RecordingRow({
         </View>
         {!selectionMode ? (
           <Pressable hitSlop={12} onPress={showMenu}>
-            <SymbolView name={{ ios: 'ellipsis' }} size={18} tintColor={VoiceMemosColors.secondaryText} />
+            <SymbolView name={{ ios: 'ellipsis' }} size={18} tintColor={colors.secondaryText} />
           </Pressable>
         ) : null}
       </Pressable>
@@ -208,7 +210,7 @@ export function RecordingRow({
                 <Text style={styles.editLinkText}>Edit Recording</Text>
               </Pressable>
               <Pressable hitSlop={12} onPress={confirmDelete} style={styles.deleteButton}>
-                <SymbolView name={{ ios: 'trash' }} size={18} tintColor={VoiceMemosColors.secondaryText} />
+                <SymbolView name={{ ios: 'trash' }} size={18} tintColor={colors.secondaryText} />
               </Pressable>
             </View>
           </View>
@@ -218,50 +220,56 @@ export function RecordingRow({
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: VoiceMemosColors.separator,
-    backgroundColor: VoiceMemosColors.background,
-  },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  meta: {
-    flex: 1,
-    gap: 2,
-  },
-  title: {
-    fontSize: 17,
-    fontWeight: '500',
-    color: VoiceMemosColors.text,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: VoiceMemosColors.secondaryText,
-  },
-  expanded: {
-    paddingHorizontal: 16,
-    paddingBottom: 16,
-    gap: 12,
-  },
-  actionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  editLink: {
-    alignSelf: 'flex-start',
-  },
-  deleteButton: {
-    alignSelf: 'center',
-  },
-  editLinkText: {
-    color: VoiceMemosColors.accent,
-    fontSize: 15,
-  },
-});
+function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
+  return useMemo(
+    () =>
+      StyleSheet.create({
+        container: {
+          borderBottomWidth: StyleSheet.hairlineWidth,
+          borderBottomColor: colors.separator,
+          backgroundColor: colors.background,
+        },
+        row: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 12,
+          paddingHorizontal: 16,
+          paddingVertical: 12,
+        },
+        meta: {
+          flex: 1,
+          gap: 2,
+        },
+        title: {
+          fontSize: 17,
+          fontWeight: '500',
+          color: colors.text,
+        },
+        subtitle: {
+          fontSize: 14,
+          color: colors.secondaryText,
+        },
+        expanded: {
+          paddingHorizontal: 16,
+          paddingBottom: 16,
+          gap: 12,
+        },
+        actionRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        },
+        editLink: {
+          alignSelf: 'flex-start',
+        },
+        deleteButton: {
+          alignSelf: 'center',
+        },
+        editLinkText: {
+          color: colors.accent,
+          fontSize: 15,
+        },
+      }),
+    [colors]
+  );
+}

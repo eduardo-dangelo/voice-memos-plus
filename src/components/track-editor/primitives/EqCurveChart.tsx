@@ -10,7 +10,7 @@ import {
   type ViewStyle,
 } from 'react-native';
 
-import { VoiceMemosColors } from '@/constants/VoiceMemosColors';
+import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 import {
   EQ_FREQUENCIES,
   formatEqBand,
@@ -133,6 +133,7 @@ function ChartSegmentLine({
   y2,
   color,
   strokeWidth,
+  segmentLineStyle,
 }: {
   x1: number;
   y1: number;
@@ -140,6 +141,7 @@ function ChartSegmentLine({
   y2: number;
   color: string;
   strokeWidth: number;
+  segmentLineStyle: { position: 'absolute' };
 }) {
   const dx = x2 - x1;
   const dy = y2 - y1;
@@ -155,7 +157,7 @@ function ChartSegmentLine({
     <View
       pointerEvents="none"
       style={[
-        styles.segmentLine,
+        segmentLineStyle,
         {
           width: length,
           height: strokeWidth,
@@ -172,9 +174,11 @@ function ChartSegmentLine({
 function ChartAreaFill({
   points,
   baselineY,
+  areaStripStyle,
 }: {
   points: Point[];
   baselineY: number;
+  areaStripStyle: { position: 'absolute'; width: number; backgroundColor: string; opacity: number };
 }) {
   if (points.length < 2) {
     return null;
@@ -199,7 +203,7 @@ function ChartAreaFill({
           key={`${index}-${step}`}
           pointerEvents="none"
           style={[
-            styles.areaStrip,
+            areaStripStyle,
             {
               left: x,
               top,
@@ -217,9 +221,11 @@ function ChartAreaFill({
 function ChartHandle({
   point,
   isActive,
+  handleStyle,
 }: {
   point: Point;
   isActive: boolean;
+  handleStyle: { position: 'absolute'; backgroundColor: string; borderColor: string };
 }) {
   const radius = isActive ? ACTIVE_HANDLE_RADIUS : HANDLE_RADIUS;
   const size = radius * 2;
@@ -228,7 +234,7 @@ function ChartHandle({
     <View
       pointerEvents="none"
       style={[
-        styles.handle,
+        handleStyle,
         {
           width: size,
           height: size,
@@ -243,6 +249,8 @@ function ChartHandle({
 }
 
 export function EqCurveChart({ bands, onChange }: Props) {
+  const colors = useVoiceMemosColors();
+  const styles = useStyles(colors);
   const [chartSize, setChartSize] = useState<ChartSize>({ width: 1, height: CHART_HEIGHT });
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
 
@@ -341,14 +349,14 @@ export function EqCurveChart({ bands, onChange }: Props) {
                   left: CHART_PADDING_X,
                   right: CHART_PADDING_X,
                   backgroundColor:
-                    db === 0 ? VoiceMemosColors.waveformCenterLine : VoiceMemosColors.waveformInactive,
+                    db === 0 ? colors.waveformCenterLine : colors.waveformInactive,
                   height: db === 0 ? 1.5 : 1,
                   opacity: db === 0 ? 1 : 0.6,
                 } as ViewStyle,
               ]}
             />
           ))}
-          <ChartAreaFill points={points} baselineY={baselineY} />
+          <ChartAreaFill points={points} baselineY={baselineY} areaStripStyle={styles.areaStrip} />
           {points.map((point, index) => {
             if (index === points.length - 1) {
               return null;
@@ -361,13 +369,19 @@ export function EqCurveChart({ bands, onChange }: Props) {
                 y1={point.y}
                 x2={next.x}
                 y2={next.y}
-                color={VoiceMemosColors.accent}
+                color={colors.accent}
                 strokeWidth={CURVE_STROKE}
+                segmentLineStyle={styles.segmentLine}
               />
             );
           })}
           {points.map((point, index) => (
-            <ChartHandle key={EQ_FREQUENCIES[index]} point={point} isActive={activeIndex === index} />
+            <ChartHandle
+              key={EQ_FREQUENCIES[index]}
+              point={point}
+              isActive={activeIndex === index}
+              handleStyle={styles.handle}
+            />
           ))}
         </View>
       </View>
@@ -384,53 +398,59 @@ export function EqCurveChart({ bands, onChange }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    gap: 2,
-  },
-  activeLabel: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: VoiceMemosColors.text,
-    textAlign: 'center',
-    fontVariant: ['tabular-nums'],
-    minHeight: 14,
-  },
-  chartTouchArea: {
-    height: CHART_HEIGHT,
-    width: '100%',
-  },
-  chartCanvas: {
-    position: 'relative',
-    overflow: 'hidden',
-  },
-  gridLine: {
-    position: 'absolute',
-  },
-  areaStrip: {
-    position: 'absolute',
-    width: 1,
-    backgroundColor: VoiceMemosColors.accent,
-    opacity: 0.18,
-  },
-  segmentLine: {
-    position: 'absolute',
-  },
-  handle: {
-    position: 'absolute',
-    backgroundColor: '#FFFFFF',
-    borderColor: VoiceMemosColors.accent,
-  },
-  freqRow: {
-    height: 14,
-    position: 'relative',
-    width: '100%',
-  },
-  freqLabel: {
-    position: 'absolute',
-    width: 24,
-    fontSize: 10,
-    color: VoiceMemosColors.secondaryText,
-    textAlign: 'center',
-  },
-});
+function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
+  return useMemo(
+    () =>
+      StyleSheet.create({
+        container: {
+          gap: 2,
+        },
+        activeLabel: {
+          fontSize: 11,
+          fontWeight: '600',
+          color: colors.text,
+          textAlign: 'center',
+          fontVariant: ['tabular-nums'],
+          minHeight: 14,
+        },
+        chartTouchArea: {
+          height: CHART_HEIGHT,
+          width: '100%',
+        },
+        chartCanvas: {
+          position: 'relative',
+          overflow: 'hidden',
+        },
+        gridLine: {
+          position: 'absolute',
+        },
+        areaStrip: {
+          position: 'absolute',
+          width: 1,
+          backgroundColor: colors.accent,
+          opacity: 0.18,
+        },
+        segmentLine: {
+          position: 'absolute',
+        },
+        handle: {
+          position: 'absolute',
+          backgroundColor: colors.sliderThumb,
+          borderColor: colors.accent,
+        },
+        freqRow: {
+          height: 14,
+          position: 'relative',
+          width: '100%',
+        },
+        freqLabel: {
+          position: 'absolute',
+          width: 24,
+          fontSize: 10,
+          color: colors.secondaryText,
+          textAlign: 'center',
+        },
+      }),
+    [colors]
+  );
+}

@@ -1,10 +1,11 @@
+import { useMemo } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import {
   DEFAULT_TRACK_COLOR,
   TRACK_COLOR_OPTIONS,
-  VoiceMemosColors,
 } from '@/constants/VoiceMemosColors';
+import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
 type Props = {
   visible: boolean;
@@ -14,6 +15,9 @@ type Props = {
 };
 
 export function TrackColorPicker({ visible, selectedColor, onSelect, onClose }: Props) {
+  const colors = useVoiceMemosColors();
+  const styles = useStyles(colors);
+
   return (
     <Modal animationType="fade" transparent visible={visible} onRequestClose={onClose}>
       <Pressable style={styles.backdrop} onPress={onClose}>
@@ -52,55 +56,61 @@ export function resolveTrackColor(color?: string): string {
   return color ?? DEFAULT_TRACK_COLOR;
 }
 
-const styles = StyleSheet.create({
-  backdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.4)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
-  },
-  card: {
-    width: '100%',
-    maxWidth: 320,
-    backgroundColor: VoiceMemosColors.background,
-    borderRadius: 14,
-    paddingHorizontal: 20,
-    paddingVertical: 18,
-  },
-  title: {
-    fontSize: 17,
-    fontWeight: '600',
-    color: VoiceMemosColors.text,
-    marginBottom: 16,
-    textAlign: 'center',
-  },
-  swatchRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    gap: 12,
-  },
-  swatchOuter: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    borderWidth: 2,
-    borderColor: 'transparent',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  swatch: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  swatchCheck: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: VoiceMemosColors.background,
-  },
-});
+function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
+  return useMemo(
+    () =>
+      StyleSheet.create({
+        backdrop: {
+          flex: 1,
+          backgroundColor: colors.overlayBackground,
+          justifyContent: 'center',
+          alignItems: 'center',
+          padding: 24,
+        },
+        card: {
+          width: '100%',
+          maxWidth: 320,
+          backgroundColor: colors.background,
+          borderRadius: 14,
+          paddingHorizontal: 20,
+          paddingVertical: 18,
+        },
+        title: {
+          fontSize: 17,
+          fontWeight: '600',
+          color: colors.text,
+          marginBottom: 16,
+          textAlign: 'center',
+        },
+        swatchRow: {
+          flexDirection: 'row',
+          flexWrap: 'wrap',
+          justifyContent: 'center',
+          gap: 12,
+        },
+        swatchOuter: {
+          width: 44,
+          height: 44,
+          borderRadius: 22,
+          borderWidth: 2,
+          borderColor: 'transparent',
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        swatch: {
+          width: 36,
+          height: 36,
+          borderRadius: 18,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        swatchCheck: {
+          width: 10,
+          height: 10,
+          borderRadius: 5,
+          backgroundColor: colors.background,
+        },
+      }),
+    [colors]
+  );
+}

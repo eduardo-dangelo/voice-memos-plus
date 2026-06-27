@@ -1,14 +1,15 @@
 import * as Haptics from 'expo-haptics';
 import { SymbolView } from 'expo-symbols';
+import { useMemo } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { VoiceMemosColors } from '@/constants/VoiceMemosColors';
 import type { LayerEffects } from '@/src/audio/layerEffects';
 import {
   hasActiveDelay,
   hasActiveEq,
   hasActiveReverb,
 } from '@/src/audio/layerEffects';
+import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
 import { EDITOR_STRIP_HEIGHT, EDITOR_TOOLS, type EditorTool } from './types';
 
@@ -33,6 +34,9 @@ function isToolApplied(tool: EditorTool, effects: LayerEffects): boolean {
 }
 
 export function EditorToolStrip({ activeTool, availableTools, effects, onToolChange }: Props) {
+  const colors = useVoiceMemosColors();
+  const styles = useStyles(colors);
+
   const handlePress = (tool: EditorTool) => {
     void Haptics.selectionAsync();
     onToolChange(activeTool === tool ? null : tool);
@@ -62,7 +66,7 @@ export function EditorToolStrip({ activeTool, availableTools, effects, onToolCha
               <SymbolView
                 name={{ ios: tool.symbol }}
                 size={22}
-                tintColor={highlighted ? VoiceMemosColors.accent : VoiceMemosColors.text}
+                tintColor={highlighted ? colors.accent : colors.text}
               />
               <Text
                 style={[
@@ -80,39 +84,45 @@ export function EditorToolStrip({ activeTool, availableTools, effects, onToolCha
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    height: EDITOR_STRIP_HEIGHT,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: VoiceMemosColors.separator,
-  },
-  row: {
-    flexGrow: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-around',
-    paddingHorizontal: 8,
-  },
-  tool: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-    minWidth: 64,
-    paddingVertical: 6,
-    paddingHorizontal: 8,
-    borderRadius: 12,
-  },
-  toolSelected: {
-    backgroundColor: 'rgba(0, 122, 255, 0.12)',
-  },
-  label: {
-    fontSize: 11,
-    color: VoiceMemosColors.secondaryText,
-  },
-  labelHighlighted: {
-    color: VoiceMemosColors.accent,
-  },
-  labelSelected: {
-    fontWeight: '500',
-  },
-});
+function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
+  return useMemo(
+    () =>
+      StyleSheet.create({
+        container: {
+          height: EDITOR_STRIP_HEIGHT,
+          borderTopWidth: StyleSheet.hairlineWidth,
+          borderTopColor: colors.separator,
+        },
+        row: {
+          flexGrow: 1,
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-around',
+          paddingHorizontal: 8,
+        },
+        tool: {
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 4,
+          minWidth: 64,
+          paddingVertical: 6,
+          paddingHorizontal: 8,
+          borderRadius: 12,
+        },
+        toolSelected: {
+          backgroundColor: colors.toolSelectedBackground,
+        },
+        label: {
+          fontSize: 11,
+          color: colors.secondaryText,
+        },
+        labelHighlighted: {
+          color: colors.accent,
+        },
+        labelSelected: {
+          fontWeight: '500',
+        },
+      }),
+    [colors]
+  );
+}

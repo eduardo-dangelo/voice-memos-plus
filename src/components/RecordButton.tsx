@@ -1,7 +1,8 @@
 import * as Haptics from 'expo-haptics';
+import { useMemo } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
-import { VoiceMemosColors } from '@/constants/VoiceMemosColors';
+import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
 type Props = {
   onPress: () => void;
@@ -10,6 +11,9 @@ type Props = {
 };
 
 export function RecordButton({ onPress, disabled, size = 72 }: Props) {
+  const colors = useVoiceMemosColors();
+  const styles = useStyles(colors);
+
   return (
     <Pressable
       accessibilityRole="button"
@@ -28,20 +32,26 @@ export function RecordButton({ onPress, disabled, size = 72 }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
-  wrapper: {
-    backgroundColor: VoiceMemosColors.recordRed,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 4,
-  },
-  inner: {
-    backgroundColor: VoiceMemosColors.recordRed,
-    borderWidth: 4,
-    borderColor: '#FFFFFF',
-  },
-});
+function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
+  return useMemo(
+    () =>
+      StyleSheet.create({
+        wrapper: {
+          backgroundColor: colors.recordRed,
+          alignItems: 'center',
+          justifyContent: 'center',
+          shadowColor: '#000',
+          shadowOpacity: 0.2,
+          shadowRadius: 8,
+          shadowOffset: { width: 0, height: 4 },
+          elevation: 4,
+        },
+        inner: {
+          backgroundColor: colors.recordRed,
+          borderWidth: 4,
+          borderColor: '#FFFFFF',
+        },
+      }),
+    [colors]
+  );
+}

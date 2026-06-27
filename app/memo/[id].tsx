@@ -15,7 +15,6 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { VoiceMemosColors } from '@/constants/VoiceMemosColors';
 import type { LayerEffects, LayerEffectsChange } from '@/src/audio/layerEffects';
 import { isDefaultTrim, mergeLayerEffects } from '@/src/audio/layerEffects';
 import { useAudioEngine, useAudioEngineState } from '@/src/audio/AudioEngineContext';
@@ -60,6 +59,7 @@ import { slicePeaksForTrim } from '@/src/audio/waveform';
 import type { Memo } from '@/src/storage/types';
 import { getMemoPlaybackTimeline } from '@/src/storage/paths';
 import { formatDurationWithTenths } from '@/src/utils/format';
+import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
 async function loadMemoIntoEngine(
   engine: ReturnType<typeof useAudioEngine>,
@@ -96,6 +96,8 @@ function deactivateLoopForMemo(
 }
 
 export default function MemoEditorScreen() {
+  const colors = useVoiceMemosColors();
+  const styles = useMemoEditorStyles(colors);
   const { id, record } = useLocalSearchParams<{ id: string; record?: string }>();
   const navigation = useNavigation();
   const engine = useAudioEngine();
@@ -693,12 +695,17 @@ export default function MemoEditorScreen() {
         <SymbolView name={{ ios: 'checkmark' }} size={22} tintColor="#FFFFFF" />
       </Pressable>
     ),
-    [handleDone],
+    [handleDone, styles.doneButton],
   );
 
   useLayoutEffect(() => {
     navigation.setOptions({
       title: '',
+      headerStyle: { backgroundColor: colors.sheetBackground },
+      headerTintColor: colors.text,
+      headerTitleStyle: { color: colors.text },
+      headerShadowVisible: false,
+      contentStyle: { backgroundColor: colors.sheetBackground },
       ...(Platform.OS === 'ios'
         ? {
             unstable_headerRightItems: () => [
@@ -713,7 +720,7 @@ export default function MemoEditorScreen() {
             headerRight: renderDoneButton,
           }),
     });
-  }, [navigation, renderDoneButton]);
+  }, [colors, navigation, renderDoneButton]);
 
   const handleStopRecording = async () => {
     if (!memo || !engineState.isRecording) {
@@ -985,7 +992,7 @@ export default function MemoEditorScreen() {
   if (loading || !memo) {
     return (
       <View style={styles.centered}>
-        <ActivityIndicator color={VoiceMemosColors.accent} />
+        <ActivityIndicator color={colors.accent} />
       </View>
     );
   }
@@ -1121,80 +1128,86 @@ export default function MemoEditorScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: VoiceMemosColors.background,
-  },
-  content: {
-    flex: 1,
-    paddingHorizontal: 20,
-  },
-  centered: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: VoiceMemosColors.background,
-  },
-  doneButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: VoiceMemosColors.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 4,
-  },
-  headerMeta: {
-    paddingTop: 8,
-    paddingBottom: 4,
-  },
-  titleInput: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: VoiceMemosColors.text,
-    padding: 0,
-  },
-  tracksArea: {
-    flex: 1,
-    marginHorizontal: -20,
-  },
-  timeDisplay: {
-    alignItems: 'center',
-    gap: 4,
-    paddingBottom: 4,
-  },
-  largeTime: {
-    fontSize: 36,
-    fontWeight: '300',
-    color: VoiceMemosColors.text,
-    fontVariant: ['tabular-nums'],
-  },
-  recordingLabel: {
-    fontSize: 15,
-    color: VoiceMemosColors.secondaryText,
-  },
-  footer: {
-    paddingTop: 8,
-    paddingBottom: 8,
-    gap: 8,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: VoiceMemosColors.separator,
-  },
-  stopButton: {
-    alignSelf: 'center',
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    borderWidth: 4,
-    borderColor: VoiceMemosColors.separator,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  stopSquare: {
-    width: 24,
-    height: 24,
-    borderRadius: 4,
-    backgroundColor: VoiceMemosColors.recordRed,
-  },
-});
+function useMemoEditorStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
+  return useMemo(
+    () =>
+      StyleSheet.create({
+        screen: {
+          flex: 1,
+          backgroundColor: colors.sheetBackground,
+        },
+        content: {
+          flex: 1,
+          paddingHorizontal: 20,
+        },
+        centered: {
+          flex: 1,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: colors.sheetBackground,
+        },
+        doneButton: {
+          width: 32,
+          height: 32,
+          borderRadius: 16,
+          backgroundColor: colors.accent,
+          alignItems: 'center',
+          justifyContent: 'center',
+          marginRight: 4,
+        },
+        headerMeta: {
+          paddingTop: 8,
+          paddingBottom: 4,
+        },
+        titleInput: {
+          fontSize: 28,
+          fontWeight: '700',
+          color: colors.text,
+          padding: 0,
+        },
+        tracksArea: {
+          flex: 1,
+          marginHorizontal: -20,
+        },
+        timeDisplay: {
+          alignItems: 'center',
+          gap: 4,
+          paddingBottom: 4,
+        },
+        largeTime: {
+          fontSize: 36,
+          fontWeight: '300',
+          color: colors.text,
+          fontVariant: ['tabular-nums'],
+        },
+        recordingLabel: {
+          fontSize: 15,
+          color: colors.secondaryText,
+        },
+        footer: {
+          paddingTop: 8,
+          paddingBottom: 8,
+          gap: 8,
+          borderTopWidth: StyleSheet.hairlineWidth,
+          borderTopColor: colors.separator,
+        },
+        stopButton: {
+          alignSelf: 'center',
+          width: 72,
+          height: 72,
+          borderRadius: 36,
+          borderWidth: 4,
+          borderColor: colors.separator,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        stopSquare: {
+          width: 24,
+          height: 24,
+          borderRadius: 4,
+          backgroundColor: colors.recordRed,
+        },
+      }),
+    [colors]
+  );
+}

@@ -1,8 +1,9 @@
 import { SymbolView } from 'expo-symbols';
+import { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { VoiceMemosColors } from '@/constants/VoiceMemosColors';
 import { formatDuration } from '@/src/utils/format';
+import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
 type Props = {
   isPlaying: boolean;
@@ -31,6 +32,8 @@ export function PlaybackControls({
   showProgressBar = true,
   showTimeLabels = true,
 }: Props) {
+  const colors = useVoiceMemosColors();
+  const styles = useStyles(colors);
   const progress = duration > 0 ? currentTime / duration : 0;
 
   return (
@@ -44,13 +47,13 @@ export function PlaybackControls({
         {showTimeLabels ? <Text style={styles.time}>{formatDuration(currentTime)}</Text> : null}
         <View style={styles.buttons}>
           <Pressable accessibilityLabel="Skip back 15 seconds" onPress={onSkipBack} style={styles.iconButton}>
-            <SymbolView name={{ ios: 'gobackward.15' }} size={compact ? 24 : 28} tintColor={VoiceMemosColors.text} />
+            <SymbolView name={{ ios: 'gobackward.15' }} size={compact ? 24 : 28} tintColor={colors.text} />
           </Pressable>
           <Pressable accessibilityLabel={isPlaying ? 'Pause' : 'Play'} onPress={onPlayPause} style={styles.playButton}>
             <SymbolView
               name={{ ios: isPlaying ? 'pause.fill' : 'play.fill' }}
               size={compact ? 28 : 34}
-              tintColor={VoiceMemosColors.text}
+              tintColor={colors.text}
             />
           </Pressable>
           {onRecordPress ? (
@@ -67,7 +70,7 @@ export function PlaybackControls({
             </Pressable>
           ) : null}
           <Pressable accessibilityLabel="Skip forward 15 seconds" onPress={onSkipForward} style={styles.iconButton}>
-            <SymbolView name={{ ios: 'goforward.15' }} size={compact ? 24 : 28} tintColor={VoiceMemosColors.text} />
+            <SymbolView name={{ ios: 'goforward.15' }} size={compact ? 24 : 28} tintColor={colors.text} />
           </Pressable>
         </View>
         {showTimeLabels ? <Text style={styles.time}>{formatDuration(duration)}</Text> : null}
@@ -76,70 +79,76 @@ export function PlaybackControls({
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    gap: 8,
-  },
-  progressTrack: {
-    height: 3,
-    backgroundColor: VoiceMemosColors.waveformInactive,
-    borderRadius: 2,
-    overflow: 'hidden',
-  },
-  progressFill: {
-    height: '100%',
-    backgroundColor: VoiceMemosColors.accent,
-  },
-  controlsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  controlsRowCentered: {
-    justifyContent: 'center',
-  },
-  buttons: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 20,
-  },
-  iconButton: {
-    padding: 4,
-  },
-  playButton: {
-    padding: 4,
-  },
-  recordButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: VoiceMemosColors.recordRed,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  recordButtonCompact: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-  },
-  recordDisabled: {
-    opacity: 0.4,
-  },
-  recordDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: '#FFFFFF',
-  },
-  recordDotCompact: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-  },
-  time: {
-    width: 52,
-    fontSize: 12,
-    color: VoiceMemosColors.secondaryText,
-    fontVariant: ['tabular-nums'],
-  },
-});
+function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
+  return useMemo(
+    () =>
+      StyleSheet.create({
+        container: {
+          gap: 8,
+        },
+        progressTrack: {
+          height: 3,
+          backgroundColor: colors.waveformInactive,
+          borderRadius: 2,
+          overflow: 'hidden',
+        },
+        progressFill: {
+          height: '100%',
+          backgroundColor: colors.accent,
+        },
+        controlsRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        },
+        controlsRowCentered: {
+          justifyContent: 'center',
+        },
+        buttons: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 20,
+        },
+        iconButton: {
+          padding: 4,
+        },
+        playButton: {
+          padding: 4,
+        },
+        recordButton: {
+          width: 32,
+          height: 32,
+          borderRadius: 16,
+          backgroundColor: colors.recordRed,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        recordButtonCompact: {
+          width: 28,
+          height: 28,
+          borderRadius: 14,
+        },
+        recordDisabled: {
+          opacity: 0.4,
+        },
+        recordDot: {
+          width: 12,
+          height: 12,
+          borderRadius: 6,
+          backgroundColor: '#FFFFFF',
+        },
+        recordDotCompact: {
+          width: 10,
+          height: 10,
+          borderRadius: 5,
+        },
+        time: {
+          width: 52,
+          fontSize: 12,
+          color: colors.secondaryText,
+          fontVariant: ['tabular-nums'],
+        },
+      }),
+    [colors]
+  );
+}

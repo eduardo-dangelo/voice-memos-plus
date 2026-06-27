@@ -12,14 +12,16 @@ import {
   View,
 } from 'react-native';
 
-import { VoiceMemosColors } from '@/constants/VoiceMemosColors';
 import { memoAudioEngine } from '@/src/audio/MemoAudioEngine';
 import { RecordButton } from '@/src/components/RecordButton';
 import { RecordingRow } from '@/src/components/RecordingRow';
 import { useMemos } from '@/src/hooks/useMemos';
 import { createMemo, deleteMemo } from '@/src/storage/memoStore';
+import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
 export default function RecordingsListScreen() {
+  const colors = useVoiceMemosColors();
+  const styles = useStyles(colors);
   const { memos, refresh } = useMemos();
   const [query, setQuery] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -78,7 +80,7 @@ export default function RecordingsListScreen() {
         <TextInput
           clearButtonMode="while-editing"
           placeholder="Search"
-          placeholderTextColor={VoiceMemosColors.secondaryText}
+          placeholderTextColor={colors.secondaryText}
           style={styles.search}
           value={query}
           onChangeText={setQuery}
@@ -98,7 +100,7 @@ export default function RecordingsListScreen() {
 
       {selectionMode && selectedIds.size > 0 ? (
         <Pressable onPress={handleDeleteSelected} style={styles.deleteBar}>
-          <SymbolView name={{ ios: 'trash' }} size={18} tintColor={VoiceMemosColors.recordRed} />
+          <SymbolView name={{ ios: 'trash' }} size={18} tintColor={colors.recordRed} />
           <Text style={styles.deleteText}>Delete ({selectedIds.size})</Text>
         </Pressable>
       ) : null}
@@ -137,66 +139,72 @@ export default function RecordingsListScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: VoiceMemosColors.background,
-  },
-  toolbar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingHorizontal: 16,
-    paddingBottom: 8,
-  },
-  search: {
-    flex: 1,
-    backgroundColor: '#EFEFF0',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    fontSize: 16,
-    color: VoiceMemosColors.text,
-  },
-  selectText: {
-    color: VoiceMemosColors.accent,
-    fontSize: 17,
-    fontWeight: '500',
-  },
-  deleteBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 16,
-    paddingBottom: 8,
-  },
-  deleteText: {
-    color: VoiceMemosColors.recordRed,
-    fontSize: 16,
-  },
-  listContent: {
-    paddingBottom: 120,
-  },
-  empty: {
-    padding: 32,
-    alignItems: 'center',
-    gap: 8,
-  },
-  emptyTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: VoiceMemosColors.text,
-  },
-  emptySubtitle: {
-    fontSize: 15,
-    color: VoiceMemosColors.secondaryText,
-    textAlign: 'center',
-  },
-  fabContainer: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 32,
-    alignItems: 'center',
-  },
-});
+function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
+  return useMemo(
+    () =>
+      StyleSheet.create({
+        screen: {
+          flex: 1,
+          backgroundColor: colors.background,
+        },
+        toolbar: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 12,
+          paddingHorizontal: 16,
+          paddingBottom: 8,
+        },
+        search: {
+          flex: 1,
+          backgroundColor: colors.searchFieldBackground,
+          borderRadius: 10,
+          paddingHorizontal: 12,
+          paddingVertical: 8,
+          fontSize: 16,
+          color: colors.text,
+        },
+        selectText: {
+          color: colors.accent,
+          fontSize: 17,
+          fontWeight: '500',
+        },
+        deleteBar: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 8,
+          paddingHorizontal: 16,
+          paddingBottom: 8,
+        },
+        deleteText: {
+          color: colors.recordRed,
+          fontSize: 16,
+        },
+        listContent: {
+          paddingBottom: 120,
+        },
+        empty: {
+          padding: 32,
+          alignItems: 'center',
+          gap: 8,
+        },
+        emptyTitle: {
+          fontSize: 20,
+          fontWeight: '600',
+          color: colors.text,
+        },
+        emptySubtitle: {
+          fontSize: 15,
+          color: colors.secondaryText,
+          textAlign: 'center',
+        },
+        fabContainer: {
+          position: 'absolute',
+          left: 0,
+          right: 0,
+          bottom: 32,
+          alignItems: 'center',
+        },
+      }),
+    [colors]
+  );
+}

@@ -1,7 +1,8 @@
+import { useMemo } from 'react';
 import { Pressable, StyleSheet, Text } from 'react-native';
 import { ScrollView } from 'react-native-gesture-handler';
 
-import { VoiceMemosColors } from '@/constants/VoiceMemosColors';
+import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
 type Props<T extends string> = {
   options: { id: T; label: string }[];
@@ -10,6 +11,9 @@ type Props<T extends string> = {
 };
 
 export function PresetPills<T extends string>({ options, selectedId, onSelect }: Props<T>) {
+  const colors = useVoiceMemosColors();
+  const styles = useStyles(colors);
+
   return (
     <ScrollView
       horizontal
@@ -31,36 +35,42 @@ export function PresetPills<T extends string>({ options, selectedId, onSelect }:
   );
 }
 
-const styles = StyleSheet.create({
-  scroll: {
-    flexGrow: 0,
-    flexShrink: 0,
-  },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 6,
-  },
-  pill: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 10,
-    backgroundColor: VoiceMemosColors.waveformBandBackground,
-  },
-  pillSelected: {
-    backgroundColor: VoiceMemosColors.accent,
-  },
-  label: {
-    fontSize: 13,
-    fontWeight: '500',
-    lineHeight: 16,
-    includeFontPadding: false,
-    color: VoiceMemosColors.text,
-  },
-  labelSelected: {
-    color: '#FFFFFF',
-  },
-});
+function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
+  return useMemo(
+    () =>
+      StyleSheet.create({
+        scroll: {
+          flexGrow: 0,
+          flexShrink: 0,
+        },
+        row: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 8,
+          paddingHorizontal: 6,
+        },
+        pill: {
+          alignItems: 'center',
+          justifyContent: 'center',
+          paddingHorizontal: 14,
+          paddingVertical: 8,
+          borderRadius: 10,
+          backgroundColor: colors.waveformBandBackground,
+        },
+        pillSelected: {
+          backgroundColor: colors.accent,
+        },
+        label: {
+          fontSize: 13,
+          fontWeight: '500',
+          lineHeight: 16,
+          includeFontPadding: false,
+          color: colors.text,
+        },
+        labelSelected: {
+          color: colors.pillTextSelected,
+        },
+      }),
+    [colors]
+  );
+}

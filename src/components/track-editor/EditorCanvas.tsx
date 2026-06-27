@@ -1,7 +1,8 @@
+import { useMemo } from 'react';
 import { StyleSheet, View } from 'react-native';
 
-import { VoiceMemosColors } from '@/constants/VoiceMemosColors';
 import type { LayerEffects, LayerEffectsChange } from '@/src/audio/layerEffects';
+import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
 import { DelayEditor } from './editors/DelayEditor';
 import { EQEditor } from './editors/EQEditor';
@@ -24,6 +25,8 @@ export function EditorCanvas({
   layerDuration,
   onEffectsChange,
 }: Props) {
+  const colors = useVoiceMemosColors();
+  const styles = useStyles(colors);
   const canvasHeight = getEditorCanvasHeight(activeTool, effects);
   const reverbCompact = activeTool === 'reverb' && effects.reverb.preset !== 'custom';
   const delayCompact = activeTool === 'delay' && effects.delay.preset !== 'custom';
@@ -74,20 +77,26 @@ export function EditorCanvas({
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    overflow: 'hidden',
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: VoiceMemosColors.separator,
-  },
-  content: {
-    paddingHorizontal: 16,
-    paddingVertical: 4,
-  },
-  contentReverbCompact: {
-    paddingVertical: 2,
-  },
-  contentVolumeCompact: {
-    paddingVertical: 2,
-  },
-});
+function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
+  return useMemo(
+    () =>
+      StyleSheet.create({
+        container: {
+          overflow: 'hidden',
+          borderTopWidth: StyleSheet.hairlineWidth,
+          borderTopColor: colors.separator,
+        },
+        content: {
+          paddingHorizontal: 16,
+          paddingVertical: 4,
+        },
+        contentReverbCompact: {
+          paddingVertical: 2,
+        },
+        contentVolumeCompact: {
+          paddingVertical: 2,
+        },
+      }),
+    [colors]
+  );
+}

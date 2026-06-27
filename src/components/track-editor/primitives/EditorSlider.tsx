@@ -1,5 +1,5 @@
 import * as Haptics from 'expo-haptics';
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import {
   LayoutChangeEvent,
   PanResponder,
@@ -9,7 +9,7 @@ import {
   type PanResponderGestureState,
 } from 'react-native';
 
-import { VoiceMemosColors } from '@/constants/VoiceMemosColors';
+import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
 const THUMB_RADIUS = 14;
 const VERTICAL_TRACK_HEIGHT = 100;
@@ -73,6 +73,8 @@ export function EditorSlider({
   stepCount,
   gestureSensitivity = DEFAULT_GESTURE_SENSITIVITY,
 }: Props) {
+  const colors = useVoiceMemosColors();
+  const styles = useStyles(colors);
   const trackSize = useRef({ width: 1, height: 1 });
   const [laneHeight, setLaneHeight] = useState(VERTICAL_TRACK_HEIGHT);
   const startValue = useRef(value);
@@ -223,75 +225,81 @@ export function EditorSlider({
   );
 }
 
-const styles = StyleSheet.create({
-  trackContainer: {
-    height: 44,
-    justifyContent: 'center',
-    paddingHorizontal: THUMB_RADIUS,
-  },
-  trackContainerVertical: {
-    width: 44,
-    height: VERTICAL_TRACK_HEIGHT + THUMB_RADIUS * 2,
-    paddingHorizontal: 0,
-    justifyContent: 'center',
-  },
-  trackLane: {
-    height: VERTICAL_TRACK_HEIGHT,
-    position: 'relative',
-    alignSelf: 'center',
-    width: '100%',
-  },
-  trackLaneHorizontal: {
-    flex: 1,
-    justifyContent: 'center',
-    position: 'relative',
-  },
-  track: {
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: VoiceMemosColors.waveformInactive,
-    overflow: 'hidden',
-    position: 'relative',
-  },
-  trackVertical: {
-    width: 4,
-    height: '100%',
-    alignSelf: 'center',
-  },
-  centerTick: {
-    position: 'absolute',
-    backgroundColor: VoiceMemosColors.secondaryText,
-    opacity: 0.4,
-    zIndex: 1,
-  },
-  centerTickHorizontal: {
-    left: '50%',
-    width: 1,
-    height: '100%',
-    marginLeft: -0.5,
-  },
-  centerTickVertical: {
-    top: '50%',
-    height: 1,
-    width: '100%',
-    marginTop: -0.5,
-  },
-  fill: {
-    backgroundColor: VoiceMemosColors.accent,
-    position: 'absolute',
-    left: 0,
-    bottom: 0,
-  },
-  thumb: {
-    position: 'absolute',
-    width: THUMB_RADIUS * 2,
-    height: THUMB_RADIUS * 2,
-    borderRadius: THUMB_RADIUS,
-    backgroundColor: '#FFFFFF',
-    shadowColor: '#000000',
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 3,
-  },
-});
+function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
+  return useMemo(
+    () =>
+      StyleSheet.create({
+        trackContainer: {
+          height: 44,
+          justifyContent: 'center',
+          paddingHorizontal: THUMB_RADIUS,
+        },
+        trackContainerVertical: {
+          width: 44,
+          height: VERTICAL_TRACK_HEIGHT + THUMB_RADIUS * 2,
+          paddingHorizontal: 0,
+          justifyContent: 'center',
+        },
+        trackLane: {
+          height: VERTICAL_TRACK_HEIGHT,
+          position: 'relative',
+          alignSelf: 'center',
+          width: '100%',
+        },
+        trackLaneHorizontal: {
+          flex: 1,
+          justifyContent: 'center',
+          position: 'relative',
+        },
+        track: {
+          height: 4,
+          borderRadius: 2,
+          backgroundColor: colors.waveformInactive,
+          overflow: 'hidden',
+          position: 'relative',
+        },
+        trackVertical: {
+          width: 4,
+          height: '100%',
+          alignSelf: 'center',
+        },
+        centerTick: {
+          position: 'absolute',
+          backgroundColor: colors.secondaryText,
+          opacity: 0.4,
+          zIndex: 1,
+        },
+        centerTickHorizontal: {
+          left: '50%',
+          width: 1,
+          height: '100%',
+          marginLeft: -0.5,
+        },
+        centerTickVertical: {
+          top: '50%',
+          height: 1,
+          width: '100%',
+          marginTop: -0.5,
+        },
+        fill: {
+          backgroundColor: colors.accent,
+          position: 'absolute',
+          left: 0,
+          bottom: 0,
+        },
+        thumb: {
+          position: 'absolute',
+          width: THUMB_RADIUS * 2,
+          height: THUMB_RADIUS * 2,
+          borderRadius: THUMB_RADIUS,
+          backgroundColor: colors.sliderThumb,
+          shadowColor: '#000000',
+          shadowOpacity: 0.15,
+          shadowRadius: 4,
+          shadowOffset: { width: 0, height: 2 },
+          elevation: 3,
+        },
+      }),
+    [colors]
+  );
+}
