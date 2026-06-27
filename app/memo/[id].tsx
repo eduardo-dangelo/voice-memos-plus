@@ -15,21 +15,23 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { showMemoActionSheet } from '@/src/actions/showMemoActionSheet';
+import { useAudioEngine, useAudioEngineState } from '@/src/audio/AudioEngineContext';
 import type { LayerEffects, LayerEffectsChange } from '@/src/audio/layerEffects';
 import { isDefaultTrim, mergeLayerEffects } from '@/src/audio/layerEffects';
-import { useAudioEngine, useAudioEngineState } from '@/src/audio/AudioEngineContext';
 import {
   maybeShowPerformanceWarning,
   resetPerformanceWarningState,
 } from '@/src/audio/performanceWarning';
+import { slicePeaksForTrim } from '@/src/audio/waveform';
 import { PlaybackControls } from '@/src/components/PlaybackControls';
-import { resolveTrackColor, TrackColorPicker } from '@/src/components/TrackColorPicker';
 import { TrackEditorShell } from '@/src/components/track-editor/TrackEditorShell';
 import type { EditorTool } from '@/src/components/track-editor/types';
+import { resolveTrackColor, TrackColorPicker } from '@/src/components/TrackColorPicker';
 import { WaveformView, type TrackData } from '@/src/components/WaveformView';
 import {
   addStackedLayer,
   commitLayerTrim,
+  deactivateMemoLoop,
   deleteLayer,
   deleteMemo,
   duplicateMemo,
@@ -42,27 +44,25 @@ import {
   updateLayerEffects,
   updateLayerLabel,
   updateLayerStartTimes,
-  deactivateMemoLoop,
   updateLoopRegion,
   updateTitle,
 } from '@/src/storage/memoStore';
+import { getMemoPlaybackTimeline } from '@/src/storage/paths';
+import type { Memo } from '@/src/storage/types';
 import {
   applyTimelineDeltaToLayers,
   clampLayerStartTime,
   getEarliestTrimInTimelineDelta,
-  getLayerEffects,
   getLayerActiveDuration,
   getLayerActiveStartTime,
+  getLayerEffects,
   getMemoTimelineDuration,
   getPlayableLayers,
   hasCustomLayerLabel,
   hasRecording,
 } from '@/src/storage/types';
-import { slicePeaksForTrim } from '@/src/audio/waveform';
-import type { Memo } from '@/src/storage/types';
-import { getMemoPlaybackTimeline } from '@/src/storage/paths';
-import { formatDurationWithTenths } from '@/src/utils/format';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
+import { formatDurationWithTenths } from '@/src/utils/format';
 
 async function loadMemoIntoEngine(
   engine: ReturnType<typeof useAudioEngine>,
@@ -1281,6 +1281,7 @@ function useMemoEditorStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
         tracksArea: {
           flex: 1,
           marginHorizontal: -20,
+          paddingTop: 4,
         },
         timeDisplay: {
           alignItems: 'center',
