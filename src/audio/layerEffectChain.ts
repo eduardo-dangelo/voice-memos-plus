@@ -253,7 +253,10 @@ export function applyPathInputEffects(
   context: AudioContext
 ): void {
   const now = context.currentTime;
-  path.gain.gain.setValueAtTime(dbToLinear(effects.volumeDb), now);
+  path.gain.gain.setValueAtTime(
+    effects.muted ? 0 : dbToLinear(effects.volumeDb),
+    now
+  );
   effects.eq.bands.forEach((bandDb, index) => {
     path.eqFilters[index].gain.setValueAtTime(bandDb, now);
   });

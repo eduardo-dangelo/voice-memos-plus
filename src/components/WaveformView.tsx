@@ -88,6 +88,7 @@ export type TrackData = {
   startTime: number;
   duration: number;
   isActive: boolean;
+  isMuted?: boolean;
 };
 
 type Props = {
@@ -100,6 +101,7 @@ type Props = {
   getRecordingTime?: () => number;
   onSeek: (time: number) => void;
   onTrackPress: (trackId: string) => void;
+  onTrackLongPress?: (trackId: string) => void;
   onWidthChange?: (width: number) => void;
   trimOverlay?: TrimOverlayConfig;
   moveOverlay?: MoveOverlayConfig;
@@ -466,6 +468,21 @@ function TrackMoveOverlay({
 }
 
 const TAP_DRAG_THRESHOLD = 10;
+const LONG_PRESS_DELAY_MS = 400;
+
+function getTrackBarColor(track: TrackData): string {
+  if (track.isMuted) {
+    return VoiceMemosColors.waveformBar;
+  }
+  return VoiceMemosColors.accent;
+}
+
+function getTrackBandBackground(track: TrackData): string {
+  if (track.isActive) {
+    return VoiceMemosColors.waveformSelectedBandBackground;
+  }
+  return VoiceMemosColors.waveformBandBackground;
+}
 
 function TrackWaveformRow({
   track,
@@ -474,6 +491,7 @@ function TrackWaveformRow({
   sidePadding,
   trackHeight,
   onPress,
+  onLongPress,
   trimOverlay,
   moveOverlay,
   volumeVisualDb,
@@ -486,6 +504,7 @@ function TrackWaveformRow({
   sidePadding: number;
   trackHeight: number;
   onPress: (locationX: number) => void;
+  onLongPress?: () => void;
   trimOverlay?: TrimOverlayConfig;
   moveOverlay?: MoveOverlayConfig;
   volumeVisualDb?: number;
@@ -494,8 +513,19 @@ function TrackWaveformRow({
 }) {
   const touchStartRef = useRef({ x: 0, y: 0 });
   const touchDraggedRef = useRef(false);
+  const longPressTriggeredRef = useRef(false);
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onPressRef = useRef(onPress);
   onPressRef.current = onPress;
+  const onLongPressRef = useRef(onLongPress);
+  onLongPressRef.current = onLongPress;
+
+  const clearLongPressTimer = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  };
 
   const barCount = getTrackBarCount(track.duration, contentWidth);
   const trackOffset = track.startTime * PIXELS_PER_SECOND;
@@ -515,12 +545,14 @@ function TrackWaveformRow({
       : 1;
   const showTrimOverlay = trimOverlay?.layerId === track.id;
   const showMoveOverlay = moveOverlay?.layerId === track.id;
+  const barColor = getTrackBarColor(track);
+  const bandBackground = getTrackBandBackground(track);
 
   const rowContent = (
     <View
       style={[
         styles.waveformBand,
-        { width: bandWidth, height: trackHeight },
+        { width: bandWidth, height: trackHeight, backgroundColor: bandBackground },
       ]}>
       <TimelineDimRegions
         bandWidth={bandWidth}
@@ -555,9 +587,7 @@ function TrackWaveformRow({
                   styles.bar,
                   {
                     height: barHeight,
-                    backgroundColor: track.isActive
-                      ? VoiceMemosColors.accent
-                      : VoiceMemosColors.waveformBar,
+                    backgroundColor: barColor,
                   },
                 ]}
               />
@@ -596,20 +626,30 @@ function TrackWaveformRow({
         style={[styles.trackRow, { height: trackHeight }]}
         onTouchStart={(event) => {
           touchDraggedRef.current = false;
+          longPressTriggeredRef.current = false;
           touchStartRef.current = {
             x: event.nativeEvent.pageX,
             y: event.nativeEvent.pageY,
           };
+          clearLongPressTimer();
+          if (onLongPressRef.current) {
+            longPressTimerRef.current = setTimeout(() => {
+              longPressTriggeredRef.current = true;
+              onLongPressRef.current?.();
+            }, LONG_PRESS_DELAY_MS);
+          }
         }}
         onTouchMove={(event) => {
           const dx = Math.abs(event.nativeEvent.pageX - touchStartRef.current.x);
           const dy = Math.abs(event.nativeEvent.pageY - touchStartRef.current.y);
           if (dx > TAP_DRAG_THRESHOLD || dy > TAP_DRAG_THRESHOLD) {
             touchDraggedRef.current = true;
+            clearLongPressTimer();
           }
         }}
         onTouchEnd={(event) => {
-          if (!touchDraggedRef.current) {
+          clearLongPressTimer();
+          if (!touchDraggedRef.current && !longPressTriggeredRef.current) {
             onPressRef.current(event.nativeEvent.locationX);
           }
         }}>
@@ -620,6 +660,8 @@ function TrackWaveformRow({
 
   return (
     <Pressable
+      delayLongPress={LONG_PRESS_DELAY_MS}
+      onLongPress={onLongPress}
       onPress={(event) => onPress(event.nativeEvent.locationX)}
       style={[styles.trackRow, { height: trackHeight }]}>
       {rowContent}
@@ -637,6 +679,7 @@ export function WaveformView({
   getRecordingTime,
   onSeek,
   onTrackPress,
+  onTrackLongPress,
   onWidthChange,
   trimOverlay,
   moveOverlay,
@@ -660,6 +703,8 @@ export function WaveformView({
   onSeekRef.current = onSeek;
   const onTrackPressRef = useRef(onTrackPress);
   onTrackPressRef.current = onTrackPress;
+  const onTrackLongPressRef = useRef(onTrackLongPress);
+  onTrackLongPressRef.current = onTrackLongPress;
   const [viewportWidth, setViewportWidth] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
 
@@ -713,7 +758,7 @@ export function WaveformView({
 
   const handleTrackPress = (trackId: string, locationX: number) => {
     onTrackPressRef.current(trackId);
-    if (duration <= 0 || contentWidth <= 0) {
+    if (isPlaying || duration <= 0 || contentWidth <= 0) {
       return;
     }
     const waveformX = locationX - sidePadding;
@@ -896,12 +941,21 @@ export function WaveformView({
               track={track}
               trackHeight={trackHeight}
               scrollPriority={Boolean(
-                gestureOverlay && gestureOverlay.layerId !== track.id
+                isPlaying ||
+                isRecording ||
+                (gestureOverlay && gestureOverlay.layerId !== track.id)
               )}
               moveOverlay={moveOverlay}
               trimOverlay={trimOverlay}
               trimScrollHelpers={trimScrollHelpers}
               volumeVisualDb={volumeVisualDb}
+              onLongPress={
+                onTrackLongPressRef.current &&
+                track.id !== '__recording__' &&
+                track.id !== 'empty'
+                  ? () => onTrackLongPressRef.current?.(track.id)
+                  : undefined
+              }
               onPress={(locationX) => handleTrackPress(track.id, locationX)}
             />
           ))}
@@ -949,7 +1003,6 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   waveformBand: {
-    backgroundColor: VoiceMemosColors.waveformBandBackground,
     position: 'relative',
     justifyContent: 'center',
   },

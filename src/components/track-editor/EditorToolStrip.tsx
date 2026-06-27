@@ -3,16 +3,36 @@ import { SymbolView } from 'expo-symbols';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { VoiceMemosColors } from '@/constants/VoiceMemosColors';
+import type { LayerEffects } from '@/src/audio/layerEffects';
+import {
+  hasActiveDelay,
+  hasActiveEq,
+  hasActiveReverb,
+} from '@/src/audio/layerEffects';
 
-import { EDITOR_TOOLS, EDITOR_STRIP_HEIGHT, type EditorTool } from './types';
+import { EDITOR_STRIP_HEIGHT, EDITOR_TOOLS, type EditorTool } from './types';
 
 type Props = {
   activeTool: EditorTool | null;
   availableTools?: EditorTool[];
+  effects: LayerEffects;
   onToolChange: (tool: EditorTool | null) => void;
 };
 
-export function EditorToolStrip({ activeTool, availableTools, onToolChange }: Props) {
+function isToolApplied(tool: EditorTool, effects: LayerEffects): boolean {
+  switch (tool) {
+    case 'reverb':
+      return hasActiveReverb(effects);
+    case 'delay':
+      return hasActiveDelay(effects);
+    case 'eq':
+      return hasActiveEq(effects);
+    default:
+      return false;
+  }
+}
+
+export function EditorToolStrip({ activeTool, availableTools, effects, onToolChange }: Props) {
   const handlePress = (tool: EditorTool) => {
     void Haptics.selectionAsync();
     onToolChange(activeTool === tool ? null : tool);
@@ -30,6 +50,8 @@ export function EditorToolStrip({ activeTool, availableTools, onToolChange }: Pr
         showsHorizontalScrollIndicator={false}>
         {tools.map((tool) => {
           const selected = activeTool === tool.id;
+          const applied = isToolApplied(tool.id, effects);
+          const highlighted = selected || applied;
           return (
             <Pressable
               key={tool.id}
@@ -40,9 +62,16 @@ export function EditorToolStrip({ activeTool, availableTools, onToolChange }: Pr
               <SymbolView
                 name={{ ios: tool.symbol }}
                 size={22}
-                tintColor={selected ? VoiceMemosColors.accent : VoiceMemosColors.text}
+                tintColor={highlighted ? VoiceMemosColors.accent : VoiceMemosColors.text}
               />
-              <Text style={[styles.label, selected && styles.labelSelected]}>{tool.label}</Text>
+              <Text
+                style={[
+                  styles.label,
+                  highlighted && styles.labelHighlighted,
+                  selected && styles.labelSelected,
+                ]}>
+                {tool.label}
+              </Text>
             </Pressable>
           );
         })}
@@ -80,8 +109,10 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: VoiceMemosColors.secondaryText,
   },
-  labelSelected: {
+  labelHighlighted: {
     color: VoiceMemosColors.accent,
+  },
+  labelSelected: {
     fontWeight: '500',
   },
 });

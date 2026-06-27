@@ -118,6 +118,22 @@ export function RecordingRow({
     ], 'plain-text', memo.title);
   };
 
+  const confirmDelete = () => {
+    Alert.alert('Delete Recording', 'This recording will be deleted.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () => {
+          if (isActive) {
+            engine.unload();
+          }
+          void deleteMemo(memo.id).then(onDeleted);
+        },
+      },
+    ]);
+  };
+
   const showMenu = () => {
     ActionSheetIOS.showActionSheetWithOptions(
       {
@@ -140,19 +156,7 @@ export function RecordingRow({
             void duplicateMemo(memo.id).then(onUpdated);
             break;
           case 4:
-            Alert.alert('Delete Recording', 'This recording will be deleted.', [
-              { text: 'Cancel', style: 'cancel' },
-              {
-                text: 'Delete',
-                style: 'destructive',
-                onPress: () => {
-                  if (isActive) {
-                    engine.unload();
-                  }
-                  void deleteMemo(memo.id).then(onDeleted);
-                },
-              },
-            ]);
+            confirmDelete();
             break;
         }
       }
@@ -199,9 +203,14 @@ export function RecordingRow({
               onSkipBack={() => void handleSkip(-15)}
               onSkipForward={() => void handleSkip(15)}
             />
-            <Pressable onPress={onOpenEditor} style={styles.editLink}>
-              <Text style={styles.editLinkText}>Edit Recording</Text>
-            </Pressable>
+            <View style={styles.actionRow}>
+              <Pressable onPress={onOpenEditor} style={styles.editLink}>
+                <Text style={styles.editLinkText}>Edit Recording</Text>
+              </Pressable>
+              <Pressable hitSlop={12} onPress={confirmDelete} style={styles.deleteButton}>
+                <SymbolView name={{ ios: 'trash' }} size={18} tintColor={VoiceMemosColors.secondaryText} />
+              </Pressable>
+            </View>
           </View>
         </Collapsible>
       ) : null}
@@ -240,8 +249,16 @@ const styles = StyleSheet.create({
     paddingBottom: 16,
     gap: 12,
   },
+  actionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
   editLink: {
     alignSelf: 'flex-start',
+  },
+  deleteButton: {
+    alignSelf: 'center',
   },
   editLinkText: {
     color: VoiceMemosColors.accent,

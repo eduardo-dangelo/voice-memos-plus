@@ -40,6 +40,7 @@ export function TrackEditorShell({
       <EditorToolStrip
         activeTool={activeTool}
         availableTools={availableTools}
+        effects={effects}
         onToolChange={onToolChange}
       />
     </View>

@@ -93,6 +93,7 @@ export type LayerEffects = {
   trimIn: number;
   trimOut: number;
   volumeDb: number;
+  muted?: boolean;
   reverb: LayerReverbEffects;
   delay: LayerDelayEffects;
   eq: LayerEqEffects;
@@ -201,6 +202,7 @@ export function createDefaultLayerEffects(duration: number): LayerEffects {
     trimIn: 0,
     trimOut: duration > 0 ? duration : 0,
     volumeDb: 0,
+    muted: false,
     reverb: { preset: 'off', mix: 0, decay: 0.8 },
     delay: { preset: 'off', sync: 'off', timeMs: 320, mix: 0, feedback: 40 },
     eq: { preset: 'off', bands: [0, 0, 0, 0, 0] },
@@ -216,16 +218,39 @@ export function isDefaultTrim(effects: LayerEffects, layerDuration: number): boo
 }
 
 export function hasFullEffectChain(effects: LayerEffects): boolean {
-  if (effects.reverb.preset !== 'off' || effects.reverb.mix > 0) {
+  if (hasActiveReverb(effects)) {
     return true;
   }
-  if (effects.delay.preset !== 'off' || effects.delay.mix > 0) {
+  if (hasActiveDelay(effects)) {
     return true;
   }
+  return hasActiveEq(effects);
+}
+
+export function hasActiveReverb(effects: LayerEffects): boolean {
+  return effects.reverb.preset !== 'off' || effects.reverb.mix > 0;
+}
+
+export function hasActiveDelay(effects: LayerEffects): boolean {
+  return effects.delay.preset !== 'off' || effects.delay.mix > 0;
+}
+
+export function hasActiveEq(effects: LayerEffects): boolean {
   if (effects.eq.preset !== 'off') {
     return true;
   }
   return effects.eq.bands.some((bandDb) => bandDb !== 0);
+}
+
+export function hasActiveVolumeEffect(effects: LayerEffects): boolean {
+  return Boolean(effects.muted) || effects.volumeDb !== 0;
+}
+
+export function hasAppliedAudioEffects(effects: LayerEffects): boolean {
+  if (effects.muted) {
+    return true;
+  }
+  return hasFullEffectChain(effects);
 }
 
 export function normalizeLayerEffects(
@@ -278,6 +303,7 @@ export function normalizeLayerEffects(
     trimIn,
     trimOut: layer.duration > 0 ? trimOut : defaults.trimOut,
     volumeDb: layer.effects.volumeDb ?? 0,
+    muted: layer.effects.muted ?? false,
     reverb: {
       preset: reverbPreset,
       mix:

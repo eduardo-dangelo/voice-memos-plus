@@ -30,6 +30,7 @@ import { WaveformView, type TrackData } from '@/src/components/WaveformView';
 import {
   addStackedLayer,
   commitLayerTrim,
+  deleteLayer,
   ensureWaveformPeaks,
   getMemo,
   replaceLayerSegment,
@@ -134,12 +135,8 @@ export default function MemoEditorScreen() {
     return activeLayer ? getLayerEffects(activeLayer) : null;
   }, [activeLayer]);
 
-  const handleEffectsChange = useCallback(
-    (partial: LayerEffectsChange) => {
-      if (!activeLayerId) {
-        return;
-      }
-
+  const applyLayerEffectsChange = useCallback(
+    (layerId: string, partial: LayerEffectsChange) => {
       let nextEffects: ReturnType<typeof mergeLayerEffects> | null = null;
       let layerStartTimes: Record<string, number> | undefined;
       let memoId: string | null = null;
@@ -149,7 +146,7 @@ export default function MemoEditorScreen() {
           return prev;
         }
 
-        const layer = prev.layers.find((entry) => entry.id === activeLayerId);
+        const layer = prev.layers.find((entry) => entry.id === layerId);
         if (!layer) {
           return prev;
         }
@@ -161,7 +158,7 @@ export default function MemoEditorScreen() {
           : 0;
         const shiftedLayers = applyTimelineDeltaToLayers(prev.layers, timelineDelta);
         const nextLayers = shiftedLayers.map((entry) =>
-          entry.id === activeLayerId ? { ...entry, effects: mergedEffects } : entry
+          entry.id === layerId ? { ...entry, effects: mergedEffects } : entry
         );
 
         nextEffects = mergedEffects;
@@ -181,13 +178,13 @@ export default function MemoEditorScreen() {
         return;
       }
 
-      engine.updateLayerEffects(activeLayerId, partial);
+      engine.updateLayerEffects(layerId, partial);
       if (layerStartTimes) {
         engine.updateLayerStartTimes(layerStartTimes);
       }
       pendingEffectsPersist.current = {
         memoId,
-        layerId: activeLayerId,
+        layerId,
         effects: nextEffects,
         ...(layerStartTimes ? { layerStartTimes } : {}),
       };
@@ -196,10 +193,11 @@ export default function MemoEditorScreen() {
         clearTimeout(persistEffectsTimeout.current);
       }
       persistEffectsTimeout.current = setTimeout(() => {
-        void updateLayerEffects(memoId!, activeLayerId, {
+        void updateLayerEffects(memoId!, layerId, {
           trimIn: nextEffects!.trimIn,
           trimOut: nextEffects!.trimOut,
           volumeDb: nextEffects!.volumeDb,
+          muted: nextEffects!.muted,
           reverb: nextEffects!.reverb,
           delay: nextEffects!.delay,
           eq: nextEffects!.eq,
@@ -209,7 +207,17 @@ export default function MemoEditorScreen() {
         }
       }, 300);
     },
-    [activeLayerId, engine]
+    [engine]
+  );
+
+  const handleEffectsChange = useCallback(
+    (partial: LayerEffectsChange) => {
+      if (!activeLayerId) {
+        return;
+      }
+      applyLayerEffectsChange(activeLayerId, partial);
+    },
+    [activeLayerId, applyLayerEffectsChange]
   );
 
   const flushEffectsPersist = useCallback(() => {
@@ -225,6 +233,7 @@ export default function MemoEditorScreen() {
       trimIn: pending.effects.trimIn,
       trimOut: pending.effects.trimOut,
       volumeDb: pending.effects.volumeDb,
+      muted: pending.effects.muted,
       reverb: pending.effects.reverb,
       delay: pending.effects.delay,
       eq: pending.effects.eq,
@@ -453,6 +462,87 @@ export default function MemoEditorScreen() {
       })();
     },
     [activeLayerId, commitTrimIfNeeded, flushStartTimePersist, savingTrim]
+  );
+
+  const handleDeleteTrack = useCallback(
+    async (layerId: string) => {
+      if (!memo) {
+        return;
+      }
+
+      try {
+        flushEffectsPersist();
+        flushStartTimePersist();
+        const seekTime = Math.min(engine.getPlaybackTime(), memo.duration);
+        const updated = await deleteLayer(memo.id, layerId);
+        const nextActiveId =
+          getPlayableLayers(updated)[0]?.id ?? updated.layers[0]?.id ?? null;
+        setMemo(updated);
+        setActiveLayerId(nextActiveId);
+        setActiveEditor(null);
+        await loadMemoIntoEngine(engine, updated, seekTime);
+      } catch (error) {
+        Alert.alert(
+          'Delete failed',
+          error instanceof Error ? error.message : 'Unknown error'
+        );
+      }
+    },
+    [engine, flushEffectsPersist, flushStartTimePersist, memo]
+  );
+
+  const showTrackOptions = useCallback(
+    (layerId: string) => {
+      if (!memo || layerId === '__recording__' || layerId === 'empty') {
+        return;
+      }
+
+      const layer = memo.layers.find((entry) => entry.id === layerId);
+      if (!layer || layer.duration <= 0) {
+        return;
+      }
+
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+      const effects = getLayerEffects(layer);
+      const muteLabel = effects.muted ? 'Unmute' : 'Mute';
+      const canDelete = getPlayableLayers(memo).length > 1;
+      const options = canDelete
+        ? [muteLabel, 'Delete Track', 'Cancel']
+        : [muteLabel, 'Cancel'];
+      const destructiveButtonIndex = canDelete ? 1 : undefined;
+      const cancelButtonIndex = canDelete ? 2 : 1;
+
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options,
+          destructiveButtonIndex,
+          cancelButtonIndex,
+        },
+        (index) => {
+          if (index === 0) {
+            if (layerId !== activeLayerId) {
+              setActiveLayerId(layerId);
+            }
+            applyLayerEffectsChange(layerId, { muted: !effects.muted });
+            return;
+          }
+          if (canDelete && index === 1) {
+            Alert.alert('Delete Track', 'Delete this track? This cannot be undone.', [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Delete',
+                style: 'destructive',
+                onPress: () => {
+                  void handleDeleteTrack(layerId);
+                },
+              },
+            ]);
+          }
+        }
+      );
+    },
+    [activeLayerId, applyLayerEffectsChange, handleDeleteTrack, memo]
   );
 
   const loadMemo = useCallback(async () => {
@@ -734,12 +824,14 @@ export default function MemoEditorScreen() {
         const isMoveEditing = activeEditor === 'move' && layer.id === activeLayerId;
 
         if (isTrimEditing) {
+          const effects = getLayerEffects(layer);
           return {
             id: layer.id,
             peaks: layer.waveformPeaks,
             startTime: layer.startTime,
             duration: layer.duration,
             isActive: true,
+            isMuted: effects.muted,
           };
         }
 
@@ -758,6 +850,7 @@ export default function MemoEditorScreen() {
             startTime: getLayerActiveStartTime(layer),
             duration: Math.max(activeDuration, 0.01),
             isActive: true,
+            isMuted: effects.muted,
           };
         }
 
@@ -775,6 +868,7 @@ export default function MemoEditorScreen() {
           startTime: getLayerActiveStartTime(layer),
           duration: Math.max(activeDuration, 0.01),
           isActive: layer.id === activeLayerId,
+          isMuted: effects.muted,
         };
       });
 
@@ -900,6 +994,7 @@ export default function MemoEditorScreen() {
               }
             }}
             onTrackPress={handleTrackPress}
+            onTrackLongPress={showTrackOptions}
           />
         </View>
 

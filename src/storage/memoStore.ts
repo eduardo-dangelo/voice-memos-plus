@@ -23,6 +23,7 @@ import type { Layer, Memo } from './types';
 import {
   getLayerEffects,
   getMemoTimelineDuration,
+  getPlayableLayers,
   normalizeLayers,
   normalizeLoopRegion,
   getEarliestTrimInTimelineDelta,
@@ -501,6 +502,34 @@ export async function deleteMemo(memoId: string): Promise<void> {
   if (dir.exists) {
     dir.delete();
   }
+}
+
+export async function deleteLayer(memoId: string, layerId: string): Promise<Memo> {
+  const memo = await getMemo(memoId);
+  if (!memo) {
+    throw new Error('Memo not found');
+  }
+
+  if (getPlayableLayers(memo).length <= 1) {
+    throw new Error('Cannot delete the last track');
+  }
+
+  const layer = memo.layers.find((entry) => entry.id === layerId);
+  if (!layer) {
+    throw new Error('Layer not found');
+  }
+
+  const file = getLayerFile(memoId, layer.fileName);
+  if (file.exists) {
+    file.delete();
+  }
+
+  memo.layers = memo.layers.filter((entry) => entry.id !== layerId);
+  updateMemoTimeline(memo);
+  normalizeLoopRegion(memo, memo.duration);
+  memo.updatedAt = new Date().toISOString();
+  writeManifest(memo);
+  return memo;
 }
 
 export async function duplicateMemo(memoId: string): Promise<Memo> {
