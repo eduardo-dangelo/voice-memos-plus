@@ -13,7 +13,7 @@ import {
   type PanResponderGestureState,
 } from 'react-native';
 
-import { VoiceMemosColors } from '@/constants/VoiceMemosColors';
+import { VoiceMemosColors, colorWithAlpha } from '@/constants/VoiceMemosColors';
 import { LoopRegionBar, LOOP_ROW_HEIGHT, type LoopOverlayConfig } from '@/src/components/LoopRegionBar';
 import { clampTrimValues, dbToLinear } from '@/src/audio/layerEffects';
 import {
@@ -42,7 +42,6 @@ const TRIM_EDGE_SCROLL_ZONE = 56;
 const TRIM_EDGE_SCROLL_MAX_SPEED = 12;
 const TRIM_HANDLE_COLOR = '#FFCC00';
 const MOVE_BORDER_WIDTH = 2;
-const MOVE_SELECTION_FILL = 'rgba(0, 122, 255, 0.1)';
 
 export type { LoopOverlayConfig } from '@/src/components/LoopRegionBar';
 
@@ -89,6 +88,9 @@ export type TrackData = {
   duration: number;
   isActive: boolean;
   isMuted?: boolean;
+  label?: string;
+  showLabel?: boolean;
+  color?: string;
 };
 
 type Props = {
@@ -101,6 +103,7 @@ type Props = {
   getRecordingTime?: () => number;
   onSeek: (time: number) => void;
   onTrackPress: (trackId: string) => void;
+  onTrackDeselect?: () => void;
   onTrackLongPress?: (trackId: string) => void;
   onWidthChange?: (width: number) => void;
   trimOverlay?: TrimOverlayConfig;
@@ -136,6 +139,25 @@ function timeToScrollX(time: number, contentWidth: number): number {
 
 function scrollXToTime(x: number, duration: number): number {
   return Math.max(0, Math.min(duration, x / PIXELS_PER_SECOND));
+}
+
+function isTrackEmptyPress(
+  locationX: number,
+  sidePadding: number,
+  contentWidth: number,
+  track: TrackData
+): boolean {
+  const contentStart = sidePadding;
+  const contentEnd = sidePadding + contentWidth;
+  const barStart = sidePadding + track.startTime * PIXELS_PER_SECOND;
+  const barEnd = sidePadding + (track.startTime + track.duration) * PIXELS_PER_SECOND;
+
+  return (
+    locationX < contentStart ||
+    locationX > contentEnd ||
+    locationX < barStart ||
+    locationX > barEnd
+  );
 }
 
 function TimelineDimRegions({
@@ -360,6 +382,7 @@ function TrackMoveOverlay({
   track,
   sidePadding,
   trackHeight,
+  trackColor,
   layerStartTime,
   trimIn,
   onChange,
@@ -368,6 +391,7 @@ function TrackMoveOverlay({
   track: TrackData;
   sidePadding: number;
   trackHeight: number;
+  trackColor: string;
   layerStartTime: number;
   trimIn: number;
   onChange: (startTime: number) => void;
@@ -449,6 +473,8 @@ function TrackMoveOverlay({
             left: segmentLeft,
             width: Math.max(MOVE_BORDER_WIDTH * 2, segmentWidth),
             height: trackHeight,
+            borderColor: trackColor,
+            backgroundColor: colorWithAlpha(trackColor, 0.1),
           },
         ]}
       />
@@ -474,12 +500,12 @@ function getTrackBarColor(track: TrackData): string {
   if (track.isMuted) {
     return VoiceMemosColors.waveformBar;
   }
-  return VoiceMemosColors.accent;
+  return track.color ?? VoiceMemosColors.accent;
 }
 
 function getTrackBandBackground(track: TrackData): string {
   if (track.isActive) {
-    return VoiceMemosColors.waveformSelectedBandBackground;
+    return colorWithAlpha(track.color ?? VoiceMemosColors.accent, 0.08);
   }
   return VoiceMemosColors.waveformBandBackground;
 }
@@ -547,6 +573,7 @@ function TrackWaveformRow({
   const showMoveOverlay = moveOverlay?.layerId === track.id;
   const barColor = getTrackBarColor(track);
   const bandBackground = getTrackBandBackground(track);
+  const trackColor = track.color ?? VoiceMemosColors.accent;
 
   const rowContent = (
     <View
@@ -564,6 +591,20 @@ function TrackWaveformRow({
         pointerEvents="none"
         style={[styles.centerLine, { left: sidePadding, width: contentWidth }]}
       />
+      {track.showLabel && track.label ? (
+        <Text
+          numberOfLines={1}
+          pointerEvents="none"
+          style={[
+            styles.trackLabel,
+            {
+              left: sidePadding + 4,
+              maxWidth: Math.max(0, bandWidth - sidePadding - 8),
+            },
+          ]}>
+          {track.label}
+        </Text>
+      ) : null}
       {trackWidth > 0 ? (
         <View
           pointerEvents="none"
@@ -611,6 +652,7 @@ function TrackWaveformRow({
           layerStartTime={moveOverlay.startTime}
           sidePadding={sidePadding}
           track={track}
+          trackColor={trackColor}
           trackHeight={trackHeight}
           trimIn={moveOverlay.trimIn}
           trimScrollHelpers={trimScrollHelpers}
@@ -679,6 +721,7 @@ export function WaveformView({
   getRecordingTime,
   onSeek,
   onTrackPress,
+  onTrackDeselect,
   onTrackLongPress,
   onWidthChange,
   trimOverlay,
@@ -703,6 +746,8 @@ export function WaveformView({
   onSeekRef.current = onSeek;
   const onTrackPressRef = useRef(onTrackPress);
   onTrackPressRef.current = onTrackPress;
+  const onTrackDeselectRef = useRef(onTrackDeselect);
+  onTrackDeselectRef.current = onTrackDeselect;
   const onTrackLongPressRef = useRef(onTrackLongPress);
   onTrackLongPressRef.current = onTrackLongPress;
   const [viewportWidth, setViewportWidth] = useState(0);
@@ -757,7 +802,12 @@ export function WaveformView({
   };
 
   const handleTrackPress = (trackId: string, locationX: number) => {
-    onTrackPressRef.current(trackId);
+    const track = tracks.find((entry) => entry.id === trackId);
+    if (track && isTrackEmptyPress(locationX, sidePadding, contentWidth, track)) {
+      onTrackDeselectRef.current?.();
+    } else {
+      onTrackPressRef.current(trackId);
+    }
     if (isPlaying || duration <= 0 || contentWidth <= 0) {
       return;
     }
@@ -1006,6 +1056,13 @@ const styles = StyleSheet.create({
     position: 'relative',
     justifyContent: 'center',
   },
+  trackLabel: {
+    position: 'absolute',
+    top: 4,
+    fontSize: 11,
+    color: VoiceMemosColors.secondaryText,
+    zIndex: 5,
+  },
   dimRegion: {
     position: 'absolute',
     backgroundColor: VoiceMemosColors.waveformDimBackground,
@@ -1105,8 +1162,6 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 0,
     borderWidth: MOVE_BORDER_WIDTH,
-    borderColor: VoiceMemosColors.accent,
-    backgroundColor: MOVE_SELECTION_FILL,
     zIndex: 10,
   },
   moveHandle: {

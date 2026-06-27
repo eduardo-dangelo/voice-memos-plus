@@ -9,6 +9,10 @@ import {
   type LayerEffectsChange,
 } from '@/src/audio/layerEffects';
 import { mixLayersToFile, spliceRecording } from '@/src/audio/wavUtils';
+import {
+  DEFAULT_TRACK_COLOR,
+  isTrackColorAllowed,
+} from '@/constants/VoiceMemosColors';
 import { createDefaultTitle } from '@/src/utils/format';
 import { randomId } from '@/src/utils/id';
 
@@ -21,6 +25,7 @@ import {
 } from './paths';
 import type { Layer, Memo } from './types';
 import {
+  getDefaultLayerLabel,
   getLayerEffects,
   getMemoTimelineDuration,
   getPlayableLayers,
@@ -34,7 +39,7 @@ function createLayer(order: number, startTime = 0): Layer {
     id: randomId(),
     order,
     fileName: `layer-${order}.m4a`,
-    label: `Layer ${order + 1}`,
+    label: getDefaultLayerLabel(order),
     startTime,
     duration: 0,
   };
@@ -165,6 +170,57 @@ export async function updateTitle(memoId: string, title: string): Promise<Memo> 
     throw new Error('Memo not found');
   }
   memo.title = title.trim() || memo.title;
+  memo.updatedAt = new Date().toISOString();
+  writeManifest(memo);
+  return memo;
+}
+
+export async function updateLayerLabel(
+  memoId: string,
+  layerId: string,
+  label: string
+): Promise<Memo> {
+  const memo = await getMemo(memoId);
+  if (!memo) {
+    throw new Error('Memo not found');
+  }
+
+  const layer = memo.layers.find((entry) => entry.id === layerId);
+  if (!layer) {
+    throw new Error('Layer not found');
+  }
+
+  const trimmed = label.trim();
+  if (!trimmed) {
+    throw new Error('Label cannot be empty');
+  }
+
+  layer.label = trimmed;
+  memo.updatedAt = new Date().toISOString();
+  writeManifest(memo);
+  return memo;
+}
+
+export async function updateLayerColor(
+  memoId: string,
+  layerId: string,
+  color: string
+): Promise<Memo> {
+  const memo = await getMemo(memoId);
+  if (!memo) {
+    throw new Error('Memo not found');
+  }
+
+  const layer = memo.layers.find((entry) => entry.id === layerId);
+  if (!layer) {
+    throw new Error('Layer not found');
+  }
+
+  if (!isTrackColorAllowed(color)) {
+    throw new Error('Invalid track color');
+  }
+
+  layer.color = color === DEFAULT_TRACK_COLOR ? undefined : color;
   memo.updatedAt = new Date().toISOString();
   writeManifest(memo);
   return memo;

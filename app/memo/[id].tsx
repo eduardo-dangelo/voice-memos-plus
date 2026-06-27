@@ -24,6 +24,7 @@ import {
   resetPerformanceWarningState,
 } from '@/src/audio/performanceWarning';
 import { PlaybackControls } from '@/src/components/PlaybackControls';
+import { resolveTrackColor, TrackColorPicker } from '@/src/components/TrackColorPicker';
 import { TrackEditorShell } from '@/src/components/track-editor/TrackEditorShell';
 import type { EditorTool } from '@/src/components/track-editor/types';
 import { WaveformView, type TrackData } from '@/src/components/WaveformView';
@@ -35,7 +36,9 @@ import {
   getMemo,
   replaceLayerSegment,
   saveRecording,
+  updateLayerColor,
   updateLayerEffects,
+  updateLayerLabel,
   updateLayerStartTimes,
   deactivateMemoLoop,
   updateLoopRegion,
@@ -50,6 +53,7 @@ import {
   getLayerActiveStartTime,
   getMemoTimelineDuration,
   getPlayableLayers,
+  hasCustomLayerLabel,
   hasRecording,
 } from '@/src/storage/types';
 import { slicePeaksForTrim } from '@/src/audio/waveform';
@@ -123,6 +127,7 @@ export default function MemoEditorScreen() {
   const [activeLayerId, setActiveLayerId] = useState<string | null>(null);
   const [activeEditor, setActiveEditor] = useState<EditorTool | null>(null);
   const [savingTrim, setSavingTrim] = useState(false);
+  const [colorPickerLayerId, setColorPickerLayerId] = useState<string | null>(null);
 
   const activeLayer = useMemo(() => {
     if (!memo || !activeLayerId) {
@@ -464,6 +469,23 @@ export default function MemoEditorScreen() {
     [activeLayerId, commitTrimIfNeeded, flushStartTimePersist, savingTrim]
   );
 
+  const handleTrackDeselect = useCallback(() => {
+    if (!activeLayerId || savingTrim) {
+      return;
+    }
+
+    void (async () => {
+      const ok = await commitTrimIfNeeded();
+      if (!ok) {
+        return;
+      }
+
+      flushStartTimePersist();
+      setActiveLayerId(null);
+      setActiveEditor(null);
+    })();
+  }, [activeLayerId, commitTrimIfNeeded, flushStartTimePersist, savingTrim]);
+
   const handleDeleteTrack = useCallback(
     async (layerId: string) => {
       if (!memo) {
@@ -508,10 +530,10 @@ export default function MemoEditorScreen() {
       const muteLabel = effects.muted ? 'Unmute' : 'Mute';
       const canDelete = getPlayableLayers(memo).length > 1;
       const options = canDelete
-        ? [muteLabel, 'Delete Track', 'Cancel']
-        : [muteLabel, 'Cancel'];
-      const destructiveButtonIndex = canDelete ? 1 : undefined;
-      const cancelButtonIndex = canDelete ? 2 : 1;
+        ? ['Rename Track', 'Change Color', muteLabel, 'Delete Track', 'Cancel']
+        : ['Rename Track', 'Change Color', muteLabel, 'Cancel'];
+      const destructiveButtonIndex = canDelete ? 3 : undefined;
+      const cancelButtonIndex = canDelete ? 4 : 3;
 
       ActionSheetIOS.showActionSheetWithOptions(
         {
@@ -524,10 +546,34 @@ export default function MemoEditorScreen() {
             if (layerId !== activeLayerId) {
               setActiveLayerId(layerId);
             }
+            Alert.prompt('Rename Track', undefined, [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Save',
+                onPress: (value?: string) => {
+                  if (value?.trim()) {
+                    void updateLayerLabel(memo.id, layerId, value.trim()).then(setMemo);
+                  }
+                },
+              },
+            ], 'plain-text', layer.label);
+            return;
+          }
+          if (index === 1) {
+            if (layerId !== activeLayerId) {
+              setActiveLayerId(layerId);
+            }
+            setColorPickerLayerId(layerId);
+            return;
+          }
+          if (index === 2) {
+            if (layerId !== activeLayerId) {
+              setActiveLayerId(layerId);
+            }
             applyLayerEffectsChange(layerId, { muted: !effects.muted });
             return;
           }
-          if (canDelete && index === 1) {
+          if (canDelete && index === 3) {
             Alert.alert('Delete Track', 'Delete this track? This cannot be undone.', [
               { text: 'Cancel', style: 'cancel' },
               {
@@ -543,6 +589,19 @@ export default function MemoEditorScreen() {
       );
     },
     [activeLayerId, applyLayerEffectsChange, handleDeleteTrack, memo]
+  );
+
+  const handleTrackColorSelect = useCallback(
+    (color: string) => {
+      if (!memo || !colorPickerLayerId) {
+        return;
+      }
+      void updateLayerColor(memo.id, colorPickerLayerId, color).then((updated) => {
+        setMemo(updated);
+        setColorPickerLayerId(null);
+      });
+    },
+    [colorPickerLayerId, memo]
   );
 
   const loadMemo = useCallback(async () => {
@@ -819,6 +878,11 @@ export default function MemoEditorScreen() {
       .filter((layer) => layer.duration > 0)
       .sort((a, b) => b.order - a.order)
       .map((layer) => {
+        const trackMeta = {
+          label: layer.label,
+          showLabel: hasCustomLayerLabel(layer),
+          color: resolveTrackColor(layer.color),
+        };
         const isTrimEditing =
           activeEditor === 'trim' && !savingTrim && layer.id === activeLayerId;
         const isMoveEditing = activeEditor === 'move' && layer.id === activeLayerId;
@@ -832,6 +896,7 @@ export default function MemoEditorScreen() {
             duration: layer.duration,
             isActive: true,
             isMuted: effects.muted,
+            ...trackMeta,
           };
         }
 
@@ -851,6 +916,7 @@ export default function MemoEditorScreen() {
             duration: Math.max(activeDuration, 0.01),
             isActive: true,
             isMuted: effects.muted,
+            ...trackMeta,
           };
         }
 
@@ -869,6 +935,7 @@ export default function MemoEditorScreen() {
           duration: Math.max(activeDuration, 0.01),
           isActive: layer.id === activeLayerId,
           isMuted: effects.muted,
+          ...trackMeta,
         };
       });
 
@@ -928,6 +995,9 @@ export default function MemoEditorScreen() {
     : replaceMode
       ? 'Recording replacement…'
       : 'Recording…';
+  const colorPickerLayer = colorPickerLayerId
+    ? memo.layers.find((entry) => entry.id === colorPickerLayerId)
+    : null;
 
   return (
     <SafeAreaView edges={['bottom']} style={styles.screen}>
@@ -994,6 +1064,7 @@ export default function MemoEditorScreen() {
               }
             }}
             onTrackPress={handleTrackPress}
+            onTrackDeselect={handleTrackDeselect}
             onTrackLongPress={showTrackOptions}
           />
         </View>
@@ -1040,6 +1111,12 @@ export default function MemoEditorScreen() {
           )}
         </View>
       </View>
+      <TrackColorPicker
+        selectedColor={resolveTrackColor(colorPickerLayer?.color)}
+        visible={colorPickerLayerId !== null}
+        onClose={() => setColorPickerLayerId(null)}
+        onSelect={handleTrackColorSelect}
+      />
     </SafeAreaView>
   );
 }

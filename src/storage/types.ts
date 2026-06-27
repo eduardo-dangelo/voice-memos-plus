@@ -10,11 +10,20 @@ export type Layer = {
   order: number;
   fileName: string;
   label: string;
+  color?: string;
   startTime: number;
   duration: number;
   waveformPeaks?: number[];
   effects?: LayerEffects;
 };
+
+export function getDefaultLayerLabel(order: number): string {
+  return `Layer ${order + 1}`;
+}
+
+export function hasCustomLayerLabel(layer: Pick<Layer, 'label' | 'order'>): boolean {
+  return layer.label !== getDefaultLayerLabel(layer.order);
+}
 
 export type Memo = {
   id: string;
