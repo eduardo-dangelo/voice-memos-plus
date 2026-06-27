@@ -10,7 +10,6 @@ import {
   Pressable,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -127,7 +126,6 @@ export default function MemoEditorScreen() {
   const memoRef = useRef<Memo | null>(null);
   memoRef.current = memo;
   const [loading, setLoading] = useState(true);
-  const [title, setTitle] = useState('');
   const [replaceMode, setReplaceMode] = useState(false);
   const [stackMode, setStackMode] = useState(false);
   const [activeLayerId, setActiveLayerId] = useState<string | null>(null);
@@ -619,7 +617,6 @@ export default function MemoEditorScreen() {
     const loaded = next && hasRecording(next) ? await ensureWaveformPeaks(next) : next;
     setMemo(loaded);
     if (loaded) {
-      setTitle(loaded.title);
       setActiveLayerId(loaded.layers[0]?.id ?? null);
       if (hasRecording(loaded)) {
         await loadMemoIntoEngine(engine, loaded);
@@ -687,11 +684,8 @@ export default function MemoEditorScreen() {
     if (!ok) {
       return;
     }
-    if (title.trim() && title !== memo.title) {
-      await updateTitle(memo.id, title);
-    }
     router.back();
-  }, [commitTrimIfNeeded, engine, flushStartTimePersist, memo, title]);
+  }, [commitTrimIfNeeded, engine, flushStartTimePersist, memo]);
 
   const flushEditorState = useCallback(async (): Promise<boolean> => {
     if (!memo) {
@@ -708,11 +702,8 @@ export default function MemoEditorScreen() {
     if (!ok) {
       return false;
     }
-    if (title.trim() && title !== memo.title) {
-      await updateTitle(memo.id, title);
-    }
     return true;
-  }, [commitTrimIfNeeded, engine, flushStartTimePersist, memo, title]);
+  }, [commitTrimIfNeeded, engine, flushStartTimePersist, memo]);
 
   const handleShare = useCallback(async () => {
     if (!memo) {
@@ -737,10 +728,7 @@ export default function MemoEditorScreen() {
         text: 'Save',
         onPress: (value?: string) => {
           if (value?.trim()) {
-            void updateTitle(memo.id, value.trim()).then((updated) => {
-              setMemo(updated);
-              setTitle(updated.title);
-            });
+            void updateTitle(memo.id, value.trim()).then(setMemo);
           }
         },
       },
@@ -804,13 +792,9 @@ export default function MemoEditorScreen() {
           style={styles.moreButton}>
           <SymbolView name={{ ios: 'ellipsis' }} size={18} tintColor={colors.secondaryText} />
         </Pressable>
-        <TextInput
-          multiline={false}
-          numberOfLines={1}
-          style={styles.headerTitleInput}
-          value={title}
-          onChangeText={setTitle}
-        />
+        <Text numberOfLines={1} style={styles.headerTitle}>
+          {memo?.title ?? ''}
+        </Text>
         <Pressable onPress={() => void handleDone()} style={styles.doneButton}>
           <SymbolView name={{ ios: 'checkmark' }} size={22} tintColor="#FFFFFF" />
         </Pressable>
@@ -819,12 +803,12 @@ export default function MemoEditorScreen() {
     [
       colors.secondaryText,
       handleDone,
+      memo?.title,
       showMemoMenu,
       styles.doneButton,
       styles.headerBar,
-      styles.headerTitleInput,
+      styles.headerTitle,
       styles.moreButton,
-      title,
     ],
   );
 
@@ -884,7 +868,6 @@ export default function MemoEditorScreen() {
       }
 
       setMemo(updated);
-      setTitle(updated.title);
       setReplaceMode(false);
       setStackMode(false);
       await loadMemoIntoEngine(
@@ -1287,7 +1270,7 @@ function useMemoEditorStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           alignItems: 'center',
           justifyContent: 'center',
         },
-        headerTitleInput: {
+        headerTitle: {
           flex: 1,
           fontSize: 17,
           fontWeight: '500',
