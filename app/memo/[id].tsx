@@ -1,12 +1,12 @@
 import * as Haptics from 'expo-haptics';
 import { router, useLocalSearchParams, useNavigation } from 'expo-router';
+import * as Sharing from 'expo-sharing';
 import { SymbolView } from 'expo-symbols';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import {
   ActionSheetIOS,
   ActivityIndicator,
   Alert,
-  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { showMemoActionSheet } from '@/src/actions/showMemoActionSheet';
 import type { LayerEffects, LayerEffectsChange } from '@/src/audio/layerEffects';
 import { isDefaultTrim, mergeLayerEffects } from '@/src/audio/layerEffects';
 import { useAudioEngine, useAudioEngineState } from '@/src/audio/AudioEngineContext';
@@ -31,8 +32,11 @@ import {
   addStackedLayer,
   commitLayerTrim,
   deleteLayer,
+  deleteMemo,
+  duplicateMemo,
   ensureWaveformPeaks,
   getMemo,
+  getShareableFile,
   replaceLayerSegment,
   saveRecording,
   updateLayerColor,
@@ -689,13 +693,139 @@ export default function MemoEditorScreen() {
     router.back();
   }, [commitTrimIfNeeded, engine, flushStartTimePersist, memo, title]);
 
-  const renderDoneButton = useCallback(
+  const flushEditorState = useCallback(async (): Promise<boolean> => {
+    if (!memo) {
+      return false;
+    }
+    engine.pause();
+    flushStartTimePersist();
+    if (persistLoopTimeout.current) {
+      clearTimeout(persistLoopTimeout.current);
+      persistLoopTimeout.current = null;
+    }
+    deactivateLoopForMemo(engine, memo, setMemo);
+    const ok = await commitTrimIfNeeded();
+    if (!ok) {
+      return false;
+    }
+    if (title.trim() && title !== memo.title) {
+      await updateTitle(memo.id, title);
+    }
+    return true;
+  }, [commitTrimIfNeeded, engine, flushStartTimePersist, memo, title]);
+
+  const handleShare = useCallback(async () => {
+    if (!memo) {
+      return;
+    }
+    const file = await getShareableFile(memo);
+    if (!file.exists) {
+      return;
+    }
+    if (await Sharing.isAvailableAsync()) {
+      await Sharing.shareAsync(file.uri);
+    }
+  }, [memo]);
+
+  const handleRename = useCallback(() => {
+    if (!memo) {
+      return;
+    }
+    Alert.prompt('Rename Recording', undefined, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Save',
+        onPress: (value?: string) => {
+          if (value?.trim()) {
+            void updateTitle(memo.id, value.trim()).then((updated) => {
+              setMemo(updated);
+              setTitle(updated.title);
+            });
+          }
+        },
+      },
+    ], 'plain-text', memo.title);
+  }, [memo]);
+
+  const handleDuplicate = useCallback(async () => {
+    if (!memo) {
+      return;
+    }
+    const ok = await flushEditorState();
+    if (!ok) {
+      return;
+    }
+    const duplicated = await duplicateMemo(memo.id);
+    engine.unload();
+    router.replace({ pathname: '/memo/[id]', params: { id: duplicated.id } });
+  }, [engine, flushEditorState, memo]);
+
+  const confirmDelete = useCallback(() => {
+    if (!memo) {
+      return;
+    }
+    Alert.alert('Delete Recording', 'This recording will be deleted.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () => {
+          void (async () => {
+            const ok = await flushEditorState();
+            if (!ok) {
+              return;
+            }
+            engine.unload();
+            await deleteMemo(memo.id);
+            router.back();
+          })();
+        },
+      },
+    ]);
+  }, [engine, flushEditorState, memo]);
+
+  const showMemoMenu = useCallback(() => {
+    showMemoActionSheet({
+      includeEditRecording: false,
+      onShare: () => void handleShare(),
+      onRename: handleRename,
+      onDuplicate: () => void handleDuplicate(),
+      onDelete: confirmDelete,
+    });
+  }, [confirmDelete, handleDuplicate, handleRename, handleShare]);
+
+  const renderHeaderBar = useCallback(
     () => (
-      <Pressable onPress={() => void handleDone()} style={styles.doneButton}>
-        <SymbolView name={{ ios: 'checkmark' }} size={22} tintColor="#FFFFFF" />
-      </Pressable>
+      <View style={styles.headerBar}>
+        <Pressable
+          accessibilityLabel="More options"
+          hitSlop={8}
+          onPress={showMemoMenu}
+          style={styles.moreButton}>
+          <SymbolView name={{ ios: 'ellipsis' }} size={18} tintColor={colors.secondaryText} />
+        </Pressable>
+        <TextInput
+          multiline={false}
+          numberOfLines={1}
+          style={styles.headerTitleInput}
+          value={title}
+          onChangeText={setTitle}
+        />
+        <Pressable onPress={() => void handleDone()} style={styles.doneButton}>
+          <SymbolView name={{ ios: 'checkmark' }} size={22} tintColor="#FFFFFF" />
+        </Pressable>
+      </View>
     ),
-    [handleDone, styles.doneButton],
+    [
+      colors.secondaryText,
+      handleDone,
+      showMemoMenu,
+      styles.doneButton,
+      styles.headerBar,
+      styles.headerTitleInput,
+      styles.moreButton,
+      title,
+    ],
   );
 
   useLayoutEffect(() => {
@@ -706,21 +836,16 @@ export default function MemoEditorScreen() {
       headerTitleStyle: { color: colors.text },
       headerShadowVisible: false,
       contentStyle: { backgroundColor: colors.sheetBackground },
-      ...(Platform.OS === 'ios'
-        ? {
-            unstable_headerRightItems: () => [
-              {
-                type: 'custom' as const,
-                hidesSharedBackground: true,
-                element: renderDoneButton(),
-              },
-            ],
-          }
-        : {
-            headerRight: renderDoneButton,
-          }),
+      headerTitle: renderHeaderBar,
+      headerTitleAlign: 'center',
+      headerTitleContainerStyle: {
+        left: 0,
+        right: 0,
+        maxWidth: '100%',
+        paddingHorizontal: 0,
+      },
     });
-  }, [colors, navigation, renderDoneButton]);
+  }, [colors, navigation, renderHeaderBar]);
 
   const handleStopRecording = async () => {
     if (!memo || !engineState.isRecording) {
@@ -1009,15 +1134,6 @@ export default function MemoEditorScreen() {
   return (
     <SafeAreaView edges={['bottom']} style={styles.screen}>
       <View style={styles.content}>
-        <View style={styles.headerMeta}>
-          <TextInput
-            multiline={false}
-            style={styles.titleInput}
-            value={title}
-            onChangeText={setTitle}
-          />
-        </View>
-
         <View style={styles.tracksArea}>
           <WaveformView
             currentTime={waveformCurrentTime}
@@ -1153,17 +1269,31 @@ function useMemoEditorStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           backgroundColor: colors.accent,
           alignItems: 'center',
           justifyContent: 'center',
-          marginRight: 4,
         },
-        headerMeta: {
-          paddingTop: 8,
-          paddingBottom: 4,
+        headerBar: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          width: '100%',
+          paddingHorizontal: 8,
+          gap: 8,
         },
-        titleInput: {
-          fontSize: 28,
-          fontWeight: '700',
+        moreButton: {
+          width: 32,
+          height: 32,
+          borderRadius: 16,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: colors.separator,
+          backgroundColor: colors.pillBackground,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        headerTitleInput: {
+          flex: 1,
+          fontSize: 17,
+          fontWeight: '500',
           color: colors.text,
           padding: 0,
+          textAlign: 'center',
         },
         tracksArea: {
           flex: 1,

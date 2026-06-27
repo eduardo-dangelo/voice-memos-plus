@@ -1,8 +1,9 @@
 import { SymbolView } from 'expo-symbols';
 import { useMemo } from 'react';
-import { ActionSheetIOS, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { LinearTransition } from 'react-native-reanimated';
 
+import { showMemoActionSheet } from '@/src/actions/showMemoActionSheet';
 import { useAudioEngine, useAudioEngineState } from '@/src/audio/AudioEngineContext';
 import {
   deleteMemo,
@@ -137,32 +138,13 @@ export function RecordingRow({
   };
 
   const showMenu = () => {
-    ActionSheetIOS.showActionSheetWithOptions(
-      {
-        options: ['Share', 'Rename', 'Edit Recording', 'Duplicate', 'Delete', 'Cancel'],
-        destructiveButtonIndex: 4,
-        cancelButtonIndex: 5,
-      },
-      (index) => {
-        switch (index) {
-          case 0:
-            void handleShare();
-            break;
-          case 1:
-            handleRename();
-            break;
-          case 2:
-            onOpenEditor();
-            break;
-          case 3:
-            void duplicateMemo(memo.id).then(onUpdated);
-            break;
-          case 4:
-            confirmDelete();
-            break;
-        }
-      }
-    );
+    showMemoActionSheet({
+      onShare: () => void handleShare(),
+      onRename: handleRename,
+      onEditRecording: onOpenEditor,
+      onDuplicate: () => void duplicateMemo(memo.id).then(onUpdated),
+      onDelete: confirmDelete,
+    });
   };
 
   return (
