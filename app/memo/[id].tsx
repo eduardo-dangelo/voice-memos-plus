@@ -38,6 +38,7 @@ import {
   ensureWaveformPeaks,
   getMemo,
   getShareableFile,
+  permanentlyDeleteMemo,
   replaceLayerSegment,
   saveRecording,
   updateLayerColor,
@@ -47,7 +48,7 @@ import {
   updateLoopRegion,
   updateTitle,
 } from '@/src/storage/memoStore';
-import { getMemoPlaybackTimeline } from '@/src/storage/paths';
+import { getMemoPlaybackTimeline, isMemoInTrash } from '@/src/storage/paths';
 import type { Memo } from '@/src/storage/types';
 import {
   applyTimelineDeltaToLayers,
@@ -101,7 +102,11 @@ function deactivateLoopForMemo(
 export default function MemoEditorScreen() {
   const colors = useVoiceMemosColors();
   const styles = useMemoEditorStyles(colors);
-  const { id, record } = useLocalSearchParams<{ id: string; record?: string }>();
+  const { id, record, backTitle } = useLocalSearchParams<{
+    id: string;
+    record?: string;
+    backTitle?: string;
+  }>();
   const navigation = useNavigation();
   const engine = useAudioEngine();
   const engineState = useAudioEngineState();
@@ -752,7 +757,12 @@ export default function MemoEditorScreen() {
     if (!memo) {
       return;
     }
-    Alert.alert('Delete Recording', 'This recording will be deleted.', [
+    Alert.alert(
+      'Delete Recording',
+      isMemoInTrash(memo.id)
+        ? 'This recording will be permanently deleted.'
+        : 'This recording will be deleted.',
+      [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete',
@@ -764,12 +774,17 @@ export default function MemoEditorScreen() {
               return;
             }
             engine.unload();
-            await deleteMemo(memo.id);
+            if (isMemoInTrash(memo.id)) {
+              await permanentlyDeleteMemo(memo.id);
+            } else {
+              await deleteMemo(memo.id);
+            }
             router.back();
           })();
         },
       },
-    ]);
+    ]
+    );
   }, [engine, flushEditorState, memo]);
 
   const showMemoMenu = useCallback(() => {
@@ -815,6 +830,7 @@ export default function MemoEditorScreen() {
   useLayoutEffect(() => {
     navigation.setOptions({
       title: '',
+      headerBackTitle: backTitle ?? 'Back',
       headerStyle: { backgroundColor: colors.sheetBackground },
       headerTintColor: colors.text,
       headerTitleStyle: { color: colors.text },
@@ -829,7 +845,7 @@ export default function MemoEditorScreen() {
         paddingHorizontal: 0,
       },
     });
-  }, [colors, navigation, renderHeaderBar]);
+  }, [backTitle, colors, navigation, renderHeaderBar]);
 
   const handleStopRecording = async () => {
     if (!memo || !engineState.isRecording) {

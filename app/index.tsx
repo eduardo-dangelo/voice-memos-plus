@@ -1,210 +1,258 @@
 import { SymbolView } from 'expo-symbols';
-import { router } from 'expo-router';
-import { useMemo, useState } from 'react';
-import {
-  Alert,
-  FlatList,
-  Pressable,
-  SafeAreaView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { Stack, router } from 'expo-router';
+import { useEffect, useMemo, useState } from 'react';
+import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { memoAudioEngine } from '@/src/audio/MemoAudioEngine';
-import { RecordButton } from '@/src/components/RecordButton';
-import { RecordingRow } from '@/src/components/RecordingRow';
-import { useMemos } from '@/src/hooks/useMemos';
-import { createMemo, deleteMemo } from '@/src/storage/memoStore';
+import { useColorScheme } from '@/components/useColorScheme';
+import {
+  GroupedListRow,
+  GroupedListScreen,
+  GroupedListSection,
+  GroupedListSectionHeader,
+} from '@/src/components/GroupedList';
+import { useFolders } from '@/src/hooks/useFolders';
+import { useLibraryCounts } from '@/src/hooks/useLibraryCounts';
+import { createFolder, deleteFolder, reorderFolders } from '@/src/storage/folderStore';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
-export default function RecordingsListScreen() {
+export default function FoldersHomeScreen() {
   const colors = useVoiceMemosColors();
-  const styles = useStyles(colors);
-  const { memos, refresh } = useMemos();
-  const [query, setQuery] = useState('');
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [selectionMode, setSelectionMode] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const colorScheme = useColorScheme();
+  const styles = useStyles(colors, colorScheme);
+  const headerStyles = useHeaderStyles(colors, colorScheme);
+  const { folders, refresh: refreshFolders } = useFolders();
+  const { counts, refresh: refreshCounts } = useLibraryCounts();
+  const [editMode, setEditMode] = useState(false);
 
-  const filteredMemos = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    if (!normalized) {
-      return memos;
-    }
-    return memos.filter((memo) => memo.title.toLowerCase().includes(normalized));
-  }, [memos, query]);
-
-  const toggleSelection = (memoId: string) => {
-    setSelectedIds((current) => {
-      const next = new Set(current);
-      if (next.has(memoId)) {
-        next.delete(memoId);
-      } else {
-        next.add(memoId);
-      }
-      return next;
-    });
+  const refresh = () => {
+    refreshFolders();
+    refreshCounts();
   };
 
-  const handleDeleteSelected = () => {
-    if (selectedIds.size === 0) {
+  const folderRows = useMemo(() => folders, [folders]);
+  const hasFolders = folderRows.length > 0;
+
+  useEffect(() => {
+    if (!hasFolders && editMode) {
+      setEditMode(false);
+    }
+  }, [editMode, hasFolders]);
+
+  const moveFolder = (folderId: string, direction: -1 | 1) => {
+    const index = folderRows.findIndex((folder) => folder.id === folderId);
+    const target = index + direction;
+    if (index < 0 || target < 0 || target >= folderRows.length) {
       return;
     }
-    Alert.alert('Delete Recordings', `Delete ${selectedIds.size} recording(s)?`, [
+    const orderedIds = folderRows.map((folder) => folder.id);
+    [orderedIds[index], orderedIds[target]] = [orderedIds[target], orderedIds[index]];
+    void reorderFolders(orderedIds).then(refresh);
+  };
+
+  const confirmDeleteFolder = (folderId: string, name: string) => {
+    Alert.alert('Delete Folder', `Delete "${name}"? Recordings will remain in All Recordings.`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete',
         style: 'destructive',
         onPress: () => {
-          void Promise.all([...selectedIds].map((id) => deleteMemo(id))).then(() => {
-            memoAudioEngine.unload();
-            setSelectedIds(new Set());
-            setSelectionMode(false);
-            refresh();
-          });
+          void deleteFolder(folderId).then(refresh);
         },
       },
     ]);
   };
 
-  const handleRecord = async () => {
-    const memo = await createMemo();
-    router.push({ pathname: '/memo/[id]', params: { id: memo.id, record: '1' } });
-  };
-
   return (
-    <SafeAreaView style={styles.screen}>
-      <View style={styles.toolbar}>
-        <TextInput
-          clearButtonMode="while-editing"
-          placeholder="Search"
-          placeholderTextColor={colors.secondaryText}
-          style={styles.search}
-          value={query}
-          onChangeText={setQuery}
-        />
-        <Pressable
-          onPress={() => {
-            if (selectionMode) {
-              setSelectionMode(false);
-              setSelectedIds(new Set());
-              return;
-            }
-            setSelectionMode(true);
-          }}>
-          <Text style={styles.selectText}>{selectionMode ? 'Done' : 'Select'}</Text>
-        </Pressable>
-      </View>
-
-      {selectionMode && selectedIds.size > 0 ? (
-        <Pressable onPress={handleDeleteSelected} style={styles.deleteBar}>
-          <SymbolView name={{ ios: 'trash' }} size={18} tintColor={colors.recordRed} />
-          <Text style={styles.deleteText}>Delete ({selectedIds.size})</Text>
-        </Pressable>
-      ) : null}
-
-      <FlatList
-        contentContainerStyle={styles.listContent}
-        data={filteredMemos}
-        keyExtractor={(item) => item.id}
-        ListEmptyComponent={
-          <View style={styles.empty}>
-            <Text style={styles.emptyTitle}>No Recordings</Text>
-            <Text style={styles.emptySubtitle}>Tap the red button to record your first memo.</Text>
-          </View>
-        }
-        renderItem={({ item }) => (
-          <RecordingRow
-            expanded={expandedId === item.id}
-            memo={item}
-            selected={selectedIds.has(item.id)}
-            selectionMode={selectionMode}
-            onDeleted={refresh}
-            onOpenEditor={() => router.push({ pathname: '/memo/[id]', params: { id: item.id } })}
-            onToggleExpand={() => setExpandedId((current) => (current === item.id ? null : item.id))}
-            onToggleSelect={() => toggleSelection(item.id)}
-            onUpdated={refresh}
-          />
-        )}
+    <>
+      <Stack.Screen
+        options={{
+          title: '',
+          headerLargeTitle: false,
+          headerShadowVisible: false,
+          headerTintColor: colors.text,
+          headerStyle: { backgroundColor: headerStyles.canvasColor },
+          headerLargeStyle: { backgroundColor: headerStyles.canvasColor },
+          contentStyle: { backgroundColor: headerStyles.canvasColor },
+          headerRight: () => (
+            <View style={styles.headerActions}>
+              <Pressable
+                hitSlop={8}
+                onPress={() => {
+                  Alert.prompt(
+                    'New Folder',
+                    undefined,
+                    [
+                      { text: 'Cancel', style: 'cancel' },
+                      {
+                        text: 'Save',
+                        onPress: (value?: string) => {
+                          void createFolder(value?.trim() || 'New Folder').then(refresh);
+                        },
+                      },
+                    ],
+                    'plain-text',
+                    'New Folder'
+                  );
+                }}
+                style={styles.newFolderButton}>
+                <SymbolView
+                  name={{ ios: 'folder.badge.plus' }}
+                  size={28}
+                  tintColor={colors.accent}
+                />
+              </Pressable>
+              {hasFolders ? (
+                <Pressable
+                  hitSlop={8}
+                  onPress={() => setEditMode((current) => !current)}
+                  style={styles.editButton}>
+                  <Text style={styles.editText}>{editMode ? 'Done' : 'Edit'}</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          ),
+        }}
       />
+      <GroupedListScreen largeTitle="Voice Memos">
+        <GroupedListSection>
+          <GroupedListRow
+            count={counts.allCount}
+            icon="waveform"
+            isFirst
+            title="All Recordings"
+            onPress={() => router.push('/recordings')}
+          />
+          <GroupedListRow
+            count={counts.trashCount}
+            icon="trash"
+            isLast
+            title="Recently Deleted"
+            onPress={() => router.push('/recently-deleted')}
+          />
+        </GroupedListSection>
 
-      {!selectionMode ? (
-        <View pointerEvents="box-none" style={styles.fabContainer}>
-          <RecordButton onPress={() => void handleRecord()} />
-        </View>
-      ) : null}
-    </SafeAreaView>
+        {hasFolders ? (
+          <>
+            <GroupedListSectionHeader title="My Folders" />
+            <GroupedListSection>
+              {folderRows.map((folder, index) => (
+                <GroupedListRow
+                  key={folder.id}
+                  accessory={
+                    editMode ? (
+                      <View style={styles.editControls}>
+                        <Pressable
+                          disabled={index === 0}
+                          hitSlop={8}
+                          onPress={() => moveFolder(folder.id, -1)}
+                          style={index === 0 ? styles.disabledControl : undefined}>
+                          <SymbolView
+                            name={{ ios: 'chevron.up' }}
+                            size={14}
+                            tintColor={colors.secondaryText}
+                          />
+                        </Pressable>
+                        <Pressable
+                          disabled={index === folderRows.length - 1}
+                          hitSlop={8}
+                          onPress={() => moveFolder(folder.id, 1)}
+                          style={
+                            index === folderRows.length - 1 ? styles.disabledControl : undefined
+                          }>
+                          <SymbolView
+                            name={{ ios: 'chevron.down' }}
+                            size={14}
+                            tintColor={colors.secondaryText}
+                          />
+                        </Pressable>
+                        <Pressable
+                          hitSlop={8}
+                          onPress={() => confirmDeleteFolder(folder.id, folder.name)}>
+                          <SymbolView
+                            name={{ ios: 'minus.circle.fill' }}
+                            size={22}
+                            tintColor={colors.recordRed}
+                          />
+                        </Pressable>
+                      </View>
+                    ) : undefined
+                  }
+                  count={counts.folderCounts[folder.id] ?? 0}
+                  icon="folder"
+                  isFirst={index === 0}
+                  isLast={index === folderRows.length - 1}
+                  showChevron={!editMode}
+                  showCount={!editMode}
+                  title={folder.name}
+                  onPress={editMode ? undefined : () => router.push(`/folder/${folder.id}`)}
+                />
+              ))}
+            </GroupedListSection>
+          </>
+        ) : null}
+      </GroupedListScreen>
+    </>
   );
 }
 
-function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
+function useHeaderStyles(
+  colors: ReturnType<typeof useVoiceMemosColors>,
+  colorScheme: 'light' | 'dark' | null | undefined
+) {
+  return useMemo(
+    () => ({
+      canvasColor:
+        colorScheme === 'dark' ? colors.background : colors.editorCanvasBackground,
+    }),
+    [colorScheme, colors.background, colors.editorCanvasBackground]
+  );
+}
+
+function useStyles(
+  colors: ReturnType<typeof useVoiceMemosColors>,
+  colorScheme: 'light' | 'dark' | null | undefined
+) {
+  const buttonSurface =
+    colorScheme === 'dark' ? colors.sheetBackground : colors.background;
+
   return useMemo(
     () =>
       StyleSheet.create({
-        screen: {
-          flex: 1,
-          backgroundColor: colors.background,
+        headerActions: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 10,
         },
-        toolbar: {
+        newFolderButton: {
+          width: 44,
+          height: 44,
+          borderRadius: 22,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: buttonSurface,
+        },
+        editButton: {
+          backgroundColor: buttonSurface,
+          borderRadius: 18,
+          paddingHorizontal: 14,
+          paddingVertical: 7,
+          minHeight: 36,
+          justifyContent: 'center',
+        },
+        editText: {
+          color: colors.accent,
+          fontSize: 16,
+          fontWeight: '400',
+        },
+        editControls: {
           flexDirection: 'row',
           alignItems: 'center',
           gap: 12,
-          paddingHorizontal: 16,
-          paddingBottom: 8,
         },
-        search: {
-          flex: 1,
-          backgroundColor: colors.searchFieldBackground,
-          borderRadius: 10,
-          paddingHorizontal: 12,
-          paddingVertical: 8,
-          fontSize: 16,
-          color: colors.text,
-        },
-        selectText: {
-          color: colors.accent,
-          fontSize: 17,
-          fontWeight: '500',
-        },
-        deleteBar: {
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 8,
-          paddingHorizontal: 16,
-          paddingBottom: 8,
-        },
-        deleteText: {
-          color: colors.recordRed,
-          fontSize: 16,
-        },
-        listContent: {
-          paddingBottom: 120,
-        },
-        empty: {
-          padding: 32,
-          alignItems: 'center',
-          gap: 8,
-        },
-        emptyTitle: {
-          fontSize: 20,
-          fontWeight: '600',
-          color: colors.text,
-        },
-        emptySubtitle: {
-          fontSize: 15,
-          color: colors.secondaryText,
-          textAlign: 'center',
-        },
-        fabContainer: {
-          position: 'absolute',
-          left: 0,
-          right: 0,
-          bottom: 32,
-          alignItems: 'center',
+        disabledControl: {
+          opacity: 0.3,
         },
       }),
-    [colors]
+    [buttonSurface, colors.accent]
   );
 }

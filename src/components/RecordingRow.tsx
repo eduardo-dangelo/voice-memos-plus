@@ -3,12 +3,14 @@ import { useMemo } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { LinearTransition } from 'react-native-reanimated';
 
+import { showMoveToFolderActionSheet } from '@/src/actions/showMoveToFolderActionSheet';
 import { showMemoActionSheet } from '@/src/actions/showMemoActionSheet';
 import { useAudioEngine, useAudioEngineState } from '@/src/audio/AudioEngineContext';
 import {
   deleteMemo,
   duplicateMemo,
   getShareableFile,
+  permanentlyDeleteMemo,
   updateTitle,
 } from '@/src/storage/memoStore';
 import { getMemoPlaybackTimeline } from '@/src/storage/paths';
@@ -26,6 +28,8 @@ type Props = {
   expanded: boolean;
   selected: boolean;
   selectionMode: boolean;
+  allowMoveToFolder?: boolean;
+  isTrash?: boolean;
   onToggleExpand: () => void;
   onToggleSelect: () => void;
   onOpenEditor: () => void;
@@ -38,6 +42,8 @@ export function RecordingRow({
   expanded,
   selected,
   selectionMode,
+  allowMoveToFolder = false,
+  isTrash = false,
   onToggleExpand,
   onToggleSelect,
   onOpenEditor,
@@ -122,26 +128,35 @@ export function RecordingRow({
   };
 
   const confirmDelete = () => {
-    Alert.alert('Delete Recording', 'This recording will be deleted.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: () => {
-          if (isActive) {
-            engine.unload();
-          }
-          void deleteMemo(memo.id).then(onDeleted);
+    Alert.alert(
+      isTrash ? 'Delete Recording' : 'Delete Recording',
+      isTrash
+        ? 'This recording will be permanently deleted.'
+        : 'This recording will be deleted.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            if (isActive) {
+              engine.unload();
+            }
+            const action = isTrash ? permanentlyDeleteMemo : deleteMemo;
+            void action(memo.id).then(onDeleted);
+          },
         },
-      },
-    ]);
+      ]
+    );
   };
 
   const showMenu = () => {
     showMemoActionSheet({
+      includeMoveToFolder: allowMoveToFolder,
       onShare: () => void handleShare(),
       onRename: handleRename,
       onEditRecording: onOpenEditor,
+      onMoveToFolder: () => void showMoveToFolderActionSheet(memo.id, memo.folderId, onUpdated),
       onDuplicate: () => void duplicateMemo(memo.id).then(onUpdated),
       onDelete: confirmDelete,
     });

@@ -9,6 +9,7 @@ import { useColorScheme } from '@/components/useColorScheme';
 import type { VoiceMemosColorScheme } from '@/constants/VoiceMemosColors';
 import { AudioEngineProvider } from '@/src/audio/AudioEngineContext';
 import { memoAudioEngine } from '@/src/audio/MemoAudioEngine';
+import { purgeExpiredTrash } from '@/src/storage/memoStore';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
 function buildHeaderOptions(colors: VoiceMemosColorScheme, surfaceColor = colors.background) {
@@ -24,13 +25,22 @@ function buildHeaderOptions(colors: VoiceMemosColorScheme, surfaceColor = colors
   };
 }
 
-function buildSheetHeaderOptions(colors: VoiceMemosColorScheme) {
-  return buildHeaderOptions(colors, colors.sheetBackground);
+function buildGroupedHeaderOptions(
+  colors: VoiceMemosColorScheme,
+  colorScheme: 'light' | 'dark' | null | undefined
+) {
+  const surfaceColor =
+    colorScheme === 'dark' ? colors.background : colors.editorCanvasBackground;
+  return buildHeaderOptions(colors, surfaceColor);
 }
 
 function RootNavigator() {
   const colors = useVoiceMemosColors();
   const colorScheme = useColorScheme();
+  const groupedScreenOptions = useMemo(
+    () => buildGroupedHeaderOptions(colors, colorScheme),
+    [colorScheme, colors]
+  );
   const screenOptions = useMemo(() => buildHeaderOptions(colors), [colors]);
 
   const memoScreenOptions = useMemo(
@@ -40,9 +50,9 @@ function RootNavigator() {
       sheetGrabberVisible: true,
       sheetAllowedDetents: [1],
       sheetInitialDetentIndex: 0,
-      headerBackTitle: 'All Recordings',
+      headerBackTitle: 'Back',
       headerTransparent: false,
-      ...buildSheetHeaderOptions(colors),
+      ...buildHeaderOptions(colors, colors.sheetBackground),
     }),
     [colors]
   );
@@ -54,7 +64,27 @@ function RootNavigator() {
         <Stack.Screen
           name="index"
           options={{
+            ...groupedScreenOptions,
+            headerLargeTitle: false,
+          }}
+        />
+        <Stack.Screen
+          name="recordings/index"
+          options={{
             title: 'All Recordings',
+            headerLargeTitle: true,
+          }}
+        />
+        <Stack.Screen
+          name="folder/[id]"
+          options={{
+            headerLargeTitle: true,
+          }}
+        />
+        <Stack.Screen
+          name="recently-deleted/index"
+          options={{
+            title: 'Recently Deleted',
             headerLargeTitle: true,
           }}
         />
@@ -67,6 +97,7 @@ function RootNavigator() {
 export default function RootLayout() {
   useEffect(() => {
     void memoAudioEngine.requestPermission();
+    void purgeExpiredTrash();
   }, []);
 
   return (

@@ -25,6 +25,13 @@ export function hasCustomLayerLabel(layer: Pick<Layer, 'label' | 'order'>): bool
   return layer.label !== getDefaultLayerLabel(layer.order);
 }
 
+export type Folder = {
+  id: string;
+  name: string;
+  createdAt: string;
+  order: number;
+};
+
 export type Memo = {
   id: string;
   title: string;
@@ -36,6 +43,8 @@ export type Memo = {
   loopStart?: number;
   loopEnd?: number;
   loopEnabled?: boolean;
+  folderId?: string;
+  deletedAt?: string;
   layers: Layer[];
 };
 

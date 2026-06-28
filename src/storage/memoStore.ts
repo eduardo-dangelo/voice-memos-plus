@@ -17,11 +17,15 @@ import { createDefaultTitle } from '@/src/utils/format';
 import { randomId } from '@/src/utils/id';
 
 import {
-  getLayerFile,
   getManifestFile,
   getMemoDir,
   getMemosRoot,
   getPrimaryLayerFile,
+  getTrashMemoDir,
+  getTrashMemosRoot,
+  moveMemoDirectory,
+  requireLayerFile,
+  resolveMemoDir,
 } from './paths';
 import type { Layer, Memo } from './types';
 import {
@@ -69,11 +73,11 @@ function readManifest(file: File): Memo | null {
 }
 
 function writeManifest(memo: Memo): void {
-  const file = getManifestFile(memo.id);
-  const dir = getMemoDir(memo.id);
+  const dir = resolveMemoDir(memo.id) ?? getMemoDir(memo.id);
   if (!dir.exists) {
     dir.create({ intermediates: true, idempotent: true });
   }
+  const file = new File(dir, 'manifest.json');
   if (!file.exists) {
     file.create();
   }
@@ -109,7 +113,7 @@ async function refreshLayerFromFile(
   layer: Layer,
   capturedPeaks?: number[]
 ): Promise<void> {
-  const file = getLayerFile(memo.id, layer.fileName);
+  const file = requireLayerFile(memo.id, layer.fileName);
   const { decodeAudioData } = await import('react-native-audio-api');
   const buffer = await decodeAudioData(file.uri);
   layer.duration = buffer.duration;
@@ -121,12 +125,16 @@ async function refreshLayerFromFile(
   layer.effects = createDefaultLayerEffects(layer.duration);
 }
 
-export async function listMemos(): Promise<Memo[]> {
-  const root = getMemosRoot();
-  const entries = root.list();
-  const memos: Memo[] = [];
+export type MemoListScope =
+  | { kind: 'all' }
+  | { kind: 'folder'; folderId: string }
+  | { kind: 'trash' };
 
-  for (const entry of entries) {
+const TRASH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
+function listMemosFromRoot(root: Directory): Memo[] {
+  const memos: Memo[] = [];
+  for (const entry of root.list()) {
     if (!(entry instanceof Directory)) {
       continue;
     }
@@ -135,21 +143,51 @@ export async function listMemos(): Promise<Memo[]> {
       memos.push(manifest);
     }
   }
-
   return memos.sort(
     (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
   );
 }
 
-export async function getMemo(memoId: string): Promise<Memo | null> {
-  return readManifest(getManifestFile(memoId));
+export async function listMemos(scope: MemoListScope = { kind: 'all' }): Promise<Memo[]> {
+  if (scope.kind === 'trash') {
+    return listMemosFromRoot(getTrashMemosRoot());
+  }
+
+  const memos = listMemosFromRoot(getMemosRoot());
+  if (scope.kind === 'folder') {
+    return memos.filter((memo) => memo.folderId === scope.folderId);
+  }
+  return memos;
 }
 
-export async function createMemo(title?: string): Promise<Memo> {
+export async function listAllActiveMemos(): Promise<Memo[]> {
+  return listMemosFromRoot(getMemosRoot());
+}
+
+export async function listTrashMemos(): Promise<Memo[]> {
+  return listMemosFromRoot(getTrashMemosRoot());
+}
+
+export async function getMemo(memoId: string): Promise<Memo | null> {
+  const file = getManifestFile(memoId);
+  if (!file) {
+    return null;
+  }
+  return readManifest(file);
+}
+
+export type CreateMemoOptions = {
+  title?: string;
+  folderId?: string;
+};
+
+export async function createMemo(options?: CreateMemoOptions | string): Promise<Memo> {
+  const normalized =
+    typeof options === 'string' ? { title: options } : (options ?? {});
   const now = new Date().toISOString();
   const memo: Memo = {
     id: randomId(),
-    title: title ?? createDefaultTitle(),
+    title: normalized.title ?? createDefaultTitle(),
     createdAt: now,
     updatedAt: now,
     duration: 0,
@@ -157,6 +195,9 @@ export async function createMemo(title?: string): Promise<Memo> {
     trimEnd: 0,
     layers: [createLayer(0)],
   };
+  if (normalized.folderId) {
+    memo.folderId = normalized.folderId;
+  }
 
   const dir = getMemoDir(memo.id);
   dir.create({ intermediates: true, idempotent: true });
@@ -342,7 +383,7 @@ export async function commitLayerTrim(
     throw new Error('Layer not found');
   }
 
-  const layerFile = getLayerFile(memoId, layer.fileName);
+  const layerFile = requireLayerFile(memoId, layer.fileName);
   if (!layerFile.exists) {
     throw new Error('Layer audio file not found');
   }
@@ -399,7 +440,7 @@ export async function ensureWaveformPeaks(memo: Memo): Promise<Memo> {
       continue;
     }
 
-    const file = getLayerFile(memo.id, layer.fileName);
+    const file = requireLayerFile(memo.id, layer.fileName);
     if (!file.exists) {
       continue;
     }
@@ -445,7 +486,7 @@ export async function saveRecording(
   const layer = memo.layers[0] ?? createLayer(0);
   memo.layers = [layer];
   layer.startTime = 0;
-  const dest = getLayerFile(memoId, layer.fileName);
+  const dest = requireLayerFile(memoId, layer.fileName);
   const source = new File(sourcePath);
 
   if (dest.exists) {
@@ -478,7 +519,7 @@ export async function replaceLayerFile(
     throw new Error('Layer not found');
   }
 
-  const dest = getLayerFile(memoId, layer.fileName);
+  const dest = requireLayerFile(memoId, layer.fileName);
   const source = new File(sourcePath);
 
   if (dest.exists) {
@@ -507,7 +548,7 @@ export async function addStackedLayer(
 
   const order = memo.layers.length;
   const layer = createLayer(order, startTime);
-  const dest = getLayerFile(memoId, layer.fileName);
+  const dest = requireLayerFile(memoId, layer.fileName);
   const source = new File(sourcePath);
 
   if (dest.exists) {
@@ -541,7 +582,7 @@ export async function replaceLayerSegment(
     throw new Error('Layer not found');
   }
 
-  const original = getLayerFile(memoId, layer.fileName);
+  const original = requireLayerFile(memoId, layer.fileName);
   const output = new File(Paths.cache, `splice-${memoId}-${layerId}.m4a`);
 
   if (output.exists) {
@@ -553,11 +594,74 @@ export async function replaceLayerSegment(
   return (await getMemo(memoId))!;
 }
 
+export async function moveMemoToFolder(
+  memoId: string,
+  folderId: string | null
+): Promise<Memo> {
+  const memo = await getMemo(memoId);
+  if (!memo) {
+    throw new Error('Memo not found');
+  }
+  if (folderId) {
+    memo.folderId = folderId;
+  } else {
+    delete memo.folderId;
+  }
+  memo.updatedAt = new Date().toISOString();
+  writeManifest(memo);
+  return memo;
+}
+
 export async function deleteMemo(memoId: string): Promise<void> {
-  const dir = getMemoDir(memoId);
+  const memo = await getMemo(memoId);
+  if (!memo) {
+    return;
+  }
+  const source = getMemoDir(memoId);
+  if (!source.exists) {
+    return;
+  }
+  memo.deletedAt = new Date().toISOString();
+  writeManifest(memo);
+  const dest = getTrashMemoDir(memoId);
+  moveMemoDirectory(source, dest);
+}
+
+export async function recoverMemo(memoId: string): Promise<void> {
+  const source = getTrashMemoDir(memoId);
+  if (!source.exists) {
+    return;
+  }
+  const dest = getMemoDir(memoId);
+  moveMemoDirectory(source, dest);
+  const memo = await getMemo(memoId);
+  if (!memo) {
+    return;
+  }
+  delete memo.deletedAt;
+  writeManifest(memo);
+}
+
+export async function permanentlyDeleteMemo(memoId: string): Promise<void> {
+  const dir = getTrashMemoDir(memoId);
   if (dir.exists) {
     dir.delete();
   }
+}
+
+export async function purgeExpiredTrash(): Promise<void> {
+  const cutoff = Date.now() - TRASH_RETENTION_MS;
+  const memos = await listTrashMemos();
+  await Promise.all(
+    memos
+      .filter((memo) => {
+        if (!memo.deletedAt) {
+          return false;
+        }
+        return new Date(memo.deletedAt).getTime() < cutoff;
+      })
+      .map((memo) => permanentlyDeleteMemo(memo.id))
+  );
 }
 
 export async function deleteLayer(memoId: string, layerId: string): Promise<Memo> {
@@ -575,7 +679,7 @@ export async function deleteLayer(memoId: string, layerId: string): Promise<Memo
     throw new Error('Layer not found');
   }
 
-  const file = getLayerFile(memoId, layer.fileName);
+  const file = requireLayerFile(memoId, layer.fileName);
   if (file.exists) {
     file.delete();
   }
@@ -594,8 +698,14 @@ export async function duplicateMemo(memoId: string): Promise<Memo> {
     throw new Error('Memo not found');
   }
 
-  const copy = await createMemo(`${memo.title} copy`);
-  const sourceDir = getMemoDir(memoId);
+  const copy = await createMemo({
+    title: `${memo.title} copy`,
+    folderId: memo.folderId,
+  });
+  const sourceDir = resolveMemoDir(memoId);
+  if (!sourceDir) {
+    throw new Error('Memo not found');
+  }
   const destDir = getMemoDir(copy.id);
 
   for (const entry of sourceDir.list()) {
@@ -610,6 +720,7 @@ export async function duplicateMemo(memoId: string): Promise<Memo> {
     title: copy.title,
     createdAt: copy.createdAt,
     updatedAt: new Date().toISOString(),
+    deletedAt: undefined,
   };
   writeManifest(updated);
   return updated;
@@ -646,7 +757,7 @@ export async function getShareableFile(memo: Memo): Promise<File> {
 
   await mixLayersToFile(
     playableLayers.map((layer) => ({
-      path: getLayerFile(memo.id, layer.fileName).uri,
+      path: requireLayerFile(memo.id, layer.fileName).uri,
       startTime: layer.startTime,
     })),
     getMemoTimelineDuration(memo),
