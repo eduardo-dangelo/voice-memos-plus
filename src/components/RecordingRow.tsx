@@ -203,11 +203,15 @@ export function RecordingRow({
               onSkipForward={() => void handleSkip(15)}
             />
             <View style={styles.actionRow}>
-              <Pressable onPress={onOpenEditor} style={styles.editLink}>
-                <Text style={styles.editLinkText}>Edit Recording</Text>
+              <Pressable
+                accessibilityLabel="Edit Recording"
+                hitSlop={12}
+                onPress={onOpenEditor}
+                style={styles.editButton}>
+                <SymbolView name={{ ios: 'waveform' }} size={22} tintColor={colors.accent} />
               </Pressable>
               <Pressable hitSlop={12} onPress={confirmDelete} style={styles.deleteButton}>
-                <SymbolView name={{ ios: 'trash' }} size={18} tintColor={colors.secondaryText} />
+                <SymbolView name={{ ios: 'trash' }} size={22} tintColor={colors.accent} />
               </Pressable>
             </View>
           </View>
@@ -256,15 +260,11 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           alignItems: 'center',
           justifyContent: 'space-between',
         },
-        editLink: {
+        editButton: {
           alignSelf: 'flex-start',
         },
         deleteButton: {
           alignSelf: 'center',
-        },
-        editLinkText: {
-          color: colors.accent,
-          fontSize: 15,
         },
       }),
     [colors]

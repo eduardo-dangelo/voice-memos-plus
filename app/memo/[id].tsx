@@ -15,6 +15,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { showMemoActionSheet } from '@/src/actions/showMemoActionSheet';
+import { useColorScheme } from '@/components/useColorScheme';
 import { useAudioEngine, useAudioEngineState } from '@/src/audio/AudioEngineContext';
 import type { LayerEffects, LayerEffectsChange } from '@/src/audio/layerEffects';
 import { isDefaultTrim, mergeLayerEffects } from '@/src/audio/layerEffects';
@@ -101,7 +102,8 @@ function deactivateLoopForMemo(
 
 export default function MemoEditorScreen() {
   const colors = useVoiceMemosColors();
-  const styles = useMemoEditorStyles(colors);
+  const colorScheme = useColorScheme();
+  const styles = useMemoEditorStyles(colors, colorScheme);
   const { id, record, backTitle } = useLocalSearchParams<{
     id: string;
     record?: string;
@@ -1243,7 +1245,13 @@ export default function MemoEditorScreen() {
   );
 }
 
-function useMemoEditorStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
+function useMemoEditorStyles(
+  colors: ReturnType<typeof useVoiceMemosColors>,
+  colorScheme: 'light' | 'dark' | null | undefined
+) {
+  const moreButtonBackground =
+    colorScheme === 'dark' ? colors.pillBackground : colors.searchFieldBackground;
+
   return useMemo(
     () =>
       StyleSheet.create({
@@ -1282,7 +1290,7 @@ function useMemoEditorStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           borderRadius: 16,
           borderWidth: StyleSheet.hairlineWidth,
           borderColor: colors.separator,
-          backgroundColor: colors.pillBackground,
+          backgroundColor: moreButtonBackground,
           alignItems: 'center',
           justifyContent: 'center',
         },
@@ -1338,6 +1346,6 @@ function useMemoEditorStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           backgroundColor: colors.recordRed,
         },
       }),
-    [colors]
+    [colors, moreButtonBackground]
   );
 }

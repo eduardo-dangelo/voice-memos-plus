@@ -625,6 +625,13 @@ function TrackWaveformRow({
           {track.label}
         </Text>
       ) : null}
+      {track.isMuted ? (
+        <View
+          pointerEvents="none"
+          style={[styles.mutedBadge, { left: sidePadding + 6 }]}>
+          <Text style={styles.mutedBadgeText}>M</Text>
+        </View>
+      ) : null}
       {trackWidth > 0 ? (
         <View
           pointerEvents="none"
@@ -1088,6 +1095,24 @@ function createWaveformStyles(colors: VoiceMemosColorScheme) {
     fontSize: 11,
     color: colors.secondaryText,
     zIndex: 5,
+  },
+  mutedBadge: {
+    position: 'absolute',
+    top: 6,
+    zIndex: 6,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 4,
+    paddingHorizontal: 4,
+    backgroundColor: colors.secondaryText,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mutedBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.background,
+    lineHeight: 13,
   },
   dimRegion: {
     position: 'absolute',
