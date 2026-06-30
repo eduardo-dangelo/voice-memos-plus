@@ -56,8 +56,10 @@ import {
   clampLayerStartTime,
   getEarliestTrimInTimelineDelta,
   getLayerActiveDuration,
+  getLayerActiveEndTime,
   getLayerActiveStartTime,
   getLayerEffects,
+  getLayerFileOffsetAtTimeline,
   getMemoTimelineDuration,
   getPlayableLayers,
   hasCustomLayerLabel,
@@ -695,20 +697,29 @@ export default function MemoEditorScreen() {
             updated = await addStackedLayer(currentMemo.id, capturedStartTime, path, peaks);
             setActiveLayerId(updated.layers[updated.layers.length - 1]?.id ?? layerId);
           } else if (wasReplaceMode) {
-            const replaceLayer =
-              currentMemo.layers.find((layer) => layer.id === layerId) ?? currentMemo.layers[0];
-            if (!replaceLayer) {
+            if (!layerId) {
+              throw new Error('No track selected');
+            }
+            const replaceLayer = currentMemo.layers.find((layer) => layer.id === layerId);
+            if (!replaceLayer || replaceLayer.duration <= 0) {
               throw new Error('No active layer');
             }
-            const relativeStart = Math.max(0, capturedStartTime - replaceLayer.startTime);
-            const relativeEnd = relativeStart + duration;
+            const effects = getLayerEffects(replaceLayer);
+            const fileTrimStart = getLayerFileOffsetAtTimeline(
+              replaceLayer,
+              capturedStartTime
+            );
+            const fileTrimEnd = Math.min(
+              fileTrimStart + duration,
+              effects.trimOut,
+              replaceLayer.duration
+            );
             updated = await replaceLayerSegment(
               currentMemo.id,
               replaceLayer.id,
-              relativeStart,
-              relativeEnd,
-              path,
-              peaks
+              fileTrimStart,
+              fileTrimEnd,
+              path
             );
           } else {
             updated = await saveRecording(currentMemo.id, path, duration, peaks);
@@ -990,8 +1001,29 @@ export default function MemoEditorScreen() {
       return;
     }
 
+    if (mode === 'replace') {
+      if (!activeLayerId) {
+        Alert.alert('Select a track', 'Tap a track to select it before replacing.');
+        return;
+      }
+      const replaceLayer = memo.layers.find((layer) => layer.id === activeLayerId);
+      if (!replaceLayer || replaceLayer.duration <= 0) {
+        Alert.alert('Select a track', 'Choose a recorded track to replace.');
+        return;
+      }
+    }
+
     engine.pause();
-    recordingStartTime.current = engine.getPlaybackTime();
+    let startTime = engine.getPlaybackTime();
+    if (mode === 'replace' && activeLayerId) {
+      const replaceLayer = memo.layers.find((layer) => layer.id === activeLayerId);
+      if (replaceLayer) {
+        const activeStart = getLayerActiveStartTime(replaceLayer);
+        const activeEnd = getLayerActiveEndTime(replaceLayer);
+        startTime = Math.max(activeStart, Math.min(startTime, activeEnd));
+      }
+    }
+    recordingStartTime.current = startTime;
     setReplaceMode(mode === 'replace');
     setStackMode(mode === 'stack');
 
@@ -1169,8 +1201,48 @@ export default function MemoEditorScreen() {
         isActive: true,
       };
 
-      if (replaceMode || stackMode) {
+      if (stackMode) {
         return [recordingTrack, ...playableTracks.map((track) => ({ ...track, isActive: false }))];
+      }
+
+      if (replaceMode && activeLayerId) {
+        const replaceStart = recordingStartTime.current;
+        return playableTracks.map((track) => {
+          if (track.id !== activeLayerId) {
+            return {
+              ...track,
+              isActive: false,
+            };
+          }
+
+          const keptDuration = Math.max(0.01, replaceStart - track.startTime);
+          const prefixPeaks =
+            keptDuration < track.duration && track.peaks && track.peaks.length > 0
+              ? track.peaks.slice(
+                  0,
+                  Math.max(
+                    1,
+                    Math.ceil((keptDuration / track.duration) * track.peaks.length)
+                  )
+                )
+              : track.peaks;
+
+          return {
+            ...track,
+            isActive: true,
+            peaks: prefixPeaks,
+            duration: Math.min(track.duration, keptDuration),
+            liveRecording: {
+              peaks:
+                engineState.recordingPeaks.length > 0
+                  ? engineState.recordingPeaks
+                  : undefined,
+              startTime: replaceStart,
+              duration: Math.max(engineState.recordingDuration, 0.01),
+            },
+            replaceTailDimFrom: replaceStart,
+          };
+        });
       }
 
       return [recordingTrack];

@@ -100,6 +100,14 @@ export function getLayerActiveDuration(layer: Layer): number {
   return Math.max(0, effects.trimOut - effects.trimIn);
 }
 
+export function getLayerFileOffsetAtTimeline(layer: Layer, timelineTime: number): number {
+  const effects = getLayerEffects(layer);
+  const activeDuration = Math.max(0, effects.trimOut - effects.trimIn);
+  const offsetInActiveRegion = timelineTime - layer.startTime;
+  const clampedActiveOffset = Math.max(0, Math.min(offsetInActiveRegion, activeDuration));
+  return effects.trimIn + clampedActiveOffset;
+}
+
 export function getLayerEndTime(layer: Layer): number {
   return getLayerActiveEndTime(layer);
 }

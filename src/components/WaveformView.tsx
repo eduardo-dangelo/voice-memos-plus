@@ -107,6 +107,12 @@ export type TrackData = {
   label?: string;
   showLabel?: boolean;
   color?: string;
+  liveRecording?: {
+    peaks?: number[];
+    startTime: number;
+    duration: number;
+  };
+  replaceTailDimFrom?: number;
 };
 
 type Props = {
@@ -585,6 +591,36 @@ function TrackWaveformRow({
     return barCount > 0 ? resamplePeaks(source, barCount) : [];
   }, [barCount, track.peaks]);
 
+  const liveRecording = track.liveRecording;
+  const liveBarCount = liveRecording
+    ? getTrackBarCount(liveRecording.duration, contentWidth)
+    : 0;
+  const liveTrackOffset = liveRecording ? liveRecording.startTime * PIXELS_PER_SECOND : 0;
+  const liveTrackWidth = liveBarCount * BAR_STEP;
+
+  const normalizedLivePeaks = useMemo(() => {
+    if (!liveRecording || liveBarCount <= 0) {
+      return [];
+    }
+    const source =
+      liveRecording.peaks && liveRecording.peaks.length > 0
+        ? liveRecording.peaks.slice(0, liveBarCount)
+        : getPeaksForMemo(liveRecording.peaks, liveBarCount);
+    return resamplePeaks(source, liveBarCount);
+  }, [liveBarCount, liveRecording]);
+
+  const replaceTailDimLeft =
+    track.replaceTailDimFrom !== undefined
+      ? sidePadding + track.replaceTailDimFrom * PIXELS_PER_SECOND
+      : 0;
+  const replaceTailDimWidth =
+    track.replaceTailDimFrom !== undefined
+      ? Math.max(
+          0,
+          (track.startTime + track.duration - track.replaceTailDimFrom) * PIXELS_PER_SECOND
+        )
+      : 0;
+
   const volumeScale =
     track.isActive && volumeVisualDb !== undefined
       ? dbToLinear(volumeVisualDb)
@@ -632,35 +668,86 @@ function TrackWaveformRow({
           <Text style={styles.mutedBadgeText}>M</Text>
         </View>
       ) : null}
-      {trackWidth > 0 ? (
-        <View
-          pointerEvents="none"
-          style={[
-            styles.barsRow,
-            {
-              marginLeft: sidePadding + trackOffset,
-              width: trackWidth,
-            },
-          ]}>
-          {normalizedPeaks.map((peak, index) => {
-            const scaled = peakToAbsoluteScale(peak) * volumeScale;
-            const barHeight =
-              scaled <= 0.01
-                ? 2
-                : Math.max(4, Math.min(trackHeight - 16, scaled * (trackHeight - 16)));
-            return (
-              <View
-                key={index}
-                style={[
-                  styles.bar,
-                  {
-                    height: barHeight,
-                    backgroundColor: barColor,
-                  },
-                ]}
-              />
-            );
-          })}
+      {trackWidth > 0 || liveTrackWidth > 0 || replaceTailDimWidth > 0 ? (
+        <View pointerEvents="none" style={styles.barsOverlay}>
+          {trackWidth > 0 ? (
+            <View
+              style={[
+                styles.barsRow,
+                {
+                  position: 'absolute',
+                  left: sidePadding + trackOffset,
+                  top: 0,
+                  height: trackHeight,
+                  width: trackWidth,
+                },
+              ]}>
+              {normalizedPeaks.map((peak, index) => {
+                const scaled = peakToAbsoluteScale(peak) * volumeScale;
+                const barHeight =
+                  scaled <= 0.01
+                    ? 2
+                    : Math.max(4, Math.min(trackHeight - 16, scaled * (trackHeight - 16)));
+                return (
+                  <View
+                    key={index}
+                    style={[
+                      styles.bar,
+                      {
+                        height: barHeight,
+                        backgroundColor: barColor,
+                      },
+                    ]}
+                  />
+                );
+              })}
+            </View>
+          ) : null}
+          {replaceTailDimWidth > 0 ? (
+            <View
+              style={[
+                styles.replaceTailDim,
+                {
+                  left: replaceTailDimLeft,
+                  width: replaceTailDimWidth,
+                  height: trackHeight,
+                },
+              ]}
+            />
+          ) : null}
+          {liveTrackWidth > 0 ? (
+            <View
+              style={[
+                styles.barsRow,
+                {
+                  position: 'absolute',
+                  left: sidePadding + liveTrackOffset,
+                  top: 0,
+                  height: trackHeight,
+                  width: liveTrackWidth,
+                },
+              ]}>
+              {normalizedLivePeaks.map((peak, index) => {
+                const scaled = peakToAbsoluteScale(peak);
+                const barHeight =
+                  scaled <= 0.01
+                    ? 2
+                    : Math.max(4, Math.min(trackHeight - 16, scaled * (trackHeight - 16)));
+                return (
+                  <View
+                    key={`live-${index}`}
+                    style={[
+                      styles.bar,
+                      {
+                        height: barHeight,
+                        backgroundColor: colors.recordRed,
+                      },
+                    ]}
+                  />
+                );
+              })}
+            </View>
+          ) : null}
         </View>
       ) : null}
       {showTrimOverlay && trimOverlay && trimScrollHelpers ? (
@@ -1117,6 +1204,14 @@ function createWaveformStyles(colors: VoiceMemosColorScheme) {
   dimRegion: {
     position: 'absolute',
     backgroundColor: colors.waveformDimBackground,
+  },
+  replaceTailDim: {
+    position: 'absolute',
+    top: 0,
+    backgroundColor: colorWithAlpha(colors.waveformDimBackground, 0.85),
+  },
+  barsOverlay: {
+    ...StyleSheet.absoluteFill,
   },
   centerLine: {
     position: 'absolute',

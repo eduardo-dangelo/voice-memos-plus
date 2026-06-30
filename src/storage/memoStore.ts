@@ -519,13 +519,23 @@ export async function replaceLayerFile(
     throw new Error('Layer not found');
   }
 
-  const dest = requireLayerFile(memoId, layer.fileName);
   const source = new File(sourcePath);
+  const sourceIsWav = sourcePath.toLowerCase().endsWith('.wav');
+
+  if (sourceIsWav && layer.fileName.endsWith('.m4a')) {
+    const oldFile = requireLayerFile(memoId, layer.fileName);
+    if (oldFile.exists) {
+      oldFile.delete();
+    }
+    layer.fileName = layer.fileName.replace(/\.m4a$/, '.wav');
+  }
+
+  const dest = requireLayerFile(memoId, layer.fileName);
 
   if (dest.exists) {
     dest.delete();
   }
-  source.copy(dest);
+  await source.copy(dest);
 
   await refreshLayerFromFile(memo, layer, capturedPeaks);
   updateMemoTimeline(memo);
@@ -583,7 +593,7 @@ export async function replaceLayerSegment(
   }
 
   const original = requireLayerFile(memoId, layer.fileName);
-  const output = new File(Paths.cache, `splice-${memoId}-${layerId}.m4a`);
+  const output = new File(Paths.cache, `splice-${memoId}-${layerId}.wav`);
 
   if (output.exists) {
     output.delete();
