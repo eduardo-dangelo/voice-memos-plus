@@ -139,6 +139,14 @@ export default function MemoEditorScreen() {
   const [activeEditor, setActiveEditor] = useState<EditorTool | null>(null);
   const [savingTrim, setSavingTrim] = useState(false);
   const [colorPickerLayerId, setColorPickerLayerId] = useState<string | null>(null);
+  const stackModeRef = useRef(false);
+  const replaceModeRef = useRef(false);
+  const activeLayerIdRef = useRef<string | null>(null);
+  const isSavingRecordingOnExit = useRef(false);
+  const saveRecordingInFlight = useRef<Promise<boolean> | null>(null);
+  stackModeRef.current = stackMode;
+  replaceModeRef.current = replaceMode;
+  activeLayerIdRef.current = activeLayerId;
 
   const activeLayer = useMemo(() => {
     if (!memo || !activeLayerId) {
@@ -640,6 +648,130 @@ export default function MemoEditorScreen() {
   }, [memo]);
 
   useEffect(() => {
+    if (autoRecordStarted.current) {
+      return;
+    }
+    if (record !== '1' || !memo || hasRecording(memo)) {
+      return;
+    }
+
+    autoRecordStarted.current = true;
+    router.setParams({ record: undefined });
+    void engine.startRecording().catch((error: Error) => {
+      Alert.alert('Recording failed', error.message);
+    });
+  }, [engine, memo, record]);
+
+  const stopAndSaveActiveRecording = useCallback(
+    async (options?: { reloadEngine?: boolean }): Promise<boolean> => {
+      if (saveRecordingInFlight.current) {
+        return saveRecordingInFlight.current;
+      }
+
+      if (!engine.getState().isRecording) {
+        return true;
+      }
+
+      const currentMemo = memoRef.current;
+      if (!currentMemo) {
+        return false;
+      }
+
+      const reloadEngine = options?.reloadEngine !== false;
+
+      const savePromise = (async (): Promise<boolean> => {
+        isSavingRecordingOnExit.current = true;
+        try {
+          const { path, duration, peaks } = engine.stopRecording();
+          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+          const wasStackMode = stackModeRef.current;
+          const wasReplaceMode = replaceModeRef.current;
+          const capturedStartTime = recordingStartTime.current;
+          const layerId = activeLayerIdRef.current;
+
+          let updated: Memo;
+          if (wasStackMode) {
+            updated = await addStackedLayer(currentMemo.id, capturedStartTime, path, peaks);
+            setActiveLayerId(updated.layers[updated.layers.length - 1]?.id ?? layerId);
+          } else if (wasReplaceMode) {
+            const replaceLayer =
+              currentMemo.layers.find((layer) => layer.id === layerId) ?? currentMemo.layers[0];
+            if (!replaceLayer) {
+              throw new Error('No active layer');
+            }
+            const relativeStart = Math.max(0, capturedStartTime - replaceLayer.startTime);
+            const relativeEnd = relativeStart + duration;
+            updated = await replaceLayerSegment(
+              currentMemo.id,
+              replaceLayer.id,
+              relativeStart,
+              relativeEnd,
+              path,
+              peaks
+            );
+          } else {
+            updated = await saveRecording(currentMemo.id, path, duration, peaks);
+            setActiveLayerId(updated.layers[0]?.id ?? null);
+          }
+
+          setMemo(updated);
+          setReplaceMode(false);
+          setStackMode(false);
+          if (reloadEngine) {
+            await loadMemoIntoEngine(
+              engine,
+              updated,
+              wasStackMode || wasReplaceMode ? capturedStartTime : 0
+            );
+          }
+          return true;
+        } catch (error) {
+          Alert.alert(
+            'Could not save recording',
+            error instanceof Error ? error.message : 'Unknown error'
+          );
+          return false;
+        } finally {
+          isSavingRecordingOnExit.current = false;
+        }
+      })();
+
+      saveRecordingInFlight.current = savePromise;
+      try {
+        return await savePromise;
+      } finally {
+        if (saveRecordingInFlight.current === savePromise) {
+          saveRecordingInFlight.current = null;
+        }
+      }
+    },
+    [engine]
+  );
+
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('beforeRemove', (e) => {
+      if (isSavingRecordingOnExit.current) {
+        e.preventDefault();
+        return;
+      }
+
+      if (!engine.getState().isRecording) {
+        return;
+      }
+
+      e.preventDefault();
+      void stopAndSaveActiveRecording({ reloadEngine: false }).then((ok) => {
+        if (ok) {
+          navigation.dispatch(e.data.action);
+        }
+      });
+    });
+
+    return unsubscribe;
+  }, [engine, navigation, stopAndSaveActiveRecording]);
+
+  useEffect(() => {
     void loadMemo();
     return () => {
       resetPerformanceWarningState();
@@ -661,23 +793,12 @@ export default function MemoEditorScreen() {
     };
   }, [engine, loadMemo]);
 
-  useEffect(() => {
-    if (autoRecordStarted.current) {
-      return;
-    }
-    if (record !== '1' || !memo || hasRecording(memo)) {
-      return;
-    }
-
-    autoRecordStarted.current = true;
-    router.setParams({ record: undefined });
-    void engine.startRecording().catch((error: Error) => {
-      Alert.alert('Recording failed', error.message);
-    });
-  }, [engine, memo, record]);
-
   const handleDone = useCallback(async () => {
     if (!memo) {
+      return;
+    }
+    const recordingSaved = await stopAndSaveActiveRecording({ reloadEngine: false });
+    if (!recordingSaved) {
       return;
     }
     engine.pause();
@@ -692,10 +813,14 @@ export default function MemoEditorScreen() {
       return;
     }
     router.back();
-  }, [commitTrimIfNeeded, engine, flushStartTimePersist, memo]);
+  }, [commitTrimIfNeeded, engine, flushStartTimePersist, memo, stopAndSaveActiveRecording]);
 
   const flushEditorState = useCallback(async (): Promise<boolean> => {
     if (!memo) {
+      return false;
+    }
+    const recordingSaved = await stopAndSaveActiveRecording({ reloadEngine: false });
+    if (!recordingSaved) {
       return false;
     }
     engine.pause();
@@ -710,7 +835,7 @@ export default function MemoEditorScreen() {
       return false;
     }
     return true;
-  }, [commitTrimIfNeeded, engine, flushStartTimePersist, memo]);
+  }, [commitTrimIfNeeded, engine, flushStartTimePersist, memo, stopAndSaveActiveRecording]);
 
   const handleShare = useCallback(async () => {
     if (!memo) {
@@ -812,17 +937,24 @@ export default function MemoEditorScreen() {
         <Text numberOfLines={1} style={styles.headerTitle}>
           {memo?.title ?? ''}
         </Text>
-        <Pressable onPress={() => void handleDone()} style={styles.doneButton}>
+        <Pressable
+          accessibilityLabel="Done"
+          accessibilityState={{ disabled: engineState.isRecording }}
+          disabled={engineState.isRecording}
+          onPress={() => void handleDone()}
+          style={[styles.doneButton, engineState.isRecording && styles.doneButtonDisabled]}>
           <SymbolView name={{ ios: 'checkmark' }} size={22} tintColor="#FFFFFF" />
         </Pressable>
       </View>
     ),
     [
       colors.secondaryText,
+      engineState.isRecording,
       handleDone,
       memo?.title,
       showMemoMenu,
       styles.doneButton,
+      styles.doneButtonDisabled,
       styles.headerBar,
       styles.headerTitle,
       styles.moreButton,
@@ -849,53 +981,8 @@ export default function MemoEditorScreen() {
     });
   }, [backTitle, colors, navigation, renderHeaderBar]);
 
-  const handleStopRecording = async () => {
-    if (!memo || !engineState.isRecording) {
-      return;
-    }
-    try {
-      const { path, duration, peaks } = engine.stopRecording();
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-
-      const wasStackMode = stackMode;
-      const wasReplaceMode = replaceMode;
-      const capturedStartTime = recordingStartTime.current;
-
-      let updated: Memo;
-      if (wasStackMode) {
-        updated = await addStackedLayer(memo.id, capturedStartTime, path, peaks);
-        setActiveLayerId(updated.layers[updated.layers.length - 1]?.id ?? activeLayerId);
-      } else if (wasReplaceMode) {
-        const activeLayer = memo.layers.find((layer) => layer.id === activeLayerId) ?? memo.layers[0];
-        if (!activeLayer) {
-          throw new Error('No active layer');
-        }
-        const relativeStart = Math.max(0, capturedStartTime - activeLayer.startTime);
-        const relativeEnd = relativeStart + duration;
-        updated = await replaceLayerSegment(
-          memo.id,
-          activeLayer.id,
-          relativeStart,
-          relativeEnd,
-          path,
-          peaks
-        );
-      } else {
-        updated = await saveRecording(memo.id, path, duration, peaks);
-        setActiveLayerId(updated.layers[0]?.id ?? null);
-      }
-
-      setMemo(updated);
-      setReplaceMode(false);
-      setStackMode(false);
-      await loadMemoIntoEngine(
-        engine,
-        updated,
-        wasStackMode || wasReplaceMode ? capturedStartTime : 0
-      );
-    } catch (error) {
-      Alert.alert('Could not save recording', error instanceof Error ? error.message : 'Unknown error');
-    }
+  const handleStopRecording = () => {
+    void stopAndSaveActiveRecording();
   };
 
   const beginRecording = async (mode: 'replace' | 'stack') => {
@@ -1276,6 +1363,9 @@ function useMemoEditorStyles(
           backgroundColor: colors.accent,
           alignItems: 'center',
           justifyContent: 'center',
+        },
+        doneButtonDisabled: {
+          opacity: 0.4,
         },
         headerBar: {
           flexDirection: 'row',
