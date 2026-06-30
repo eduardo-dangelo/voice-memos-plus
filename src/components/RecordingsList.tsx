@@ -1,9 +1,18 @@
 import { SymbolView } from 'expo-symbols';
-import { router } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { Stack, router } from 'expo-router';
+import {
+  isValidElement,
+  useCallback,
+  useMemo,
+  useState,
+  type ReactElement,
+  type ReactNode,
+} from 'react';
 import {
   Alert,
   FlatList,
+  Keyboard,
+  Platform,
   Pressable,
   SafeAreaView,
   StyleSheet,
@@ -13,6 +22,7 @@ import {
 } from 'react-native';
 
 import { memoAudioEngine } from '@/src/audio/MemoAudioEngine';
+import { FloatingHeaderButton } from '@/src/components/FloatingHeaderButton';
 import { RecordButton } from '@/src/components/RecordButton';
 import { RecordingRow } from '@/src/components/RecordingRow';
 import { useMemos } from '@/src/hooks/useMemos';
@@ -33,6 +43,7 @@ type Props = {
   allowMoveToFolder?: boolean;
   emptyTitle?: string;
   emptySubtitle?: string;
+  headerExtraActions?: ReactNode;
 };
 
 export function RecordingsList({
@@ -43,6 +54,7 @@ export function RecordingsList({
   allowMoveToFolder = true,
   emptyTitle = 'No Recordings',
   emptySubtitle = 'Tap the red button to record your first memo.',
+  headerExtraActions,
 }: Props) {
   const colors = useVoiceMemosColors();
   const styles = useStyles(colors);
@@ -51,6 +63,7 @@ export function RecordingsList({
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [isSearchActive, setIsSearchActive] = useState(false);
   const isTrash = scope.kind === 'trash';
 
   const filteredMemos = useMemo(() => {
@@ -125,82 +138,182 @@ export function RecordingsList({
     });
   };
 
-  return (
-    <SafeAreaView style={styles.screen}>
-      <View style={styles.toolbar}>
-        <TextInput
-          clearButtonMode="while-editing"
-          placeholder="Search"
-          placeholderTextColor={colors.secondaryText}
-          style={styles.search}
-          value={query}
-          onChangeText={setQuery}
-        />
-        <Pressable
-          onPress={() => {
-            if (selectionMode) {
-              clearSelection();
-              return;
-            }
-            setSelectionMode(true);
-          }}>
-          <Text style={styles.selectText}>{selectionMode ? 'Done' : 'Select'}</Text>
-        </Pressable>
-      </View>
+  const dismissSearch = useCallback(() => {
+    Keyboard.dismiss();
+    setQuery('');
+    setIsSearchActive(false);
+  }, []);
 
-      {selectionMode && selectedIds.size > 0 ? (
-        <View style={styles.selectionBar}>
-          {isTrash ? (
-            <Pressable onPress={handleRecoverSelected} style={styles.selectionAction}>
-              <SymbolView name={{ ios: 'arrow.uturn.backward' }} size={18} tintColor={colors.accent} />
-              <Text style={styles.recoverText}>Recover ({selectedIds.size})</Text>
-            </Pressable>
-          ) : null}
-          <Pressable onPress={handleDeleteSelected} style={styles.selectionAction}>
-            <SymbolView name={{ ios: 'trash' }} size={18} tintColor={colors.recordRed} />
-            <Text style={styles.deleteText}>Delete ({selectedIds.size})</Text>
-          </Pressable>
-        </View>
-      ) : null}
+  const handleSearchPress = useCallback(() => {
+    setIsSearchActive(true);
+  }, []);
 
-      <FlatList
-        contentContainerStyle={styles.listContent}
-        data={filteredMemos}
-        keyExtractor={(item) => item.id}
-        ListEmptyComponent={
-          <View style={styles.empty}>
-            <Text style={styles.emptyTitle}>{emptyTitle}</Text>
-            <Text style={styles.emptySubtitle}>{emptySubtitle}</Text>
-          </View>
-        }
-        renderItem={({ item }) => (
-          <RecordingRow
-            allowMoveToFolder={allowMoveToFolder && !isTrash}
-            expanded={expandedId === item.id}
-            isTrash={isTrash}
-            memo={item}
-            selected={selectedIds.has(item.id)}
-            selectionMode={selectionMode}
-            onDeleted={refresh}
-            onOpenEditor={() =>
-              router.push({
-                pathname: '/memo/[id]',
-                params: { id: item.id, backTitle },
-              })
-            }
-            onToggleExpand={() => setExpandedId((current) => (current === item.id ? null : item.id))}
-            onToggleSelect={() => toggleSelection(item.id)}
-            onUpdated={refresh}
-          />
-        )}
+  const headerRightActions = (
+    <>
+      <FloatingHeaderButton
+        accessibilityLabel="Search recordings"
+        icon="magnifyingglass"
+        onPress={handleSearchPress}
       />
+      <FloatingHeaderButton
+        accessibilityLabel={selectionMode ? 'Done selecting' : 'Select recordings'}
+        label={selectionMode ? 'Done' : 'Select'}
+        variant="pill"
+        onPress={() => {
+          if (selectionMode) {
+            clearSelection();
+            return;
+          }
+          setSelectionMode(true);
+        }}
+      />
+      {headerExtraActions}
+    </>
+  );
 
-      {showRecordButton && !selectionMode ? (
-        <View pointerEvents="box-none" style={styles.fabContainer}>
-          <RecordButton onPress={() => void handleRecord()} />
-        </View>
-      ) : null}
-    </SafeAreaView>
+  const headerScreenOptions = useMemo(
+    () => ({
+      ...(Platform.OS === 'ios'
+        ? {
+            unstable_headerRightItems: () => {
+              const items = [
+                {
+                  type: 'custom' as const,
+                  hidesSharedBackground: true,
+                  element: (
+                    <FloatingHeaderButton
+                      accessibilityLabel="Search recordings"
+                      icon="magnifyingglass"
+                      onPress={handleSearchPress}
+                    />
+                  ),
+                },
+                {
+                  type: 'custom' as const,
+                  hidesSharedBackground: true,
+                  element: (
+                    <FloatingHeaderButton
+                      accessibilityLabel={
+                        selectionMode ? 'Done selecting' : 'Select recordings'
+                      }
+                      label={selectionMode ? 'Done' : 'Select'}
+                      variant="pill"
+                      onPress={() => {
+                        if (selectionMode) {
+                          clearSelection();
+                          return;
+                        }
+                        setSelectionMode(true);
+                      }}
+                    />
+                  ),
+                },
+              ];
+
+              if (isValidElement(headerExtraActions)) {
+                items.push({
+                  type: 'custom',
+                  hidesSharedBackground: true,
+                  element: headerExtraActions as ReactElement,
+                });
+              }
+
+              return items;
+            },
+          }
+        : {
+            headerRight: () => (
+              <View style={styles.headerActions}>{headerRightActions}</View>
+            ),
+          }),
+    }),
+    [handleSearchPress, headerExtraActions, selectionMode, styles.headerActions]
+  );
+
+  return (
+    <>
+      <Stack.Screen options={headerScreenOptions} />
+      <SafeAreaView style={styles.screen}>
+        {isSearchActive ? (
+          <View style={styles.searchRow}>
+            <TextInput
+              autoFocus
+              clearButtonMode="while-editing"
+              placeholder="Search"
+              placeholderTextColor={colors.secondaryText}
+              style={styles.searchInput}
+              value={query}
+              onChangeText={setQuery}
+            />
+            <Pressable
+              accessibilityLabel="Close search"
+              hitSlop={8}
+              onPress={dismissSearch}>
+              <SymbolView
+                name={{ ios: 'xmark.circle.fill' }}
+                size={22}
+                tintColor={colors.secondaryText}
+              />
+            </Pressable>
+          </View>
+        ) : null}
+
+        {selectionMode && selectedIds.size > 0 ? (
+          <View style={styles.selectionBar}>
+            {isTrash ? (
+              <Pressable onPress={handleRecoverSelected} style={styles.selectionAction}>
+                <SymbolView name={{ ios: 'arrow.uturn.backward' }} size={18} tintColor={colors.accent} />
+                <Text style={styles.recoverText}>Recover ({selectedIds.size})</Text>
+              </Pressable>
+            ) : null}
+            <Pressable onPress={handleDeleteSelected} style={styles.selectionAction}>
+              <SymbolView name={{ ios: 'trash' }} size={18} tintColor={colors.recordRed} />
+              <Text style={styles.deleteText}>Delete ({selectedIds.size})</Text>
+            </Pressable>
+          </View>
+        ) : null}
+
+        <FlatList
+          contentContainerStyle={styles.listContent}
+          data={filteredMemos}
+          keyExtractor={(item) => item.id}
+          keyboardDismissMode="on-drag"
+          keyboardShouldPersistTaps="handled"
+          ListEmptyComponent={
+            <View style={styles.empty}>
+              <Text style={styles.emptyTitle}>{emptyTitle}</Text>
+              <Text style={styles.emptySubtitle}>{emptySubtitle}</Text>
+            </View>
+          }
+          renderItem={({ item }) => (
+            <RecordingRow
+              allowMoveToFolder={allowMoveToFolder && !isTrash}
+              expanded={expandedId === item.id}
+              isTrash={isTrash}
+              memo={item}
+              selected={selectedIds.has(item.id)}
+              selectionMode={selectionMode}
+              onDeleted={refresh}
+              onOpenEditor={() =>
+                router.push({
+                  pathname: '/memo/[id]',
+                  params: { id: item.id, backTitle },
+                })
+              }
+              onToggleExpand={() => setExpandedId((current) => (current === item.id ? null : item.id))}
+              onToggleSelect={() => toggleSelection(item.id)}
+              onUpdated={refresh}
+            />
+          )}
+        />
+
+        {showRecordButton && !selectionMode ? (
+          <View pointerEvents="box-none" style={styles.fabContainer}>
+            <RecordButton onPress={() => void handleRecord()} />
+          </View>
+        ) : null}
+      </SafeAreaView>
+    </>
   );
 }
 
@@ -212,14 +325,19 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           flex: 1,
           backgroundColor: colors.background,
         },
-        toolbar: {
+        headerActions: {
           flexDirection: 'row',
           alignItems: 'center',
-          gap: 12,
+          gap: 10,
+        },
+        searchRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 8,
           paddingHorizontal: 16,
           paddingBottom: 8,
         },
-        search: {
+        searchInput: {
           flex: 1,
           backgroundColor: colors.searchFieldBackground,
           borderRadius: 10,
@@ -227,11 +345,6 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           paddingVertical: 8,
           fontSize: 16,
           color: colors.text,
-        },
-        selectText: {
-          color: colors.accent,
-          fontSize: 17,
-          fontWeight: '500',
         },
         selectionBar: {
           flexDirection: 'row',

@@ -1,16 +1,14 @@
-import { SymbolView } from 'expo-symbols';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
 import { useCallback, useLayoutEffect, useMemo, useState } from 'react';
-import { Alert, Pressable, Text } from 'react-native';
+import { Alert } from 'react-native';
 
+import { FloatingHeaderButton } from '@/src/components/FloatingHeaderButton';
 import { RecordingsList } from '@/src/components/RecordingsList';
 import { getFolder, renameFolder } from '@/src/storage/folderStore';
-import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
 export default function FolderRecordingsScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const navigation = useNavigation();
-  const colors = useVoiceMemosColors();
   const [folderName, setFolderName] = useState('Folder');
 
   const loadFolder = useCallback(async () => {
@@ -30,36 +28,30 @@ export default function FolderRecordingsScreen() {
   useLayoutEffect(() => {
     navigation.setOptions({
       title: folderName,
-      headerRight: () => (
-        <Pressable
-          hitSlop={8}
-          onPress={() => {
-            Alert.prompt(
-              'Rename Folder',
-              undefined,
-              [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                  text: 'Save',
-                  onPress: (value?: string) => {
-                    if (value?.trim() && id) {
-                      void renameFolder(id, value.trim()).then((folder) => {
-                        setFolderName(folder.name);
-                      });
-                    }
-                  },
-                },
-              ],
-              'plain-text',
-              folderName
-            );
-          }}
-          style={{ paddingHorizontal: 4 }}>
-          <SymbolView name={{ ios: 'ellipsis.circle' }} size={22} tintColor={colors.accent} />
-        </Pressable>
-      ),
     });
-  }, [colors.accent, folderName, id, navigation]);
+  }, [folderName, navigation]);
+
+  const showRenamePrompt = useCallback(() => {
+    Alert.prompt(
+      'Rename Folder',
+      undefined,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Save',
+          onPress: (value?: string) => {
+            if (value?.trim() && id) {
+              void renameFolder(id, value.trim()).then((folder) => {
+                setFolderName(folder.name);
+              });
+            }
+          },
+        },
+      ],
+      'plain-text',
+      folderName
+    );
+  }, [folderName, id]);
 
   const folderId = useMemo(() => id ?? '', [id]);
 
@@ -72,6 +64,13 @@ export default function FolderRecordingsScreen() {
       backTitle={folderName}
       emptySubtitle="Tap the red button to record into this folder."
       folderId={folderId}
+      headerExtraActions={
+        <FloatingHeaderButton
+          accessibilityLabel="Folder options"
+          icon="ellipsis.circle"
+          onPress={showRenamePrompt}
+        />
+      }
       scope={{ kind: 'folder', folderId }}
     />
   );
