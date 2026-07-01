@@ -14,7 +14,6 @@ import {
 } from 'react-native';
 
 import { colorWithAlpha, type VoiceMemosColorScheme } from '@/constants/VoiceMemosColors';
-import { LoopRegionBar, LOOP_ROW_HEIGHT, type LoopOverlayConfig } from '@/src/components/LoopRegionBar';
 import { clampTrimValues, dbToLinear } from '@/src/audio/layerEffects';
 import {
   getPeaksForMemo,
@@ -24,8 +23,9 @@ import {
   WAVEFORM_BAR_WIDTH,
   WAVEFORM_PIXELS_PER_SECOND,
 } from '@/src/audio/waveform';
-import { formatMarkerTime } from '@/src/utils/format';
+import { LOOP_ROW_HEIGHT, LoopRegionBar, type LoopOverlayConfig } from '@/src/components/LoopRegionBar';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
+import { formatMarkerTime } from '@/src/utils/format';
 
 const BAR_WIDTH = WAVEFORM_BAR_WIDTH;
 const BAR_GAP = WAVEFORM_BAR_GAP;
@@ -1097,7 +1097,8 @@ export function WaveformView({
             <LoopRegionBar
               bandWidth={bandWidth}
               config={loopOverlay}
-              disabled={isPlaying || isRecording}
+              disabled={isRecording}
+              editDisabled={isPlaying}
               scrollHelpers={loopScrollHelpers}
               sidePadding={sidePadding}
             />

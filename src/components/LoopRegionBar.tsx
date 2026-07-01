@@ -8,9 +8,9 @@ import {
   type PanResponderGestureState,
 } from 'react-native';
 
-import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 import { WAVEFORM_PIXELS_PER_SECOND } from '@/src/audio/waveform';
 import { MIN_LOOP_DURATION } from '@/src/storage/types';
+import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
 export const LOOP_ROW_HEIGHT = 10;
 const PIXELS_PER_SECOND = WAVEFORM_PIXELS_PER_SECOND;
@@ -39,6 +39,7 @@ type Props = {
   config: LoopOverlayConfig;
   scrollHelpers: LoopScrollHelpers;
   disabled?: boolean;
+  editDisabled?: boolean;
 };
 
 function contentXToTime(x: number, sidePadding: number, duration: number): number {
@@ -91,11 +92,18 @@ export function LoopRegionBar({
   config,
   scrollHelpers,
   disabled = false,
+  editDisabled = false,
 }: Props) {
   const colors = useVoiceMemosColors();
   const styles = useMemo(() => createLoopRegionStyles(colors), [colors]);
   const { loopStart, loopEnd, loopEnabled, duration, onChange } = config;
   const hasRegion = loopEnd > loopStart + MIN_LOOP_DURATION;
+  const editBlocked = disabled || editDisabled;
+
+  const disabledRef = useRef(disabled);
+  const editBlockedRef = useRef(editBlocked);
+  disabledRef.current = disabled;
+  editBlockedRef.current = editBlocked;
 
   const [preview, setPreview] = useState<{ start: number; end: number } | null>(null);
   const previewRef = useRef<{ start: number; end: number } | null>(null);
@@ -163,7 +171,7 @@ export function LoopRegionBar({
 
   const createGrantRef = useRef((_event: GestureResponderEvent) => {});
   createGrantRef.current = (event) => {
-    if (disabled) {
+    if (editBlocked) {
       return;
     }
     beginGesture();
@@ -175,7 +183,7 @@ export function LoopRegionBar({
 
   const createMoveRef = useRef((_event: GestureResponderEvent, gesture: PanResponderGestureState) => {});
   createMoveRef.current = (_event, gesture) => {
-    if (disabled) {
+    if (editBlocked) {
       return;
     }
     const padding = sidePaddingRef.current;
@@ -192,7 +200,7 @@ export function LoopRegionBar({
 
   const createReleaseRef = useRef((_event: GestureResponderEvent, gesture: PanResponderGestureState) => {});
   createReleaseRef.current = (_event, gesture) => {
-    if (disabled) {
+    if (editBlocked) {
       endGesture();
       return;
     }
@@ -277,17 +285,25 @@ export function LoopRegionBar({
     endGesture();
   };
 
-  const panCapture = {
-    onStartShouldSetPanResponder: () => !disabled,
-    onStartShouldSetPanResponderCapture: () => !disabled,
-    onMoveShouldSetPanResponder: () => !disabled,
-    onMoveShouldSetPanResponderCapture: () => !disabled,
+  const editPanCapture = {
+    onStartShouldSetPanResponder: () => !editBlockedRef.current,
+    onStartShouldSetPanResponderCapture: () => !editBlockedRef.current,
+    onMoveShouldSetPanResponder: () => !editBlockedRef.current,
+    onMoveShouldSetPanResponderCapture: () => !editBlockedRef.current,
+    onPanResponderTerminationRequest: () => false,
+  };
+
+  const togglePanCapture = {
+    onStartShouldSetPanResponder: () => !disabledRef.current,
+    onStartShouldSetPanResponderCapture: () => !disabledRef.current,
+    onMoveShouldSetPanResponder: () => !disabledRef.current,
+    onMoveShouldSetPanResponderCapture: () => !disabledRef.current,
     onPanResponderTerminationRequest: () => false,
   };
 
   const createResponder = useRef(
     PanResponder.create({
-      ...panCapture,
+      ...editPanCapture,
       onPanResponderGrant: (event) => createGrantRef.current(event),
       onPanResponderMove: (event, gesture) => createMoveRef.current(event, gesture),
       onPanResponderRelease: (event, gesture) => createReleaseRef.current(event, gesture),
@@ -297,7 +313,7 @@ export function LoopRegionBar({
 
   const leftResponder = useRef(
     PanResponder.create({
-      ...panCapture,
+      ...editPanCapture,
       onPanResponderGrant: () => {
         beginGesture();
         startLoopStart.current = loopStartRef.current;
@@ -311,7 +327,7 @@ export function LoopRegionBar({
 
   const rightResponder = useRef(
     PanResponder.create({
-      ...panCapture,
+      ...editPanCapture,
       onPanResponderGrant: () => {
         beginGesture();
         startLoopStart.current = loopStartRef.current;
@@ -325,7 +341,7 @@ export function LoopRegionBar({
 
   const toggleResponder = useRef(
     PanResponder.create({
-      ...panCapture,
+      ...togglePanCapture,
       onPanResponderGrant: () => toggleGrantRef.current(),
       onPanResponderMove: () => {},
       onPanResponderRelease: (event, gesture) => toggleReleaseRef.current(event, gesture),

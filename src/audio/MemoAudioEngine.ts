@@ -353,6 +353,18 @@ export class MemoAudioEngine {
     this.emit({ isPlaying: false, currentTime: endAt });
   }
 
+  private resyncPlaybackAtCurrentTime(): void {
+    if (!this.state.isPlaying) {
+      return;
+    }
+    const currentTime = this.context
+      ? this.getElapsedPlaybackTime(this.context)
+      : this.state.currentTime;
+    this.invalidateAndStopSources();
+    this.emit({ currentTime, isPlaying: false });
+    void this.play();
+  }
+
   private downsampleRecordingPeaks(peaks: number[]): number[] {
     if (peaks.length <= MAX_RECORDING_PEAKS) {
       return peaks;
@@ -452,6 +464,8 @@ export class MemoAudioEngine {
     const duration = this.state.duration;
     const clampedStart = Math.max(0, Math.min(start, duration));
     const clampedEnd = Math.max(0, Math.min(end, duration));
+    const loopEnabledChanging =
+      enabled !== undefined && enabled !== this.state.loopEnabled;
     const partial: Partial<EngineState> = {
       loopStart: clampedStart,
       loopEnd: clampedEnd,
@@ -460,10 +474,17 @@ export class MemoAudioEngine {
       partial.loopEnabled = enabled;
     }
     this.emit(partial);
+    if (loopEnabledChanging) {
+      this.resyncPlaybackAtCurrentTime();
+    }
   }
 
   setLoopEnabled(enabled: boolean): void {
+    if (enabled === this.state.loopEnabled) {
+      return;
+    }
     this.emit({ loopEnabled: enabled });
+    this.resyncPlaybackAtCurrentTime();
   }
 
   updateLayerEffects(layerId: string, partial: LayerEffectsChange): void {
