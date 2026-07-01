@@ -204,6 +204,11 @@ export default function MemoEditorScreen() {
         return;
       }
 
+      if (partial.muted === true && activeLayerIdRef.current === layerId) {
+        setActiveLayerId(null);
+        setActiveEditor(null);
+      }
+
       engine.updateLayerEffects(layerId, partial);
       if (layerStartTimes) {
         engine.updateLayerStartTimes(layerStartTimes);
@@ -477,6 +482,11 @@ export default function MemoEditorScreen() {
         return;
       }
 
+      const layer = memo?.layers.find((entry) => entry.id === trackId);
+      if (layer && getLayerEffects(layer).muted) {
+        return;
+      }
+
       void (async () => {
         const ok = await commitTrimIfNeeded();
         if (!ok) {
@@ -487,7 +497,7 @@ export default function MemoEditorScreen() {
         setActiveLayerId(trackId);
       })();
     },
-    [activeLayerId, commitTrimIfNeeded, flushStartTimePersist, savingTrim]
+    [activeLayerId, commitTrimIfNeeded, flushStartTimePersist, memo, savingTrim]
   );
 
   const handleTrackDeselect = useCallback(() => {
@@ -564,7 +574,7 @@ export default function MemoEditorScreen() {
         },
         (index) => {
           if (index === 0) {
-            if (layerId !== activeLayerId) {
+            if (layerId !== activeLayerId && !effects.muted) {
               setActiveLayerId(layerId);
             }
             Alert.prompt('Rename Track', undefined, [
@@ -581,16 +591,13 @@ export default function MemoEditorScreen() {
             return;
           }
           if (index === 1) {
-            if (layerId !== activeLayerId) {
+            if (layerId !== activeLayerId && !effects.muted) {
               setActiveLayerId(layerId);
             }
             setColorPickerLayerId(layerId);
             return;
           }
           if (index === 2) {
-            if (layerId !== activeLayerId) {
-              setActiveLayerId(layerId);
-            }
             applyLayerEffectsChange(layerId, { muted: !effects.muted });
             return;
           }
@@ -634,7 +641,10 @@ export default function MemoEditorScreen() {
     const loaded = next && hasRecording(next) ? await ensureWaveformPeaks(next) : next;
     setMemo(loaded);
     if (loaded) {
-      setActiveLayerId(loaded.layers[0]?.id ?? null);
+      const defaultLayer = loaded.layers.find(
+        (layer) => layer.duration > 0 && !getLayerEffects(layer).muted
+      );
+      setActiveLayerId(defaultLayer?.id ?? null);
       if (hasRecording(loaded)) {
         await loadMemoIntoEngine(engine, loaded);
       }
@@ -1091,7 +1101,8 @@ export default function MemoEditorScreen() {
   }, [commitTrimIfNeeded, isRecording]);
 
   const showTrackEditor =
-    !isRecording && Boolean(activeLayer && activeLayer.duration > 0);
+    !isRecording &&
+    Boolean(activeLayer && activeLayer.duration > 0 && !activeLayerEffects?.muted);
 
   const availableTools = useMemo((): EditorTool[] => {
     const base: EditorTool[] = ['trim', 'volume', 'reverb', 'delay', 'eq'];
@@ -1106,6 +1117,17 @@ export default function MemoEditorScreen() {
       setActiveEditor(null);
     }
   }, [activeEditor, memo]);
+
+  useEffect(() => {
+    if (!memo || !activeLayerId) {
+      return;
+    }
+    const layer = memo.layers.find((entry) => entry.id === activeLayerId);
+    if (layer && getLayerEffects(layer).muted) {
+      setActiveLayerId(null);
+      setActiveEditor(null);
+    }
+  }, [activeLayerId, memo]);
 
   const blockSheetGesture =
     activeEditor === 'eq' && activeLayerEffects?.eq.preset === 'custom';
@@ -1146,7 +1168,7 @@ export default function MemoEditorScreen() {
             peaks: layer.waveformPeaks,
             startTime: layer.startTime,
             duration: layer.duration,
-            isActive: true,
+            isActive: !effects.muted,
             isMuted: effects.muted,
             ...trackMeta,
           };
@@ -1166,7 +1188,7 @@ export default function MemoEditorScreen() {
             ),
             startTime: getLayerActiveStartTime(layer),
             duration: Math.max(activeDuration, 0.01),
-            isActive: true,
+            isActive: !effects.muted,
             isMuted: effects.muted,
             ...trackMeta,
           };
@@ -1185,7 +1207,7 @@ export default function MemoEditorScreen() {
           ),
           startTime: getLayerActiveStartTime(layer),
           duration: Math.max(activeDuration, 0.01),
-          isActive: layer.id === activeLayerId,
+          isActive: layer.id === activeLayerId && !effects.muted,
           isMuted: effects.muted,
           ...trackMeta,
         };

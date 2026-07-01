@@ -920,10 +920,12 @@ export function WaveformView({
 
   const handleTrackPress = (trackId: string, locationX: number) => {
     const track = tracks.find((entry) => entry.id === trackId);
-    if (track && isTrackEmptyPress(locationX, sidePadding, contentWidth, track)) {
-      onTrackDeselectRef.current?.();
-    } else {
-      onTrackPressRef.current(trackId);
+    if (!track?.isMuted) {
+      if (track && isTrackEmptyPress(locationX, sidePadding, contentWidth, track)) {
+        onTrackDeselectRef.current?.();
+      } else {
+        onTrackPressRef.current(trackId);
+      }
     }
     if (isPlaying || duration <= 0 || contentWidth <= 0) {
       return;
