@@ -55,7 +55,7 @@ export function EditorToolStrip({ activeTool, availableTools, effects, onToolCha
         {tools.map((tool) => {
           const selected = activeTool === tool.id;
           const applied = isToolApplied(tool.id, effects);
-          const highlighted = selected || applied;
+          const iconHighlighted = selected || applied;
           return (
             <Pressable
               key={tool.id}
@@ -66,12 +66,12 @@ export function EditorToolStrip({ activeTool, availableTools, effects, onToolCha
               <SymbolView
                 name={{ ios: tool.symbol }}
                 size={22}
-                tintColor={highlighted ? colors.accent : colors.text}
+                tintColor={iconHighlighted ? colors.accent : colors.text}
               />
               <Text
                 style={[
                   styles.label,
-                  highlighted && styles.labelHighlighted,
+                  selected && styles.labelHighlighted,
                   selected && styles.labelSelected,
                 ]}>
                 {tool.label}
