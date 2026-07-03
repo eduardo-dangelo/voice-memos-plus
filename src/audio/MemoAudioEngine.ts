@@ -22,10 +22,11 @@ import {
   connectDelayPathToDestination,
   connectDryPathToDestination,
   connectReverbPathToDestination,
-  connectSourceToGraph,
+  connectSourceToPath,
   isDelayPathActive,
   isReverbPathActive,
   type LayerEffectGraph,
+  type LayerEffectPathNodes,
 } from '@/src/audio/layerEffectChain';
 import { normalizeLayerEffects, mergeLayerEffects, type LayerEffects, type LayerEffectsChange } from '@/src/audio/layerEffects';
 
@@ -501,8 +502,8 @@ export class MemoAudioEngine {
     const needsPathRestart =
       this.state.isPlaying &&
       active !== undefined &&
-      ((!active.graph.delay && isDelayPathActive(nextEffects)) ||
-        (!active.graph.reverb && isReverbPathActive(nextEffects)));
+      (Boolean(active.graph.delay) !== isDelayPathActive(nextEffects) ||
+        Boolean(active.graph.reverb) !== isReverbPathActive(nextEffects));
 
     if (needsPathRestart && this.context) {
       const currentTime = this.getElapsedPlaybackTime(this.context);
@@ -735,16 +736,29 @@ export class MemoAudioEngine {
         const startWhen = when + plan.delay;
         const stopWhen = startWhen + plan.layerPlayLength;
 
-        const source = context.createBufferSource();
-        source.buffer = plan.buffer;
-        connectSourceToGraph(source, graph);
+        const schedulePath = (path: LayerEffectPathNodes) => {
+          const source = context.createBufferSource();
+          source.buffer = plan.buffer;
+          connectSourceToPath(source, path);
+          source.start(startWhen, plan.bufferOffset);
+          source.stop(stopWhen);
+          this.sources.push(source);
+          scheduledSources += 1;
+        };
+
+        // Separate sources per path — react-native-audio-api only processes one output per node.
+        schedulePath(graph.dry);
         connectDryPathToDestination(graph, context.destination);
-        connectDelayPathToDestination(graph, context.destination);
-        connectReverbPathToDestination(graph, context.destination);
-        source.start(startWhen, plan.bufferOffset);
-        source.stop(stopWhen);
-        this.sources.push(source);
-        scheduledSources += 1;
+
+        if (graph.delay) {
+          schedulePath(graph.delay);
+          connectDelayPathToDestination(graph, context.destination);
+        }
+
+        if (graph.reverb) {
+          schedulePath(graph.reverb);
+          connectReverbPathToDestination(graph, context.destination);
+        }
 
         this.activeLayerPlayback.set(plan.layer.id, { layerId: plan.layer.id, graph });
       }

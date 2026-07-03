@@ -18,7 +18,7 @@ export const REVERB_PRESETS: ReverbPreset[] = [
   'spring',
   'custom',
 ];
-export type DelaySync = 'off' | '1/8' | '1/4' | '1/2' | '1/1';
+export type DelaySync = 'off' | '1/8' | '3/16' | '1/4' | '1/2' | '1/1';
 
 export type DelayPreset =
   | 'off'
@@ -55,6 +55,8 @@ export type EqPreset =
   | 'treble'
   | 'air'
   | 'muffled'
+  | 'highPass'
+  | 'lowPass'
   | 'custom';
 
 export const EQ_PRESET_IDS: EqPreset[] = [
@@ -67,6 +69,8 @@ export const EQ_PRESET_IDS: EqPreset[] = [
   'treble',
   'air',
   'muffled',
+  'highPass',
+  'lowPass',
   'custom',
 ];
 
@@ -114,12 +118,12 @@ export const REVERB_PRESET_DEFAULTS: Record<
   Exclude<ReverbPreset, 'off' | 'custom'>,
   { mix: number; decay: number }
 > = {
-  room: { mix: 25, decay: 0.6 },
-  hall: { mix: 35, decay: 1.8 },
-  plate: { mix: 30, decay: 1.2 },
-  chamber: { mix: 20, decay: 0.4 },
-  cathedral: { mix: 40, decay: 2.5 },
-  spring: { mix: 28, decay: 1.0 },
+  room: { mix: 12, decay: 0.9 },
+  hall: { mix: 16, decay: 1.8 },
+  plate: { mix: 14, decay: 1.2 },
+  chamber: { mix: 10, decay: 0.8 },
+  cathedral: { mix: 18, decay: 2.5 },
+  spring: { mix: 12, decay: 1.0 },
 };
 
 function isReverbPreset(value: unknown): value is ReverbPreset {
@@ -137,14 +141,16 @@ function isEqPreset(value: unknown): value is EqPreset {
 type NamedEqPreset = Exclude<EqPreset, 'off' | 'custom'>;
 
 export const EQ_PRESETS: Record<NamedEqPreset, [number, number, number, number, number]> = {
-  voice: [2, 1, 3, 2, -2],
-  warm: [4, 2, 0, -2, -3],
+  voice: [-2, -1, 2, 3, 1],
+  warm: [3, 2, 0, -2, -3],
   bright: [-2, 0, 2, 4, 5],
-  podcast: [1, 3, 5, 3, 0],
-  bass: [6, 4, 0, -2, -3],
+  podcast: [-1, 2, 4, 3, 1],
+  bass: [4, 3, 0, -2, -2],
   treble: [-3, -1, 0, 3, 5],
   air: [-1, 0, 1, 3, 4],
   muffled: [2, 1, 0, -4, -6],
+  highPass: [-8, -4, -1, 0, 0],
+  lowPass: [0, 0, -1, -4, -8],
 };
 
 type NamedDelayPreset = Exclude<DelayPreset, 'off' | 'custom'>;
@@ -156,7 +162,7 @@ const DELAY_PRESET_SPECS: Record<
   slap: { sync: 'off', timeMs: 90, mix: 18, feedback: 15 },
   echo: { sync: 'off', timeMs: 400, mix: 30, feedback: 45 },
   eighth: { sync: '1/8', timeMs: 0, mix: 22, feedback: 35 },
-  dotted: { sync: '1/8', timeMs: 0, mix: 25, feedback: 40 },
+  dotted: { sync: '3/16', timeMs: 0, mix: 25, feedback: 40 },
   quarter: { sync: '1/4', timeMs: 0, mix: 28, feedback: 40 },
   half: { sync: '1/2', timeMs: 0, mix: 32, feedback: 45 },
   full: { sync: '1/1', timeMs: 0, mix: 35, feedback: 50 },
@@ -382,6 +388,7 @@ export function syncDelayTimeMs(sync: DelaySync, bpm = DEFAULT_BPM): number {
   const beatMs = 60000 / bpm;
   const multipliers: Record<Exclude<DelaySync, 'off'>, number> = {
     '1/8': 0.5,
+    '3/16': 0.75,
     '1/4': 1,
     '1/2': 2,
     '1/1': 4,

@@ -27,7 +27,7 @@ const PRESETS: { id: ReverbPreset; label: string }[] = [
   { id: 'custom', label: 'Custom' },
 ];
 
-const CUSTOM_DEFAULTS = { mix: 25, decay: 1.0 };
+const CUSTOM_DEFAULTS = { mix: 14, decay: 1.0 };
 
 export function ReverbEditor({ effects, onChange }: Props) {
   const colors = useVoiceMemosColors();

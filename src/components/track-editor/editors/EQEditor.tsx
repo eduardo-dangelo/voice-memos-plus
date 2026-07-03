@@ -24,6 +24,8 @@ const PRESETS: { id: EqPreset; label: string }[] = [
   { id: 'treble', label: 'Treble' },
   { id: 'air', label: 'Air' },
   { id: 'muffled', label: 'Muffled' },
+  { id: 'highPass', label: 'High Pass' },
+  { id: 'lowPass', label: 'Low Pass' },
   { id: 'custom', label: 'Custom' },
 ];
 
