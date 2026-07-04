@@ -40,10 +40,10 @@ const REVERB_DURATION: Record<Exclude<ReverbPreset, 'off' | 'custom'>, number> =
 const REVERB_IR_THROTTLE_MS = 80;
 
 const reverbIrCache = new Map<string, AudioBuffer>();
-const lastReverbIrKey = new WeakMap<LayerReverbNodes, string>();
-const lastReverbIrSyncAt = new WeakMap<LayerReverbNodes, number>();
-const lastReverbPreset = new WeakMap<LayerReverbNodes, ReverbPreset>();
-const pendingReverbIrSync = new WeakMap<LayerReverbNodes, ReturnType<typeof setTimeout>>();
+const lastReverbIrKey = new WeakMap<ConvolverNode, string>();
+const lastReverbIrSyncAt = new WeakMap<ConvolverNode, number>();
+const lastReverbPreset = new WeakMap<ConvolverNode, ReverbPreset>();
+const pendingReverbIrSync = new WeakMap<ConvolverNode, ReturnType<typeof setTimeout>>();
 
 export function isDelayPathActive(effects: LayerEffects): boolean {
   return effects.delay.preset !== 'off' && effects.delay.mix > 0;
@@ -149,26 +149,18 @@ export function buildInputEqPath(context: AudioContext): LayerEffectPathNodes {
   return { gain, eqFilters };
 }
 
-function cloneImpulseBuffer(context: AudioContext, source: AudioBuffer): AudioBuffer {
-  const clone = context.createBuffer(source.numberOfChannels, source.length, source.sampleRate);
-  for (let channel = 0; channel < source.numberOfChannels; channel += 1) {
-    clone.copyToChannel(source.getChannelData(channel), channel);
-  }
-  return clone;
-}
-
 function assignReverbImpulse(
-  nodes: LayerReverbNodes,
+  convolver: ConvolverNode,
   preset: Exclude<ReverbPreset, 'off'>,
   decay: number,
   context: AudioContext
 ): void {
   const key = reverbIrKey(preset, decay);
   const impulse = getOrCreateImpulseResponse(context, preset, decay);
-  nodes.reverbConvolver.buffer = cloneImpulseBuffer(context, impulse);
-  lastReverbIrKey.set(nodes, key);
-  lastReverbPreset.set(nodes, preset);
-  lastReverbIrSyncAt.set(nodes, Date.now());
+  convolver.buffer = impulse;
+  lastReverbIrKey.set(convolver, key);
+  lastReverbPreset.set(convolver, preset);
+  lastReverbIrSyncAt.set(convolver, Date.now());
 }
 
 export function syncReverbConvolver(
@@ -181,43 +173,44 @@ export function syncReverbConvolver(
     return;
   }
 
+  const convolver = nodes.reverbConvolver;
   const key = reverbIrKey(preset, decay);
-  const previousKey = lastReverbIrKey.get(nodes);
-  const previousPreset = lastReverbPreset.get(nodes);
+  const previousKey = lastReverbIrKey.get(convolver);
+  const previousPreset = lastReverbPreset.get(convolver);
   const presetChanged = previousPreset !== preset;
 
   if (previousKey === key) {
-    const pending = pendingReverbIrSync.get(nodes);
+    const pending = pendingReverbIrSync.get(convolver);
     if (pending) {
       clearTimeout(pending);
-      pendingReverbIrSync.delete(nodes);
+      pendingReverbIrSync.delete(convolver);
     }
     return;
   }
 
   const nowMs = Date.now();
-  const lastSyncAt = lastReverbIrSyncAt.get(nodes) ?? 0;
+  const lastSyncAt = lastReverbIrSyncAt.get(convolver) ?? 0;
   if (!presetChanged && nowMs - lastSyncAt < REVERB_IR_THROTTLE_MS) {
-    const existing = pendingReverbIrSync.get(nodes);
+    const existing = pendingReverbIrSync.get(convolver);
     if (existing) {
       clearTimeout(existing);
     }
     pendingReverbIrSync.set(
-      nodes,
+      convolver,
       setTimeout(() => {
-        pendingReverbIrSync.delete(nodes);
-        assignReverbImpulse(nodes, preset, decay, context);
+        pendingReverbIrSync.delete(convolver);
+        assignReverbImpulse(convolver, preset, decay, context);
       }, REVERB_IR_THROTTLE_MS - (nowMs - lastSyncAt))
     );
     return;
   }
 
-  const pending = pendingReverbIrSync.get(nodes);
+  const pending = pendingReverbIrSync.get(convolver);
   if (pending) {
     clearTimeout(pending);
-    pendingReverbIrSync.delete(nodes);
+    pendingReverbIrSync.delete(convolver);
   }
-  assignReverbImpulse(nodes, preset, decay, context);
+  assignReverbImpulse(convolver, preset, decay, context);
 }
 
 export function applyPathInputEffects(

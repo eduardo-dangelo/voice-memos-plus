@@ -319,6 +319,27 @@ export class MemoMixGraph {
     return bus;
   }
 
+  private createReverbBusNodes(
+    context: AudioContext,
+    key: string,
+    effects: LayerEffects
+  ): ReverbBus {
+    const input = context.createGain();
+    const convolver = context.createConvolver();
+    const wet = context.createGain();
+
+    const reverbNodes: LayerReverbNodes = { reverbConvolver: convolver, reverbWet: wet };
+    syncReverbConvolver(reverbNodes, effects, context);
+
+    const master = this.getMasterGain(context);
+    input.connect(convolver);
+    convolver.connect(wet);
+    wet.connect(master);
+    wet.gain.setValueAtTime(1, context.currentTime);
+
+    return { key, input, convolver, wet, refCount: 0 };
+  }
+
   private acquireReverbBus(
     context: AudioContext,
     key: string,
@@ -327,35 +348,36 @@ export class MemoMixGraph {
     const existing = this.reverbBuses.get(key);
     if (existing) {
       existing.refCount += 1;
-      const reverbNodes: LayerReverbNodes = {
-        reverbConvolver: existing.convolver,
-        reverbWet: existing.wet,
-      };
-      syncReverbConvolver(reverbNodes, effects, context);
       return existing;
     }
 
-    const master = this.getMasterGain(context);
-    const input = context.createGain();
-    const convolver = context.createConvolver();
-    const wet = context.createGain();
-
-    input.connect(convolver);
-    convolver.connect(wet);
-    wet.connect(master);
-
-    const bus: ReverbBus = {
-      key,
-      input,
-      convolver,
-      wet,
-      refCount: 1,
-    };
-
+    const bus = this.createReverbBusNodes(context, key, effects);
+    bus.refCount = 1;
     this.reverbBuses.set(key, bus);
-    const reverbNodes: LayerReverbNodes = { reverbConvolver: convolver, reverbWet: wet };
-    syncReverbConvolver(reverbNodes, effects, context);
-    wet.gain.setValueAtTime(1, context.currentTime);
+    return bus;
+  }
+
+  private recreateReverbBus(
+    context: AudioContext,
+    previous: ReverbBus,
+    key: string,
+    effects: LayerEffects,
+    channel: LayerChannel
+  ): ReverbBus {
+    const subscribers = previous.refCount;
+    this.reverbBuses.delete(previous.key);
+    try {
+      previous.input.disconnect();
+      previous.convolver.disconnect();
+      previous.wet.disconnect();
+    } catch {
+      // Already torn down.
+    }
+
+    const bus = this.createReverbBusNodes(context, key, effects);
+    bus.refCount = subscribers;
+    this.reverbBuses.set(key, bus);
+    this.connectReverbSend(channel, bus);
     return bus;
   }
 
@@ -469,29 +491,13 @@ export class MemoMixGraph {
     }
 
     if (channel.reverbBusKey === nextKey) {
-      const bus = this.reverbBuses.get(nextKey);
-      if (bus) {
-        const reverbNodes: LayerReverbNodes = {
-          reverbConvolver: bus.convolver,
-          reverbWet: bus.wet,
-        };
-        syncReverbConvolver(reverbNodes, effects, context);
-      }
       return;
     }
 
     const current = this.reverbBuses.get(channel.reverbBusKey);
     if (current && current.refCount === 1) {
-      // Sole subscriber: move key and refresh IR.
-      this.reverbBuses.delete(current.key);
-      current.key = nextKey;
-      this.reverbBuses.set(nextKey, current);
+      this.recreateReverbBus(context, current, nextKey, effects, channel);
       channel.reverbBusKey = nextKey;
-      const reverbNodes: LayerReverbNodes = {
-        reverbConvolver: current.convolver,
-        reverbWet: current.wet,
-      };
-      syncReverbConvolver(reverbNodes, effects, context);
       return;
     }
 
