@@ -98,6 +98,13 @@ export function isTrackColorAllowed(color: string): color is TrackColor {
   return TRACK_COLOR_SET.has(color);
 }
 
+export function pickRandomTrackColor(exclude?: readonly string[]): TrackColor {
+  const excluded = new Set(exclude);
+  const available = TRACK_COLOR_OPTIONS.filter((color) => !excluded.has(color));
+  const pool = available.length > 0 ? available : TRACK_COLOR_OPTIONS;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
 export function colorWithAlpha(hex: string, alpha: number): string {
   const normalized = hex.replace('#', '');
   const value =

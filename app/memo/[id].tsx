@@ -14,11 +14,12 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { DEFAULT_TRACK_COLOR, pickRandomTrackColor } from '@/constants/VoiceMemosColors';
 import { showMemoActionSheet } from '@/src/actions/showMemoActionSheet';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useAudioEngine, useAudioEngineState } from '@/src/audio/AudioEngineContext';
 import type { LayerEffects, LayerEffectsChange } from '@/src/audio/layerEffects';
-import { isDefaultTrim, mergeLayerEffects } from '@/src/audio/layerEffects';
+import { mergeLayerEffects } from '@/src/audio/layerEffects';
 import {
   maybeShowPerformanceWarning,
   resetPerformanceWarningState,
@@ -31,7 +32,6 @@ import { resolveTrackColor, TrackColorPicker } from '@/src/components/TrackColor
 import { WaveformView, type TrackData } from '@/src/components/WaveformView';
 import {
   addStackedLayer,
-  commitLayerTrim,
   deactivateMemoLoop,
   deleteLayer,
   deleteMemo,
@@ -50,7 +50,7 @@ import {
   updateTitle,
 } from '@/src/storage/memoStore';
 import { getMemoPlaybackTimeline, isMemoInTrash } from '@/src/storage/paths';
-import type { Memo } from '@/src/storage/types';
+import type { Layer, Memo } from '@/src/storage/types';
 import {
   applyTimelineDeltaToLayers,
   clampLayerStartTime,
@@ -102,6 +102,18 @@ function deactivateLoopForMemo(
   void deactivateMemoLoop(memo.id);
 }
 
+type EditDraftSnapshot = {
+  tool: 'trim' | 'move';
+  layers: Layer[];
+  duration: number;
+  trimEnd: number;
+  generation: number;
+};
+
+function cloneLayers(layers: Layer[]): Layer[] {
+  return JSON.parse(JSON.stringify(layers)) as Layer[];
+}
+
 export default function MemoEditorScreen() {
   const colors = useVoiceMemosColors();
   const colorScheme = useColorScheme();
@@ -146,6 +158,9 @@ export default function MemoEditorScreen() {
   const activeLayerIdRef = useRef<string | null>(null);
   const isSavingRecordingOnExit = useRef(false);
   const saveRecordingInFlight = useRef<Promise<boolean> | null>(null);
+  const pendingRecordingColor = useRef<string | null>(null);
+  const editDraftRef = useRef<EditDraftSnapshot | null>(null);
+  const draftGenerationRef = useRef(0);
   stackModeRef.current = stackMode;
   replaceModeRef.current = replaceMode;
   activeLayerIdRef.current = activeLayerId;
@@ -161,14 +176,32 @@ export default function MemoEditorScreen() {
     return activeLayer ? getLayerEffects(activeLayer) : null;
   }, [activeLayer]);
 
+  const isDraftGenerationCurrent = useCallback((generation: number | undefined) => {
+    return (
+      generation !== undefined &&
+      editDraftRef.current !== null &&
+      editDraftRef.current.generation === generation
+    );
+  }, []);
+
   const applyLayerEffectsChange = useCallback(
     (layerId: string, partial: LayerEffectsChange) => {
+      const draftGeneration = editDraftRef.current?.generation;
+      const isDraftTrimUpdate =
+        editDraftRef.current?.tool === 'trim' &&
+        (partial.trimIn !== undefined || partial.trimOut !== undefined);
+
       let nextEffects: ReturnType<typeof mergeLayerEffects> | null = null;
       let layerStartTimes: Record<string, number> | undefined;
       let memoId: string | null = null;
+      let applied = false;
 
       setMemo((prev) => {
         if (!prev) {
+          return prev;
+        }
+
+        if (isDraftTrimUpdate && !isDraftGenerationCurrent(draftGeneration)) {
           return prev;
         }
 
@@ -187,6 +220,7 @@ export default function MemoEditorScreen() {
           entry.id === layerId ? { ...entry, effects: mergedEffects } : entry
         );
 
+        applied = true;
         nextEffects = mergedEffects;
         memoId = prev.id;
         layerStartTimes =
@@ -200,7 +234,11 @@ export default function MemoEditorScreen() {
         };
       });
 
-      if (!nextEffects || !memoId) {
+      if (!applied || !nextEffects || !memoId) {
+        return;
+      }
+
+      if (isDraftTrimUpdate && !isDraftGenerationCurrent(draftGeneration)) {
         return;
       }
 
@@ -213,6 +251,11 @@ export default function MemoEditorScreen() {
       if (layerStartTimes) {
         engine.updateLayerStartTimes(layerStartTimes);
       }
+
+      if (isDraftTrimUpdate) {
+        return;
+      }
+
       pendingEffectsPersist.current = {
         memoId,
         layerId,
@@ -238,7 +281,7 @@ export default function MemoEditorScreen() {
         }
       }, 300);
     },
-    [engine]
+    [engine, isDraftGenerationCurrent]
   );
 
   const handleEffectsChange = useCallback(
@@ -287,91 +330,117 @@ export default function MemoEditorScreen() {
     void updateLayerStartTimes(pending.memoId, { [pending.layerId]: pending.startTime });
   }, []);
 
-  const commitActiveLayerTrim = useCallback(async (): Promise<boolean> => {
-      if (!memo || !activeLayerId || !activeLayer || !activeLayerEffects || savingTrim) {
-        return false;
+  const clearDraftPersistTimers = useCallback(() => {
+    if (persistEffectsTimeout.current) {
+      clearTimeout(persistEffectsTimeout.current);
+      persistEffectsTimeout.current = null;
+    }
+    pendingEffectsPersist.current = null;
+    if (persistStartTimeTimeout.current) {
+      clearTimeout(persistStartTimeTimeout.current);
+      persistStartTimeTimeout.current = null;
+    }
+    pendingStartTimePersist.current = null;
+  }, []);
+
+  const beginEditDraft = useCallback(
+    (tool: 'trim' | 'move') => {
+      const current = memoRef.current;
+      if (!current) {
+        return;
       }
-
-      if (persistEffectsTimeout.current) {
-        clearTimeout(persistEffectsTimeout.current);
-        persistEffectsTimeout.current = null;
-      }
-
-      const trimIsDefault = isDefaultTrim(activeLayerEffects, activeLayer.duration);
-
-      if (trimIsDefault) {
-        flushEffectsPersist();
-        return true;
-      }
-
-      setSavingTrim(true);
-      engine.pause();
-
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, 0);
-      });
-
-      try {
-        pendingEffectsPersist.current = null;
-        const updated = await commitLayerTrim(memo.id, activeLayerId, {
-          trimIn: activeLayerEffects.trimIn,
-          trimOut: activeLayerEffects.trimOut,
-          preservedEffects: {
-            volumeDb: activeLayerEffects.volumeDb,
-            reverb: activeLayerEffects.reverb,
-            delay: activeLayerEffects.delay,
-            eq: activeLayerEffects.eq,
-          },
-        });
-        setMemo(updated);
-        const seekTime = Math.min(engine.getPlaybackTime(), getMemoTimelineDuration(updated));
-        await loadMemoIntoEngine(engine, updated, seekTime);
-        return true;
-      } catch (error) {
-        const reverted = await getMemo(memo.id);
-        if (reverted) {
-          setMemo(reverted);
-          pendingEffectsPersist.current = null;
-          await loadMemoIntoEngine(engine, reverted);
-        }
-        Alert.alert(
-          'Could not apply trim',
-          error instanceof Error ? error.message : 'Unknown error'
-        );
-        return false;
-      } finally {
-        setSavingTrim(false);
-      }
+      draftGenerationRef.current += 1;
+      editDraftRef.current = {
+        tool,
+        layers: cloneLayers(current.layers),
+        duration: current.duration,
+        trimEnd: current.trimEnd,
+        generation: draftGenerationRef.current,
+      };
+      setActiveEditor(tool);
     },
-    [
-      activeLayer,
-      activeLayerEffects,
-      activeLayerId,
-      engine,
-      flushEffectsPersist,
-      memo,
-      savingTrim,
-    ]
+    []
   );
 
-  const commitTrimIfNeeded = useCallback(async (): Promise<boolean> => {
-    if (
-      activeEditor !== 'trim' ||
-      !activeLayer ||
-      !activeLayerEffects ||
-      isDefaultTrim(activeLayerEffects, activeLayer.duration)
-    ) {
-      flushEffectsPersist();
-      return true;
+  const cancelEditDraft = useCallback(async (): Promise<void> => {
+    const snapshot = editDraftRef.current;
+    if (!snapshot) {
+      return;
     }
-    return commitActiveLayerTrim();
-  }, [
-    activeEditor,
-    activeLayer,
-    activeLayerEffects,
-    commitActiveLayerTrim,
-    flushEffectsPersist,
-  ]);
+
+    draftGenerationRef.current += 1;
+    clearDraftPersistTimers();
+    editDraftRef.current = null;
+    setActiveEditor(null);
+
+    const current = memoRef.current;
+    if (!current) {
+      return;
+    }
+
+    const restored: Memo = {
+      ...current,
+      layers: cloneLayers(snapshot.layers),
+      duration: snapshot.duration,
+      trimEnd: snapshot.trimEnd,
+    };
+    memoRef.current = restored;
+    setMemo(restored);
+    const seekTime = Math.min(
+      engine.getPlaybackTime(),
+      getMemoTimelineDuration(restored)
+    );
+    await loadMemoIntoEngine(engine, restored, seekTime);
+  }, [clearDraftPersistTimers, engine]);
+
+  const confirmEditDraft = useCallback(async (): Promise<void> => {
+    const snapshot = editDraftRef.current;
+    const current = memoRef.current;
+    if (!snapshot || !current) {
+      draftGenerationRef.current += 1;
+      editDraftRef.current = null;
+      setActiveEditor(null);
+      return;
+    }
+
+    draftGenerationRef.current += 1;
+    clearDraftPersistTimers();
+    editDraftRef.current = null;
+    setSavingTrim(true);
+
+    try {
+      if (snapshot.tool === 'trim' && activeLayerId) {
+        const layer = current.layers.find((entry) => entry.id === activeLayerId);
+        if (layer) {
+          const effects = getLayerEffects(layer);
+          await updateLayerEffects(current.id, activeLayerId, {
+            trimIn: effects.trimIn,
+            trimOut: effects.trimOut,
+            volumeDb: effects.volumeDb,
+            muted: effects.muted,
+            reverb: effects.reverb,
+            delay: effects.delay,
+            eq: effects.eq,
+          });
+        }
+      }
+
+      const startTimes = Object.fromEntries(
+        current.layers.map((layer) => [layer.id, layer.startTime])
+      );
+      const updated = await updateLayerStartTimes(current.id, startTimes);
+      memoRef.current = updated;
+      setMemo(updated);
+      setActiveEditor(null);
+    } catch (error) {
+      Alert.alert(
+        snapshot.tool === 'trim' ? 'Could not apply trim' : 'Could not apply move',
+        error instanceof Error ? error.message : 'Unknown error'
+      );
+    } finally {
+      setSavingTrim(false);
+    }
+  }, [activeLayerId, clearDraftPersistTimers]);
 
   const handleEditorToolChange = useCallback(
     (tool: EditorTool | null) => {
@@ -379,25 +448,41 @@ export default function MemoEditorScreen() {
         return;
       }
 
-      if (activeEditor === 'trim' && tool !== 'trim') {
-        void (async () => {
-          const ok = await commitTrimIfNeeded();
-          if (!ok) {
-            return;
+      const draft = editDraftRef.current;
+      if (draft && tool !== draft.tool) {
+        void cancelEditDraft().then(() => {
+          if (tool === 'trim' || tool === 'move') {
+            beginEditDraft(tool);
+          } else {
+            setActiveEditor(tool);
           }
-          setActiveEditor(tool);
-        })();
+        });
         return;
       }
 
-      if (activeEditor === 'move' && tool !== 'move') {
-        flushStartTimePersist();
+      if (tool === 'trim' || tool === 'move') {
+        beginEditDraft(tool);
+        return;
       }
 
       setActiveEditor(tool);
     },
-    [activeEditor, commitTrimIfNeeded, flushStartTimePersist, savingTrim]
+    [beginEditDraft, cancelEditDraft, savingTrim]
   );
+
+  const handleConfirmDraft = useCallback(() => {
+    if (savingTrim) {
+      return;
+    }
+    void confirmEditDraft();
+  }, [confirmEditDraft, savingTrim]);
+
+  const handleCancelDraft = useCallback(() => {
+    if (savingTrim) {
+      return;
+    }
+    void cancelEditDraft();
+  }, [cancelEditDraft, savingTrim]);
 
   const handleTrimChange = useCallback(
     (trimIn: number, trimOut: number) => {
@@ -408,42 +493,82 @@ export default function MemoEditorScreen() {
 
   const handleLayerStartTimeChange = useCallback(
     (startTime: number) => {
-      if (!memo || !activeLayerId) {
+      if (!activeLayerId) {
         return;
       }
 
-      const layer = memo.layers.find((entry) => entry.id === activeLayerId);
-      if (!layer) {
-        return;
-      }
+      const draftGeneration = editDraftRef.current?.generation;
+      const isDraftMove = editDraftRef.current?.tool === 'move';
+      let nextStartTime: number | null = null;
+      let timeline: number | null = null;
+      let memoId: string | null = null;
+      let applied = false;
 
-      const trimIn = getLayerEffects(layer).trimIn;
-      const nextStartTime = clampLayerStartTime(startTime, trimIn);
-      const nextLayers = memo.layers.map((entry) =>
-        entry.id === activeLayerId ? { ...entry, startTime: nextStartTime } : entry
-      );
-      const previousDuration = memo.duration;
-      const timeline = getMemoTimelineDuration({ ...memo, layers: nextLayers });
-      let trimEnd = memo.trimEnd;
-      if (timeline <= 0) {
-        trimEnd = 0;
-      } else if (trimEnd === 0) {
-        trimEnd = timeline;
-      } else if (trimEnd > timeline) {
-        trimEnd = timeline;
-      } else {
-        const trimWasAtPreviousEnd = memo.trimEnd >= previousDuration - 0.05;
-        if (timeline > previousDuration && trimWasAtPreviousEnd) {
-          trimEnd = timeline;
+      setMemo((prev) => {
+        if (!prev) {
+          return prev;
         }
+
+        if (isDraftMove && !isDraftGenerationCurrent(draftGeneration)) {
+          return prev;
+        }
+
+        const layer = prev.layers.find((entry) => entry.id === activeLayerId);
+        if (!layer) {
+          return prev;
+        }
+
+        const trimIn = getLayerEffects(layer).trimIn;
+        const clampedStartTime = clampLayerStartTime(startTime, trimIn);
+        const nextLayers = prev.layers.map((entry) =>
+          entry.id === activeLayerId ? { ...entry, startTime: clampedStartTime } : entry
+        );
+        const previousDuration = prev.duration;
+        const nextTimeline = getMemoTimelineDuration({ ...prev, layers: nextLayers });
+        let trimEnd = prev.trimEnd;
+        if (nextTimeline <= 0) {
+          trimEnd = 0;
+        } else if (trimEnd === 0) {
+          trimEnd = nextTimeline;
+        } else if (trimEnd > nextTimeline) {
+          trimEnd = nextTimeline;
+        } else {
+          const trimWasAtPreviousEnd = prev.trimEnd >= previousDuration - 0.05;
+          if (nextTimeline > previousDuration && trimWasAtPreviousEnd) {
+            trimEnd = nextTimeline;
+          }
+        }
+
+        applied = true;
+        nextStartTime = clampedStartTime;
+        timeline = nextTimeline;
+        memoId = prev.id;
+
+        return {
+          ...prev,
+          layers: nextLayers,
+          duration: nextTimeline,
+          trimEnd,
+        };
+      });
+
+      if (!applied || nextStartTime === null || timeline === null || !memoId) {
+        return;
       }
 
-      setMemo({ ...memo, layers: nextLayers, duration: timeline, trimEnd });
+      if (isDraftMove && !isDraftGenerationCurrent(draftGeneration)) {
+        return;
+      }
+
       engine.updateLayerStartTime(activeLayerId, nextStartTime);
       engine.updateTimelineDuration(timeline);
 
+      if (isDraftMove) {
+        return;
+      }
+
       pendingStartTimePersist.current = {
-        memoId: memo.id,
+        memoId,
         layerId: activeLayerId,
         startTime: nextStartTime,
       };
@@ -452,10 +577,10 @@ export default function MemoEditorScreen() {
         clearTimeout(persistStartTimeTimeout.current);
       }
       persistStartTimeTimeout.current = setTimeout(() => {
-        void updateLayerStartTimes(memo.id, { [activeLayerId]: nextStartTime });
+        void updateLayerStartTimes(memoId!, { [activeLayerId]: nextStartTime! });
       }, 300);
     },
-    [activeLayerId, engine, memo]
+    [activeLayerId, engine, isDraftGenerationCurrent]
   );
 
   const handleLoopChange = useCallback(
@@ -488,16 +613,21 @@ export default function MemoEditorScreen() {
       }
 
       void (async () => {
-        const ok = await commitTrimIfNeeded();
-        if (!ok) {
-          return;
-        }
-
+        await cancelEditDraft();
+        flushEffectsPersist();
         flushStartTimePersist();
         setActiveLayerId(trackId);
+        setActiveEditor(null);
       })();
     },
-    [activeLayerId, commitTrimIfNeeded, flushStartTimePersist, memo, savingTrim]
+    [
+      activeLayerId,
+      cancelEditDraft,
+      flushEffectsPersist,
+      flushStartTimePersist,
+      memo,
+      savingTrim,
+    ]
   );
 
   const handleTrackDeselect = useCallback(() => {
@@ -506,16 +636,19 @@ export default function MemoEditorScreen() {
     }
 
     void (async () => {
-      const ok = await commitTrimIfNeeded();
-      if (!ok) {
-        return;
-      }
-
+      await cancelEditDraft();
+      flushEffectsPersist();
       flushStartTimePersist();
       setActiveLayerId(null);
       setActiveEditor(null);
     })();
-  }, [activeLayerId, commitTrimIfNeeded, flushStartTimePersist, savingTrim]);
+  }, [
+    activeLayerId,
+    cancelEditDraft,
+    flushEffectsPersist,
+    flushStartTimePersist,
+    savingTrim,
+  ]);
 
   const handleDeleteTrack = useCallback(
     async (layerId: string) => {
@@ -524,12 +657,18 @@ export default function MemoEditorScreen() {
       }
 
       try {
+        await cancelEditDraft();
         flushEffectsPersist();
         flushStartTimePersist();
-        const seekTime = Math.min(engine.getPlaybackTime(), memo.duration);
-        const updated = await deleteLayer(memo.id, layerId);
+        const current = memoRef.current;
+        if (!current) {
+          return;
+        }
+        const seekTime = Math.min(engine.getPlaybackTime(), current.duration);
+        const updated = await deleteLayer(current.id, layerId);
         const nextActiveId =
           getPlayableLayers(updated)[0]?.id ?? updated.layers[0]?.id ?? null;
+        memoRef.current = updated;
         setMemo(updated);
         setActiveLayerId(nextActiveId);
         setActiveEditor(null);
@@ -541,7 +680,7 @@ export default function MemoEditorScreen() {
         );
       }
     },
-    [engine, flushEffectsPersist, flushStartTimePersist, memo]
+    [cancelEditDraft, engine, flushEffectsPersist, flushStartTimePersist, memo]
   );
 
   const showTrackOptions = useCallback(
@@ -704,7 +843,13 @@ export default function MemoEditorScreen() {
 
           let updated: Memo;
           if (wasStackMode) {
-            updated = await addStackedLayer(currentMemo.id, capturedStartTime, path, peaks);
+            updated = await addStackedLayer(
+              currentMemo.id,
+              capturedStartTime,
+              path,
+              peaks,
+              pendingRecordingColor.current ?? undefined
+            );
             setActiveLayerId(updated.layers[updated.layers.length - 1]?.id ?? layerId);
           } else if (wasReplaceMode) {
             if (!layerId) {
@@ -739,6 +884,7 @@ export default function MemoEditorScreen() {
           setMemo(updated);
           setReplaceMode(false);
           setStackMode(false);
+          pendingRecordingColor.current = null;
           if (reloadEngine) {
             await loadMemoIntoEngine(
               engine,
@@ -823,18 +969,26 @@ export default function MemoEditorScreen() {
       return;
     }
     engine.pause();
+    await cancelEditDraft();
+    flushEffectsPersist();
     flushStartTimePersist();
     if (persistLoopTimeout.current) {
       clearTimeout(persistLoopTimeout.current);
       persistLoopTimeout.current = null;
     }
-    deactivateLoopForMemo(engine, memo, setMemo);
-    const ok = await commitTrimIfNeeded();
-    if (!ok) {
-      return;
+    const current = memoRef.current;
+    if (current) {
+      deactivateLoopForMemo(engine, current, setMemo);
     }
     router.back();
-  }, [commitTrimIfNeeded, engine, flushStartTimePersist, memo, stopAndSaveActiveRecording]);
+  }, [
+    cancelEditDraft,
+    engine,
+    flushEffectsPersist,
+    flushStartTimePersist,
+    memo,
+    stopAndSaveActiveRecording,
+  ]);
 
   const flushEditorState = useCallback(async (): Promise<boolean> => {
     if (!memo) {
@@ -845,18 +999,26 @@ export default function MemoEditorScreen() {
       return false;
     }
     engine.pause();
+    await cancelEditDraft();
+    flushEffectsPersist();
     flushStartTimePersist();
     if (persistLoopTimeout.current) {
       clearTimeout(persistLoopTimeout.current);
       persistLoopTimeout.current = null;
     }
-    deactivateLoopForMemo(engine, memo, setMemo);
-    const ok = await commitTrimIfNeeded();
-    if (!ok) {
-      return false;
+    const current = memoRef.current;
+    if (current) {
+      deactivateLoopForMemo(engine, current, setMemo);
     }
     return true;
-  }, [commitTrimIfNeeded, engine, flushStartTimePersist, memo, stopAndSaveActiveRecording]);
+  }, [
+    cancelEditDraft,
+    engine,
+    flushEffectsPersist,
+    flushStartTimePersist,
+    memo,
+    stopAndSaveActiveRecording,
+  ]);
 
   const handleShare = useCallback(async () => {
     if (!memo) {
@@ -1036,6 +1198,14 @@ export default function MemoEditorScreen() {
     recordingStartTime.current = startTime;
     setReplaceMode(mode === 'replace');
     setStackMode(mode === 'stack');
+    if (mode === 'stack') {
+      const usedColors = memo.layers.map(
+        (layer) => layer.color ?? DEFAULT_TRACK_COLOR
+      );
+      pendingRecordingColor.current = pickRandomTrackColor(usedColors);
+    } else {
+      pendingRecordingColor.current = null;
+    }
 
     try {
       await engine.startRecording();
@@ -1043,6 +1213,7 @@ export default function MemoEditorScreen() {
     } catch (error) {
       setReplaceMode(false);
       setStackMode(false);
+      pendingRecordingColor.current = null;
       Alert.alert('Recording failed', error instanceof Error ? error.message : 'Unknown error');
     }
   };
@@ -1095,10 +1266,10 @@ export default function MemoEditorScreen() {
       return;
     }
     void (async () => {
-      await commitTrimIfNeeded();
+      await cancelEditDraft();
       setActiveEditor(null);
     })();
-  }, [commitTrimIfNeeded, isRecording]);
+  }, [cancelEditDraft, isRecording]);
 
   const showTrackEditor =
     !isRecording &&
@@ -1214,6 +1385,9 @@ export default function MemoEditorScreen() {
       });
 
     if (isRecording) {
+      const recordingColor = stackMode
+        ? (pendingRecordingColor.current ?? undefined)
+        : resolveTrackColor(memo.layers[0]?.color);
       const recordingTrack: TrackData = {
         id: '__recording__',
         peaks:
@@ -1221,6 +1395,7 @@ export default function MemoEditorScreen() {
         startTime: replaceMode || stackMode ? recordingStartTime.current : 0,
         duration: Math.max(engineState.recordingDuration, 0.01),
         isActive: true,
+        color: recordingColor,
       };
 
       if (stackMode) {
@@ -1278,6 +1453,7 @@ export default function MemoEditorScreen() {
           startTime: 0,
           duration: duration > 0 ? duration : 0.01,
           isActive: true,
+          color: resolveTrackColor(memo.layers[0]?.color),
         },
       ];
     }
@@ -1381,6 +1557,8 @@ export default function MemoEditorScreen() {
             effects={activeLayerEffects}
             layerDuration={activeLayer?.duration ?? 0}
             visible={showTrackEditor}
+            onCancelDraft={handleCancelDraft}
+            onConfirmDraft={handleConfirmDraft}
             onEffectsChange={handleEffectsChange}
             onToolChange={handleEditorToolChange}
           />

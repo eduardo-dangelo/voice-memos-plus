@@ -12,6 +12,7 @@ import { mixLayersToFile, spliceRecording } from '@/src/audio/wavUtils';
 import {
   DEFAULT_TRACK_COLOR,
   isTrackColorAllowed,
+  pickRandomTrackColor,
 } from '@/constants/VoiceMemosColors';
 import { createDefaultTitle } from '@/src/utils/format';
 import { randomId } from '@/src/utils/id';
@@ -38,15 +39,36 @@ import {
   getEarliestTrimInTimelineDelta,
 } from './types';
 
-function createLayer(order: number, startTime = 0): Layer {
+function createLayer(
+  order: number,
+  startTime = 0,
+  usedColors: readonly string[] = []
+): Layer {
   return {
     id: randomId(),
     order,
     fileName: `layer-${order}.m4a`,
     label: getDefaultLayerLabel(order),
+    color: pickRandomTrackColor(usedColors),
     startTime,
     duration: 0,
   };
+}
+
+/** Assigns random colors to layers that are missing one. Returns true if any were assigned. */
+function ensureLayerColors(memo: Memo): boolean {
+  let changed = false;
+  const used: string[] = [];
+  for (const layer of memo.layers) {
+    if (layer.color && isTrackColorAllowed(layer.color)) {
+      used.push(layer.color);
+      continue;
+    }
+    layer.color = pickRandomTrackColor(used);
+    used.push(layer.color);
+    changed = true;
+  }
+  return changed;
 }
 
 function readManifest(file: File): Memo | null {
@@ -173,7 +195,11 @@ export async function getMemo(memoId: string): Promise<Memo | null> {
   if (!file) {
     return null;
   }
-  return readManifest(file);
+  const memo = readManifest(file);
+  if (memo && ensureLayerColors(memo)) {
+    writeManifest(memo);
+  }
+  return memo;
 }
 
 export type CreateMemoOptions = {
@@ -549,7 +575,8 @@ export async function addStackedLayer(
   memoId: string,
   startTime: number,
   sourcePath: string,
-  capturedPeaks?: number[]
+  capturedPeaks?: number[],
+  color?: string
 ): Promise<Memo> {
   const memo = await getMemo(memoId);
   if (!memo) {
@@ -557,7 +584,13 @@ export async function addStackedLayer(
   }
 
   const order = memo.layers.length;
-  const layer = createLayer(order, startTime);
+  const usedColors = memo.layers.map(
+    (entry) => entry.color ?? DEFAULT_TRACK_COLOR
+  );
+  const layer = createLayer(order, startTime, usedColors);
+  if (color && isTrackColorAllowed(color)) {
+    layer.color = color;
+  }
   const dest = requireLayerFile(memoId, layer.fileName);
   const source = new File(sourcePath);
 

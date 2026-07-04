@@ -163,23 +163,12 @@ function scrollXToTime(x: number, duration: number): number {
   return Math.max(0, Math.min(duration, x / PIXELS_PER_SECOND));
 }
 
-function isTrackEmptyPress(
+function isOutsideTimelinePress(
   locationX: number,
   sidePadding: number,
-  contentWidth: number,
-  track: TrackData
+  contentWidth: number
 ): boolean {
-  const contentStart = sidePadding;
-  const contentEnd = sidePadding + contentWidth;
-  const barStart = sidePadding + track.startTime * PIXELS_PER_SECOND;
-  const barEnd = sidePadding + (track.startTime + track.duration) * PIXELS_PER_SECOND;
-
-  return (
-    locationX < contentStart ||
-    locationX > contentEnd ||
-    locationX < barStart ||
-    locationX > barEnd
-  );
+  return locationX < sidePadding || locationX > sidePadding + contentWidth;
 }
 
 function TimelineDimRegions({
@@ -628,8 +617,32 @@ function TrackWaveformRow({
   const showTrimOverlay = trimOverlay?.layerId === track.id;
   const showMoveOverlay = moveOverlay?.layerId === track.id;
   const barColor = getTrackBarColor(track, colors);
+  const mutedBarColor = colors.waveformBar;
   const bandBackground = getTrackBandBackground(track, colors);
   const trackColor = track.color ?? colors.accent;
+  const hasTrackBars = trackWidth > 0;
+  const hasLiveBars = liveTrackWidth > 0;
+  const fullSelectionStart =
+    hasTrackBars && hasLiveBars
+      ? Math.min(trackOffset, liveTrackOffset)
+      : hasTrackBars
+        ? trackOffset
+        : liveTrackOffset;
+  const fullSelectionEnd =
+    hasTrackBars && hasLiveBars
+      ? Math.max(trackOffset + trackWidth, liveTrackOffset + liveTrackWidth)
+      : hasTrackBars
+        ? trackOffset + trackWidth
+        : liveTrackOffset + liveTrackWidth;
+  const selectionStart =
+    showTrimOverlay && trimOverlay
+      ? trackOffset + trimOverlay.trimIn * PIXELS_PER_SECOND
+      : fullSelectionStart;
+  const selectionEnd =
+    showTrimOverlay && trimOverlay
+      ? trackOffset + trimOverlay.trimOut * PIXELS_PER_SECOND
+      : fullSelectionEnd;
+  const selectionWidth = selectionEnd - selectionStart;
 
   const rowContent = (
     <View
@@ -688,6 +701,11 @@ function TrackWaveformRow({
                   scaled <= 0.01
                     ? 2
                     : Math.max(4, Math.min(trackHeight - 16, scaled * (trackHeight - 16)));
+                const barTime = (index * BAR_STEP) / PIXELS_PER_SECOND;
+                const inKeepRegion =
+                  !showTrimOverlay ||
+                  !trimOverlay ||
+                  (barTime >= trimOverlay.trimIn && barTime < trimOverlay.trimOut);
                 return (
                   <View
                     key={index}
@@ -695,7 +713,7 @@ function TrackWaveformRow({
                       styles.bar,
                       {
                         height: barHeight,
-                        backgroundColor: barColor,
+                        backgroundColor: inKeepRegion ? barColor : mutedBarColor,
                       },
                     ]}
                   />
@@ -771,6 +789,23 @@ function TrackWaveformRow({
           trimIn={moveOverlay.trimIn}
           trimScrollHelpers={trimScrollHelpers}
           onChange={moveOverlay.onChange}
+        />
+      ) : null}
+      {track.isActive && selectionWidth > 0 ? (
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            left: sidePadding + selectionStart,
+            top: 0,
+            width: selectionWidth,
+            height: trackHeight,
+            borderWidth: 2,
+            borderColor: trackColor,
+            borderRadius: 3,
+            backgroundColor: colorWithAlpha(trackColor, 0.08),
+            overflow: 'hidden',
+          }}
         />
       ) : null}
     </View>
@@ -921,7 +956,7 @@ export function WaveformView({
   const handleTrackPress = (trackId: string, locationX: number) => {
     const track = tracks.find((entry) => entry.id === trackId);
     if (!track?.isMuted) {
-      if (track && isTrackEmptyPress(locationX, sidePadding, contentWidth, track)) {
+      if (isOutsideTimelinePress(locationX, sidePadding, contentWidth)) {
         onTrackDeselectRef.current?.();
       } else {
         onTrackPressRef.current(trackId);

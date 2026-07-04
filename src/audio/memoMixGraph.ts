@@ -10,14 +10,17 @@ import {
   applyPathInputEffects,
   buildInputEqPath,
   delayBusKey,
+  getDelayTimeSec,
+  getEffectiveReverbMix,
   isDelayPathActive,
   isReverbPathActive,
   reverbBusKey,
+  requiredDelayMaxSec,
   syncReverbConvolver,
   type LayerEffectPathNodes,
   type LayerReverbNodes,
 } from '@/src/audio/layerEffectChain';
-import { syncDelayTimeMs, type LayerEffects } from '@/src/audio/layerEffects';
+import type { LayerEffects } from '@/src/audio/layerEffects';
 
 type DelayBus = {
   key: string;
@@ -25,6 +28,7 @@ type DelayBus = {
   delayNode: DelayNode;
   delayFeedback: GainNode;
   wet: GainNode;
+  maxDelayTime: number;
   refCount: number;
 };
 
@@ -36,44 +40,37 @@ type ReverbBus = {
   refCount: number;
 };
 
+export type LayerWetPath = LayerEffectPathNodes & {
+  send: GainNode;
+};
+
 export type LayerChannel = {
   layerId: string;
-  input: LayerEffectPathNodes;
-  dryGain: GainNode;
-  delaySend: GainNode;
-  reverbSend: GainNode;
+  dry: LayerEffectPathNodes & { dryGain: GainNode };
+  delay: LayerWetPath | null;
+  reverb: LayerWetPath | null;
   delayBusKey: string | null;
   reverbBusKey: string | null;
 };
 
-function getEffectiveReverbMix(effects: LayerEffects): number {
-  if (effects.reverb.preset === 'off') {
-    return 0;
+function disconnectNode(node: AudioNode): void {
+  try {
+    node.disconnect();
+  } catch {
+    // Already disconnected.
   }
-  return Math.min(1, Math.max(0, effects.reverb.mix / 100));
 }
 
 function applyDelayBusParams(bus: DelayBus, effects: LayerEffects, context: AudioContext): void {
   const now = context.currentTime;
-  const delayTimeSec =
-    effects.delay.sync === 'off'
-      ? effects.delay.timeMs / 1000
-      : syncDelayTimeMs(effects.delay.sync) / 1000;
+  const delayTimeSec = Math.min(bus.maxDelayTime, Math.max(0, getDelayTimeSec(effects)));
 
-  bus.delayNode.delayTime.setValueAtTime(Math.min(2, Math.max(0, delayTimeSec)), now);
+  bus.delayNode.delayTime.setValueAtTime(delayTimeSec, now);
   bus.delayFeedback.gain.setValueAtTime(
     Math.min(0.85, Math.max(0, effects.delay.feedback / 100)),
     now
   );
   bus.wet.gain.setValueAtTime(1, now);
-}
-
-function disconnectSend(send: GainNode): void {
-  try {
-    send.disconnect();
-  } catch {
-    // Already disconnected.
-  }
 }
 
 export class MemoMixGraph {
@@ -101,21 +98,14 @@ export class MemoMixGraph {
       return;
     }
 
-    disconnectSend(channel.delaySend);
-    disconnectSend(channel.reverbSend);
-
-    if (channel.delayBusKey) {
-      this.releaseDelayBus(channel.delayBusKey);
-    }
-    if (channel.reverbBusKey) {
-      this.releaseReverbBus(channel.reverbBusKey);
-    }
+    this.releaseChannelDelay(channel);
+    this.releaseChannelReverb(channel);
+    this.teardownWetPath(channel.delay);
+    this.teardownWetPath(channel.reverb);
 
     try {
-      channel.input.gain.disconnect();
-      channel.dryGain.disconnect();
-      channel.delaySend.disconnect();
-      channel.reverbSend.disconnect();
+      channel.dry.gain.disconnect();
+      channel.dry.dryGain.disconnect();
     } catch {
       // Nodes may already be torn down.
     }
@@ -123,8 +113,9 @@ export class MemoMixGraph {
     this.layerChannels.delete(layerId);
   }
 
+  /** Ensure channels exist and effects are applied for the given layers. */
   syncLayers(context: AudioContext, layers: { id: string; effects: LayerEffects }[]): void {
-    const master = this.getMasterGain(context);
+    this.getMasterGain(context);
     const nextIds = new Set(layers.map((layer) => layer.id));
 
     for (const layerId of this.layerChannels.keys()) {
@@ -134,38 +125,30 @@ export class MemoMixGraph {
     }
 
     for (const layer of layers) {
-      this.ensureChannel(context, master, layer.id);
+      this.ensureChannel(context, layer.id);
       this.applyLayerEffects(context, layer.id, layer.effects);
     }
   }
 
-  private ensureChannel(
-    context: AudioContext,
-    master: GainNode,
-    layerId: string
-  ): LayerChannel {
+  private ensureChannel(context: AudioContext, layerId: string): LayerChannel {
     const existing = this.layerChannels.get(layerId);
     if (existing) {
       return existing;
     }
 
+    const master = this.getMasterGain(context);
     const input = buildInputEqPath(context);
     const dryGain = context.createGain();
-    const delaySend = context.createGain();
-    const reverbSend = context.createGain();
     const postEq = input.eqFilters[input.eqFilters.length - 1];
-
     postEq.connect(dryGain);
-    postEq.connect(delaySend);
-    postEq.connect(reverbSend);
     dryGain.connect(master);
+    dryGain.gain.value = 1;
 
     const channel: LayerChannel = {
       layerId,
-      input,
-      dryGain,
-      delaySend,
-      reverbSend,
+      dry: { ...input, dryGain },
+      delay: null,
+      reverb: null,
       delayBusKey: null,
       reverbBusKey: null,
     };
@@ -174,20 +157,67 @@ export class MemoMixGraph {
     return channel;
   }
 
+  private ensureWetPath(context: AudioContext, existing: LayerWetPath | null): LayerWetPath {
+    if (existing) {
+      return existing;
+    }
+
+    const input = buildInputEqPath(context);
+    const send = context.createGain();
+    const postEq = input.eqFilters[input.eqFilters.length - 1];
+    postEq.connect(send);
+    send.gain.value = 0;
+    return { ...input, send };
+  }
+
+  private teardownWetPath(path: LayerWetPath | null): void {
+    if (!path) {
+      return;
+    }
+    try {
+      path.gain.disconnect();
+      path.send.disconnect();
+    } catch {
+      // Already torn down.
+    }
+  }
+
+  private releaseChannelDelay(channel: LayerChannel): void {
+    if (channel.delay) {
+      disconnectNode(channel.delay.send);
+    }
+    if (channel.delayBusKey) {
+      this.releaseDelayBus(channel.delayBusKey);
+      channel.delayBusKey = null;
+    }
+  }
+
+  private releaseChannelReverb(channel: LayerChannel): void {
+    if (channel.reverb) {
+      disconnectNode(channel.reverb.send);
+    }
+    if (channel.reverbBusKey) {
+      this.releaseReverbBus(channel.reverbBusKey);
+      channel.reverbBusKey = null;
+    }
+  }
+
   private acquireDelayBus(
     context: AudioContext,
-    master: GainNode,
     key: string,
     effects: LayerEffects
   ): DelayBus {
     const existing = this.delayBuses.get(key);
     if (existing) {
       existing.refCount += 1;
+      applyDelayBusParams(existing, effects, context);
       return existing;
     }
 
+    const master = this.getMasterGain(context);
+    const maxDelayTime = requiredDelayMaxSec(effects);
     const input = context.createGain();
-    const delayNode = context.createDelay(2);
+    const delayNode = context.createDelay(maxDelayTime);
     const delayFeedback = context.createGain();
     const wet = context.createGain();
 
@@ -203,6 +233,7 @@ export class MemoMixGraph {
       delayNode,
       delayFeedback,
       wet,
+      maxDelayTime,
       refCount: 1,
     };
 
@@ -234,18 +265,77 @@ export class MemoMixGraph {
     this.delayBuses.delete(key);
   }
 
+  private rekeyDelayBus(bus: DelayBus, nextKey: string): void {
+    if (bus.key === nextKey) {
+      return;
+    }
+    this.delayBuses.delete(bus.key);
+    bus.key = nextKey;
+    this.delayBuses.set(nextKey, bus);
+  }
+
+  private recreateDelayBus(
+    context: AudioContext,
+    previous: DelayBus,
+    key: string,
+    effects: LayerEffects
+  ): DelayBus {
+    const subscribers = previous.refCount;
+    this.delayBuses.delete(previous.key);
+    try {
+      previous.input.disconnect();
+      previous.delayNode.disconnect();
+      previous.delayFeedback.disconnect();
+      previous.wet.disconnect();
+    } catch {
+      // Already torn down.
+    }
+
+    const master = this.getMasterGain(context);
+    const maxDelayTime = requiredDelayMaxSec(effects);
+    const input = context.createGain();
+    const delayNode = context.createDelay(maxDelayTime);
+    const delayFeedback = context.createGain();
+    const wet = context.createGain();
+
+    input.connect(delayNode);
+    delayNode.connect(wet);
+    delayNode.connect(delayFeedback);
+    delayFeedback.connect(delayNode);
+    wet.connect(master);
+
+    const bus: DelayBus = {
+      key,
+      input,
+      delayNode,
+      delayFeedback,
+      wet,
+      maxDelayTime,
+      refCount: subscribers,
+    };
+
+    this.delayBuses.set(key, bus);
+    applyDelayBusParams(bus, effects, context);
+    return bus;
+  }
+
   private acquireReverbBus(
     context: AudioContext,
-    master: GainNode,
     key: string,
     effects: LayerEffects
   ): ReverbBus {
     const existing = this.reverbBuses.get(key);
     if (existing) {
       existing.refCount += 1;
+      const reverbNodes: LayerReverbNodes = {
+        reverbConvolver: existing.convolver,
+        reverbWet: existing.wet,
+      };
+      syncReverbConvolver(reverbNodes, effects, context);
       return existing;
     }
 
+    const master = this.getMasterGain(context);
     const input = context.createGain();
     const convolver = context.createConvolver();
     const wet = context.createGain();
@@ -292,64 +382,94 @@ export class MemoMixGraph {
   }
 
   private connectDelaySend(channel: LayerChannel, bus: DelayBus): void {
-    disconnectSend(channel.delaySend);
-    channel.delaySend.connect(bus.input);
+    if (!channel.delay) {
+      return;
+    }
+    disconnectNode(channel.delay.send);
+    channel.delay.send.connect(bus.input);
   }
 
   private connectReverbSend(channel: LayerChannel, bus: ReverbBus): void {
-    disconnectSend(channel.reverbSend);
-    channel.reverbSend.connect(bus.input);
+    if (!channel.reverb) {
+      return;
+    }
+    disconnectNode(channel.reverb.send);
+    channel.reverb.send.connect(bus.input);
   }
 
-  applyLayerEffects(context: AudioContext, layerId: string, effects: LayerEffects): void {
-    const channel = this.layerChannels.get(layerId);
-    if (!channel) {
+  /**
+   * Attach or update delay bus for a channel.
+   * Updates in place when this layer is the sole subscriber (avoids scrub thrash).
+   * Moves to a new bus when diverging from a shared bus or when max delay must grow.
+   */
+  private syncDelayBus(
+    context: AudioContext,
+    channel: LayerChannel,
+    effects: LayerEffects
+  ): void {
+    const nextKey = delayBusKey(effects);
+    const neededMax = requiredDelayMaxSec(effects);
+
+    if (!channel.delayBusKey) {
+      const bus = this.acquireDelayBus(context, nextKey, effects);
+      this.connectDelaySend(channel, bus);
+      channel.delayBusKey = nextKey;
       return;
     }
 
-    const master = this.getMasterGain(context);
-    const now = context.currentTime;
-    const delayMix = isDelayPathActive(effects) ? effects.delay.mix / 100 : 0;
-    const reverbMix = isReverbPathActive(effects) ? getEffectiveReverbMix(effects) : 0;
-
-    applyPathInputEffects(channel.input, effects, context);
-    channel.dryGain.gain.setValueAtTime(Math.max(0, 1 - delayMix - reverbMix), now);
-
-    const nextDelayKey = isDelayPathActive(effects) ? delayBusKey(effects) : null;
-    if (nextDelayKey !== channel.delayBusKey) {
-      if (channel.delayBusKey) {
-        disconnectSend(channel.delaySend);
-        this.releaseDelayBus(channel.delayBusKey);
-        channel.delayBusKey = null;
-      }
-      if (nextDelayKey) {
-        const bus = this.acquireDelayBus(context, master, nextDelayKey, effects);
-        this.connectDelaySend(channel, bus);
-        channel.delayBusKey = nextDelayKey;
-      }
-    } else if (nextDelayKey) {
-      const bus = this.delayBuses.get(nextDelayKey);
-      if (bus) {
-        applyDelayBusParams(bus, effects, context);
-      }
+    const current = this.delayBuses.get(channel.delayBusKey);
+    if (!current) {
+      channel.delayBusKey = null;
+      const bus = this.acquireDelayBus(context, nextKey, effects);
+      this.connectDelaySend(channel, bus);
+      channel.delayBusKey = nextKey;
+      return;
     }
 
-    channel.delaySend.gain.setValueAtTime(delayMix, now);
+    if (channel.delayBusKey === nextKey) {
+      applyDelayBusParams(current, effects, context);
+      return;
+    }
 
-    const nextReverbKey = isReverbPathActive(effects) ? reverbBusKey(effects) : null;
-    if (nextReverbKey !== channel.reverbBusKey) {
-      if (channel.reverbBusKey) {
-        disconnectSend(channel.reverbSend);
-        this.releaseReverbBus(channel.reverbBusKey);
-        channel.reverbBusKey = null;
+    // Sole subscriber: update in place (and grow buffer if needed).
+    if (current.refCount === 1) {
+      if (neededMax > current.maxDelayTime) {
+        const bus = this.recreateDelayBus(context, current, nextKey, effects);
+        this.connectDelaySend(channel, bus);
+        channel.delayBusKey = nextKey;
+        return;
       }
-      if (nextReverbKey) {
-        const bus = this.acquireReverbBus(context, master, nextReverbKey, effects);
-        this.connectReverbSend(channel, bus);
-        channel.reverbBusKey = nextReverbKey;
-      }
-    } else if (nextReverbKey) {
-      const bus = this.reverbBuses.get(nextReverbKey);
+      applyDelayBusParams(current, effects, context);
+      this.rekeyDelayBus(current, nextKey);
+      channel.delayBusKey = nextKey;
+      return;
+    }
+
+    // Shared bus: diverge this layer onto its own settings.
+    disconnectNode(channel.delay!.send);
+    this.releaseDelayBus(channel.delayBusKey);
+    channel.delayBusKey = null;
+    const bus = this.acquireDelayBus(context, nextKey, effects);
+    this.connectDelaySend(channel, bus);
+    channel.delayBusKey = nextKey;
+  }
+
+  private syncReverbBus(
+    context: AudioContext,
+    channel: LayerChannel,
+    effects: LayerEffects
+  ): void {
+    const nextKey = reverbBusKey(effects);
+
+    if (!channel.reverbBusKey) {
+      const bus = this.acquireReverbBus(context, nextKey, effects);
+      this.connectReverbSend(channel, bus);
+      channel.reverbBusKey = nextKey;
+      return;
+    }
+
+    if (channel.reverbBusKey === nextKey) {
+      const bus = this.reverbBuses.get(nextKey);
       if (bus) {
         const reverbNodes: LayerReverbNodes = {
           reverbConvolver: bus.convolver,
@@ -357,19 +477,80 @@ export class MemoMixGraph {
         };
         syncReverbConvolver(reverbNodes, effects, context);
       }
+      return;
     }
 
-    channel.reverbSend.gain.setValueAtTime(reverbMix, now);
+    const current = this.reverbBuses.get(channel.reverbBusKey);
+    if (current && current.refCount === 1) {
+      // Sole subscriber: move key and refresh IR.
+      this.reverbBuses.delete(current.key);
+      current.key = nextKey;
+      this.reverbBuses.set(nextKey, current);
+      channel.reverbBusKey = nextKey;
+      const reverbNodes: LayerReverbNodes = {
+        reverbConvolver: current.convolver,
+        reverbWet: current.wet,
+      };
+      syncReverbConvolver(reverbNodes, effects, context);
+      return;
+    }
+
+    disconnectNode(channel.reverb!.send);
+    this.releaseReverbBus(channel.reverbBusKey);
+    channel.reverbBusKey = null;
+    const bus = this.acquireReverbBus(context, nextKey, effects);
+    this.connectReverbSend(channel, bus);
+    channel.reverbBusKey = nextKey;
   }
 
-  connectChannelInput(channel: LayerChannel, source: AudioNode): void {
-    source.connect(channel.input.gain);
+  applyLayerEffects(context: AudioContext, layerId: string, effects: LayerEffects): void {
+    const channel = this.ensureChannel(context, layerId);
+    const now = context.currentTime;
+    const delayActive = isDelayPathActive(effects);
+    const reverbActive = isReverbPathActive(effects);
+    const delayMix = delayActive ? effects.delay.mix / 100 : 0;
+    const reverbMix = reverbActive ? getEffectiveReverbMix(effects) : 0;
+
+    applyPathInputEffects(channel.dry, effects, context);
+    // Send-style: dry stays full; wet is additive.
+    channel.dry.dryGain.gain.setValueAtTime(1, now);
+
+    if (delayActive) {
+      channel.delay = this.ensureWetPath(context, channel.delay);
+      applyPathInputEffects(channel.delay, effects, context);
+      this.syncDelayBus(context, channel, effects);
+      channel.delay.send.gain.setValueAtTime(delayMix, now);
+    } else {
+      this.releaseChannelDelay(channel);
+      if (channel.delay) {
+        channel.delay.send.gain.setValueAtTime(0, now);
+      }
+    }
+
+    if (reverbActive) {
+      channel.reverb = this.ensureWetPath(context, channel.reverb);
+      applyPathInputEffects(channel.reverb, effects, context);
+      this.syncReverbBus(context, channel, effects);
+      channel.reverb.send.gain.setValueAtTime(reverbMix, now);
+    } else {
+      this.releaseChannelReverb(channel);
+      if (channel.reverb) {
+        channel.reverb.send.gain.setValueAtTime(0, now);
+      }
+    }
+  }
+
+  connectSourceToPath(source: AudioNode, path: LayerEffectPathNodes): void {
+    source.connect(path.gain);
   }
 
   dispose(): void {
     for (const layerId of [...this.layerChannels.keys()]) {
       this.removeLayer(layerId);
     }
+
+    this.delayBuses.clear();
+    this.reverbBuses.clear();
 
     if (this.masterGain) {
       try {

@@ -1,5 +1,7 @@
+import * as Haptics from 'expo-haptics';
+import { SymbolView } from 'expo-symbols';
 import { useMemo } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 
 import type { LayerEffects, LayerEffectsChange } from '@/src/audio/layerEffects';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
@@ -17,6 +19,8 @@ type Props = {
   effects: LayerEffects;
   layerDuration: number;
   onEffectsChange: (partial: EffectsChange) => void;
+  onConfirm?: () => void;
+  onCancel?: () => void;
 };
 
 export function EditorCanvas({
@@ -24,6 +28,8 @@ export function EditorCanvas({
   effects,
   layerDuration,
   onEffectsChange,
+  onConfirm,
+  onCancel,
 }: Props) {
   const colors = useVoiceMemosColors();
   const styles = useStyles(colors);
@@ -32,6 +38,7 @@ export function EditorCanvas({
   const delayCompact = activeTool === 'delay' && effects.delay.preset !== 'custom';
   const eqCompact = activeTool === 'eq' && effects.eq.preset !== 'custom';
   const volumeCompact = activeTool === 'volume';
+  const draftActions = activeTool === 'trim' || activeTool === 'move';
 
   if (canvasHeight === 0) {
     return null;
@@ -47,7 +54,42 @@ export function EditorCanvas({
           delayCompact && styles.contentReverbCompact,
           eqCompact && styles.contentReverbCompact,
           volumeCompact && styles.contentVolumeCompact,
+          draftActions && styles.contentDraftActions,
         ]}>
+        {draftActions && onConfirm && onCancel ? (
+          <View style={styles.draftActions}>
+            <Pressable
+              accessibilityLabel="Cancel"
+              accessibilityRole="button"
+              hitSlop={8}
+              onPress={() => {
+                void Haptics.selectionAsync();
+                onCancel();
+              }}
+              style={styles.pill}>
+              <SymbolView
+                name={{ ios: 'xmark' }}
+                size={16}
+                tintColor={colors.text}
+              />
+            </Pressable>
+            <Pressable
+              accessibilityLabel="Confirm"
+              accessibilityRole="button"
+              hitSlop={8}
+              onPress={() => {
+                void Haptics.selectionAsync();
+                onConfirm();
+              }}
+              style={[styles.pill, styles.pillSelected]}>
+              <SymbolView
+                name={{ ios: 'checkmark' }}
+                size={16}
+                tintColor={colors.pillTextSelected}
+              />
+            </Pressable>
+          </View>
+        ) : null}
         {activeTool === 'volume' ? (
           <VolumeEditor
             effects={effects}
@@ -95,6 +137,30 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
         },
         contentVolumeCompact: {
           paddingVertical: 2,
+        },
+        contentDraftActions: {
+          justifyContent: 'center',
+          paddingVertical: 2,
+        },
+        draftActions: {
+          flex: 1,
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'flex-end',
+          gap: 8,
+          paddingHorizontal: 6,
+        },
+        pill: {
+          alignItems: 'center',
+          justifyContent: 'center',
+          minWidth: 56,
+          paddingHorizontal: 20,
+          paddingVertical: 8,
+          borderRadius: 10,
+          backgroundColor: colors.waveformBandBackground,
+        },
+        pillSelected: {
+          backgroundColor: colors.accent,
         },
       }),
     [colors]

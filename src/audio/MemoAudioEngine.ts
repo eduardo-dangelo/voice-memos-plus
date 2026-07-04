@@ -16,19 +16,13 @@ import {
   WAVEFORM_PIXELS_PER_SECOND,
 } from '@/src/audio/waveform';
 import {
-  applyLayerEffects,
-  buildLayerEffectGraph,
   clearReverbIrCache,
-  connectDelayPathToDestination,
-  connectDryPathToDestination,
-  connectReverbPathToDestination,
-  connectSourceToPath,
   isDelayPathActive,
   isReverbPathActive,
-  type LayerEffectGraph,
   type LayerEffectPathNodes,
 } from '@/src/audio/layerEffectChain';
 import { normalizeLayerEffects, mergeLayerEffects, type LayerEffects, type LayerEffectsChange } from '@/src/audio/layerEffects';
+import { MemoMixGraph } from '@/src/audio/memoMixGraph';
 
 const MAX_RECORDING_PEAKS = 150;
 const RECORDING_BAR_STEP = WAVEFORM_BAR_WIDTH + WAVEFORM_BAR_GAP;
@@ -48,7 +42,17 @@ export type LoadedLayer = {
 
 type ActiveLayerPlayback = {
   layerId: string;
-  graph: LayerEffectGraph;
+  hasDelay: boolean;
+  hasReverb: boolean;
+  drySources: AudioBufferSourceNode[];
+  delaySources: AudioBufferSourceNode[];
+  reverbSources: AudioBufferSourceNode[];
+  /** Schedule params for hot-adding wet paths mid-playback. */
+  buffer: AudioBuffer;
+  bufferOffset: number;
+  scheduleDelay: number;
+  layerPlayLength: number;
+  playbackEffects: LayerEffects;
 };
 
 type LayerPlaybackPlan = {
@@ -110,6 +114,7 @@ export class MemoAudioEngine {
   private sessionConfigured = false;
   private recordingPeaksBuffer: number[] = [];
   private activeLayerPlayback = new Map<string, ActiveLayerPlayback>();
+  private mixGraph = new MemoMixGraph();
 
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener);
@@ -241,16 +246,24 @@ export class MemoAudioEngine {
     this.playbackRafId = requestAnimationFrame(tick);
   }
 
+  private stopSource(source: AudioBufferSourceNode): void {
+    source.onPositionChanged = null;
+    source.onEnded = null;
+    try {
+      source.stop();
+    } catch {
+      // Source may already be stopped.
+    }
+    try {
+      source.disconnect();
+    } catch {
+      // Already disconnected.
+    }
+  }
+
   private stopActiveSources(): void {
     for (const source of this.sources) {
-      source.onPositionChanged = null;
-      source.onEnded = null;
-      try {
-        source.stop();
-      } catch {
-        // Source may already be stopped.
-      }
-      source.disconnect();
+      this.stopSource(source);
     }
     this.sources = [];
     this.activeLayerPlayback.clear();
@@ -261,6 +274,164 @@ export class MemoAudioEngine {
     this.clearPlaybackTimer();
     this.playbackContextStartWhen = 0;
     this.stopActiveSources();
+  }
+
+  private disposeMixGraph(): void {
+    this.mixGraph.dispose();
+    this.mixGraph = new MemoMixGraph();
+  }
+
+  private syncMixGraph(context: AudioContext): void {
+    this.mixGraph.syncLayers(
+      context,
+      this.loadedLayers.map((layer) => ({
+        id: layer.id,
+        effects: this.getLoadedLayerEffects(layer),
+      }))
+    );
+  }
+
+  private schedulePathSource(
+    context: AudioContext,
+    path: LayerEffectPathNodes,
+    buffer: AudioBuffer,
+    startWhen: number,
+    stopWhen: number,
+    bufferOffset: number
+  ): AudioBufferSourceNode {
+    const source = context.createBufferSource();
+    source.buffer = buffer;
+    this.mixGraph.connectSourceToPath(source, path);
+    source.start(startWhen, bufferOffset);
+    source.stop(stopWhen);
+    this.sources.push(source);
+    return source;
+  }
+
+  /**
+   * Hot-add or remove wet paths for one layer without restarting the session.
+   * Falls back to full resync if the layer is not in the active play window.
+   */
+  private updateLayerWetPaths(
+    context: AudioContext,
+    layerId: string,
+    nextEffects: LayerEffects
+  ): boolean {
+    const active = this.activeLayerPlayback.get(layerId);
+    if (!active) {
+      return false;
+    }
+
+    const wantDelay = isDelayPathActive(nextEffects);
+    const wantReverb = isReverbPathActive(nextEffects);
+    const delayChanged = active.hasDelay !== wantDelay;
+    const reverbChanged = active.hasReverb !== wantReverb;
+
+    if (!delayChanged && !reverbChanged) {
+      this.mixGraph.applyLayerEffects(context, layerId, nextEffects);
+      active.playbackEffects = nextEffects;
+      return true;
+    }
+
+    const channel = this.mixGraph.getChannel(layerId);
+    if (!channel) {
+      return false;
+    }
+
+    const elapsed = this.getElapsedPlaybackTime(context);
+    const remaining = active.layerPlayLength - (elapsed - (this.playbackStartAt + active.scheduleDelay));
+    if (remaining <= PLAYBACK_END_TOLERANCE) {
+      return false;
+    }
+
+    const startWhen = context.currentTime + PLAYBACK_SCHEDULE_LEAD;
+    const playedInLayer = Math.max(
+      0,
+      elapsed - (this.playbackStartAt + active.scheduleDelay)
+    );
+    const bufferOffset = active.bufferOffset + playedInLayer;
+    const maxBufferOffset = active.playbackEffects.trimOut - PLAYBACK_END_TOLERANCE;
+    if (bufferOffset >= maxBufferOffset) {
+      return false;
+    }
+
+    const layerPlayLength = Math.min(remaining, active.playbackEffects.trimOut - bufferOffset);
+    if (layerPlayLength <= PLAYBACK_END_TOLERANCE) {
+      return false;
+    }
+
+    const stopWhen = startWhen + layerPlayLength;
+
+    const stopTrackedSources = (sources: AudioBufferSourceNode[]) => {
+      for (const source of sources) {
+        this.stopSource(source);
+        const index = this.sources.indexOf(source);
+        if (index >= 0) {
+          this.sources.splice(index, 1);
+        }
+      }
+    };
+
+    // Stop removed wet sources before tearing down their bus sends.
+    if (delayChanged && !wantDelay) {
+      stopTrackedSources(active.delaySources);
+      active.delaySources = [];
+    }
+    if (reverbChanged && !wantReverb) {
+      stopTrackedSources(active.reverbSources);
+      active.reverbSources = [];
+    }
+
+    this.mixGraph.applyLayerEffects(context, layerId, nextEffects);
+    const nextChannel = this.mixGraph.getChannel(layerId);
+    if (!nextChannel) {
+      return false;
+    }
+
+    if (delayChanged && wantDelay) {
+      stopTrackedSources(active.delaySources);
+      active.delaySources = [];
+      if (!nextChannel.delay) {
+        return false;
+      }
+      active.delaySources.push(
+        this.schedulePathSource(
+          context,
+          nextChannel.delay,
+          active.buffer,
+          startWhen,
+          stopWhen,
+          bufferOffset
+        )
+      );
+    }
+
+    if (reverbChanged && wantReverb) {
+      stopTrackedSources(active.reverbSources);
+      active.reverbSources = [];
+      if (!nextChannel.reverb) {
+        return false;
+      }
+      active.reverbSources.push(
+        this.schedulePathSource(
+          context,
+          nextChannel.reverb,
+          active.buffer,
+          startWhen,
+          stopWhen,
+          bufferOffset
+        )
+      );
+    }
+
+    active.hasDelay = wantDelay;
+    active.hasReverb = wantReverb;
+    // Keep schedule metadata aligned for further hot updates.
+    active.bufferOffset = bufferOffset;
+    active.scheduleDelay = elapsed - this.playbackStartAt;
+    active.layerPlayLength = layerPlayLength;
+    active.playbackEffects = nextEffects;
+    return true;
   }
 
   private clearRecordingTimer(): void {
@@ -440,6 +611,7 @@ export class MemoAudioEngine {
     loopEnabled = false
   ): Promise<void> {
     this.stopPlayback();
+    this.disposeMixGraph();
     clearReverbIrCache();
     this.invalidateLayerBuffers();
 
@@ -499,13 +671,16 @@ export class MemoAudioEngine {
     layer.effects = mergeLayerEffects(current, partial, layer.duration);
     const nextEffects = this.getLoadedLayerEffects(layer);
 
-    const needsPathRestart =
+    const needsPathChange =
       this.state.isPlaying &&
       active !== undefined &&
-      (Boolean(active.graph.delay) !== isDelayPathActive(nextEffects) ||
-        Boolean(active.graph.reverb) !== isReverbPathActive(nextEffects));
+      (active.hasDelay !== isDelayPathActive(nextEffects) ||
+        active.hasReverb !== isReverbPathActive(nextEffects));
 
-    if (needsPathRestart && this.context) {
+    if (needsPathChange && this.context) {
+      if (this.updateLayerWetPaths(this.context, layerId, nextEffects)) {
+        return;
+      }
       const currentTime = this.getElapsedPlaybackTime(this.context);
       this.invalidateAndStopSources();
       this.emit({ currentTime, isPlaying: false });
@@ -513,8 +688,11 @@ export class MemoAudioEngine {
       return;
     }
 
-    if (active && this.context) {
-      applyLayerEffects(active.graph, nextEffects, this.context);
+    if (this.context && this.mixGraph.getChannel(layerId)) {
+      this.mixGraph.applyLayerEffects(this.context, layerId, nextEffects);
+      if (active) {
+        active.playbackEffects = nextEffects;
+      }
     }
   }
 
@@ -553,6 +731,7 @@ export class MemoAudioEngine {
   unload(): void {
     this.stopPlayback();
     this.loadedLayers = [];
+    this.disposeMixGraph();
     clearReverbIrCache();
     this.invalidateLayerBuffers();
     this.emit({ ...initialState });
@@ -675,12 +854,9 @@ export class MemoAudioEngine {
       this.playbackStartAt = startAt;
       this.playbackEndAt = endAt;
       const sessionId = this.activePlaybackSessionId;
-      const when = context.currentTime + PLAYBACK_SCHEDULE_LEAD;
-      this.playbackContextStartWhen = when;
 
       const planSpecs = this.buildPlaybackPlans(startAt, endAt);
       if (planSpecs.length === 0) {
-        this.playbackContextStartWhen = 0;
         return;
       }
 
@@ -694,7 +870,6 @@ export class MemoAudioEngine {
           );
           const playbackEffects: LayerEffects = { ...plan.playbackEffects, trimIn, trimOut };
           const activeStart = plan.layer.startTime + trimIn;
-          const activeEnd = plan.layer.startTime + trimOut;
           const relativeStart = Math.max(0, startAt - activeStart);
           const bufferOffset = trimIn + relativeStart;
           const maxBufferOffset = trimOut - PLAYBACK_END_TOLERANCE;
@@ -719,48 +894,94 @@ export class MemoAudioEngine {
         })
       );
 
+      // Another play()/stop may have started during buffer decode.
+      if (sessionId !== this.activePlaybackSessionId) {
+        return;
+      }
+
       const resolvedPlans = plans.filter(
         (plan): plan is LayerPlaybackPlan => plan !== null
       );
 
       if (resolvedPlans.length === 0) {
-        this.playbackContextStartWhen = 0;
         return;
       }
+
+      // Re-apply effects from loaded state onto persisted channels/buses.
+      this.syncMixGraph(context);
+
+      const when = context.currentTime + PLAYBACK_SCHEDULE_LEAD;
+      this.playbackContextStartWhen = when;
 
       let scheduledSources = 0;
 
       for (const plan of resolvedPlans) {
-        const graph = buildLayerEffectGraph(context, plan.playbackEffects);
+        const channel = this.mixGraph.getChannel(plan.layer.id);
+        if (!channel) {
+          continue;
+        }
 
         const startWhen = when + plan.delay;
         const stopWhen = startWhen + plan.layerPlayLength;
-
-        const schedulePath = (path: LayerEffectPathNodes) => {
-          const source = context.createBufferSource();
-          source.buffer = plan.buffer;
-          connectSourceToPath(source, path);
-          source.start(startWhen, plan.bufferOffset);
-          source.stop(stopWhen);
-          this.sources.push(source);
-          scheduledSources += 1;
-        };
+        const hasDelay = isDelayPathActive(plan.playbackEffects);
+        const hasReverb = isReverbPathActive(plan.playbackEffects);
 
         // Separate sources per path — react-native-audio-api only processes one output per node.
-        schedulePath(graph.dry);
-        connectDryPathToDestination(graph, context.destination);
+        const drySources = [
+          this.schedulePathSource(
+            context,
+            channel.dry,
+            plan.buffer,
+            startWhen,
+            stopWhen,
+            plan.bufferOffset
+          ),
+        ];
+        scheduledSources += 1;
 
-        if (graph.delay) {
-          schedulePath(graph.delay);
-          connectDelayPathToDestination(graph, context.destination);
+        const delaySources: AudioBufferSourceNode[] = [];
+        if (hasDelay && channel.delay) {
+          delaySources.push(
+            this.schedulePathSource(
+              context,
+              channel.delay,
+              plan.buffer,
+              startWhen,
+              stopWhen,
+              plan.bufferOffset
+            )
+          );
+          scheduledSources += 1;
         }
 
-        if (graph.reverb) {
-          schedulePath(graph.reverb);
-          connectReverbPathToDestination(graph, context.destination);
+        const reverbSources: AudioBufferSourceNode[] = [];
+        if (hasReverb && channel.reverb) {
+          reverbSources.push(
+            this.schedulePathSource(
+              context,
+              channel.reverb,
+              plan.buffer,
+              startWhen,
+              stopWhen,
+              plan.bufferOffset
+            )
+          );
+          scheduledSources += 1;
         }
 
-        this.activeLayerPlayback.set(plan.layer.id, { layerId: plan.layer.id, graph });
+        this.activeLayerPlayback.set(plan.layer.id, {
+          layerId: plan.layer.id,
+          hasDelay,
+          hasReverb,
+          drySources,
+          delaySources,
+          reverbSources,
+          buffer: plan.buffer,
+          bufferOffset: plan.bufferOffset,
+          scheduleDelay: plan.delay,
+          layerPlayLength: plan.layerPlayLength,
+          playbackEffects: plan.playbackEffects,
+        });
       }
 
       if (scheduledSources === 0) {

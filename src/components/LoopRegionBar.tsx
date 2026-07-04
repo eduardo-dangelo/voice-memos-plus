@@ -12,7 +12,7 @@ import { WAVEFORM_PIXELS_PER_SECOND } from '@/src/audio/waveform';
 import { MIN_LOOP_DURATION } from '@/src/storage/types';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
-export const LOOP_ROW_HEIGHT = 10;
+export const LOOP_ROW_HEIGHT = 16;
 const PIXELS_PER_SECOND = WAVEFORM_PIXELS_PER_SECOND;
 const LOOP_HANDLE_TOUCH = 14;
 const LOOP_ENABLED_FILL = '#FFCC00';

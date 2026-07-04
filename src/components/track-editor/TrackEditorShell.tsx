@@ -14,6 +14,8 @@ type Props = {
   layerDuration: number;
   onToolChange: (tool: EditorTool | null) => void;
   onEffectsChange: (partial: LayerEffectsChange) => void;
+  onConfirmDraft?: () => void;
+  onCancelDraft?: () => void;
 };
 
 export function TrackEditorShell({
@@ -24,6 +26,8 @@ export function TrackEditorShell({
   layerDuration,
   onToolChange,
   onEffectsChange,
+  onConfirmDraft,
+  onCancelDraft,
 }: Props) {
   if (!visible) {
     return null;
@@ -35,6 +39,8 @@ export function TrackEditorShell({
         activeTool={activeTool}
         effects={effects}
         layerDuration={layerDuration}
+        onCancel={onCancelDraft}
+        onConfirm={onConfirmDraft}
         onEffectsChange={onEffectsChange}
       />
       <EditorToolStrip

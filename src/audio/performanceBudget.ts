@@ -1,4 +1,9 @@
-import { isDelayPathActive, isReverbPathActive } from '@/src/audio/layerEffectChain';
+import {
+  delayBusKey,
+  isDelayPathActive,
+  isReverbPathActive,
+  reverbBusKey,
+} from '@/src/audio/layerEffectChain';
 import type { LayerEffects } from '@/src/audio/layerEffects';
 import { getLayerEffects, getPlayableLayers, type Memo } from '@/src/storage/types';
 
@@ -13,24 +18,52 @@ export type MemoPerformanceAssessment = {
   shouldWarn: boolean;
 };
 
-/** Per-layer serial insert graph: input + dry + optional delay/reverb wet paths. */
+/** Dry path: input gain + 5 EQ + dryGain. */
+const DRY_PATH_NODES = 7;
+/** Wet send path: input gain + 5 EQ + send gain. */
+const WET_PATH_NODES = 7;
+/** Shared delay bus: input + delay + feedback + wet. */
+const DELAY_BUS_NODES = 4;
+/** Shared reverb bus: input + convolver + wet. */
+const REVERB_BUS_NODES = 3;
+/** Master gain. */
+const MASTER_NODES = 1;
+
+/**
+ * Per-layer insert nodes only (dry + optional wet EQ/sends).
+ * Shared buses are counted once at memo level in estimateMemoNodeCount.
+ */
 export function estimateLayerNodeCount(effects: LayerEffects): number {
-  let count = 7;
+  let count = DRY_PATH_NODES;
   if (isDelayPathActive(effects)) {
-    count += 3;
+    count += WET_PATH_NODES;
   }
   if (isReverbPathActive(effects)) {
-    count += 2;
+    count += WET_PATH_NODES;
   }
   return count;
 }
 
 export function estimateMemoNodeCount(memo: Memo): number {
   const layers = getPlayableLayers(memo);
-  return layers.reduce(
-    (sum, layer) => sum + estimateLayerNodeCount(getLayerEffects(layer)),
-    0
-  );
+  const delayKeys = new Set<string>();
+  const reverbKeys = new Set<string>();
+
+  let nodes = MASTER_NODES;
+  for (const layer of layers) {
+    const effects = getLayerEffects(layer);
+    nodes += estimateLayerNodeCount(effects);
+    if (isDelayPathActive(effects)) {
+      delayKeys.add(delayBusKey(effects));
+    }
+    if (isReverbPathActive(effects)) {
+      reverbKeys.add(reverbBusKey(effects));
+    }
+  }
+
+  nodes += delayKeys.size * DELAY_BUS_NODES;
+  nodes += reverbKeys.size * REVERB_BUS_NODES;
+  return nodes;
 }
 
 export function assessMemoPerformance(memo: Memo): MemoPerformanceAssessment {

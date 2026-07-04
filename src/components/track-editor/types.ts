@@ -29,13 +29,17 @@ export const EDITOR_CANVAS_HEIGHT_DELAY = 200;
 export const EDITOR_CANVAS_HEIGHT_DELAY_COMPACT = 50;
 export const EDITOR_CANVAS_HEIGHT_EQ = 208;
 export const EDITOR_CANVAS_HEIGHT_EQ_COMPACT = 50;
+export const EDITOR_CANVAS_HEIGHT_DRAFT_ACTIONS = 50;
 export const EDITOR_STRIP_HEIGHT = 56;
 
 export function getEditorCanvasHeight(tool: EditorTool | null, effects?: LayerEffects): number {
-  if (!tool || tool === 'trim' || tool === 'move') {
+  if (!tool) {
     return 0;
   }
   switch (tool) {
+    case 'trim':
+    case 'move':
+      return EDITOR_CANVAS_HEIGHT_DRAFT_ACTIONS;
     case 'reverb':
       return effects?.reverb.preset === 'custom'
         ? EDITOR_CANVAS_HEIGHT_REVERB
