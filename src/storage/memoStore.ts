@@ -49,13 +49,16 @@ function createLayer(
     order,
     fileName: `layer-${order}.m4a`,
     label: getDefaultLayerLabel(order),
-    color: pickRandomTrackColor(usedColors),
+    color:
+      usedColors.length === 0
+        ? DEFAULT_TRACK_COLOR
+        : pickRandomTrackColor(usedColors),
     startTime,
     duration: 0,
   };
 }
 
-/** Assigns random colors to layers that are missing one. Returns true if any were assigned. */
+/** Assigns colors to layers that are missing one. Returns true if any were assigned. */
 function ensureLayerColors(memo: Memo): boolean {
   let changed = false;
   const used: string[] = [];
@@ -64,7 +67,8 @@ function ensureLayerColors(memo: Memo): boolean {
       used.push(layer.color);
       continue;
     }
-    layer.color = pickRandomTrackColor(used);
+    layer.color =
+      used.length === 0 ? DEFAULT_TRACK_COLOR : pickRandomTrackColor(used);
     used.push(layer.color);
     changed = true;
   }

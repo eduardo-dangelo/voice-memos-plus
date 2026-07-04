@@ -62,7 +62,6 @@ import {
   getLayerFileOffsetAtTimeline,
   getMemoTimelineDuration,
   getPlayableLayers,
-  hasCustomLayerLabel,
   hasRecording,
 } from '@/src/storage/types';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
@@ -1325,7 +1324,7 @@ export default function MemoEditorScreen() {
       .map((layer) => {
         const trackMeta = {
           label: layer.label,
-          showLabel: hasCustomLayerLabel(layer),
+          showLabel: true,
           color: resolveTrackColor(layer.color),
         };
         const isTrimEditing =

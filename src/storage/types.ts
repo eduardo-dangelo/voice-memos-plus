@@ -18,11 +18,12 @@ export type Layer = {
 };
 
 export function getDefaultLayerLabel(order: number): string {
-  return `Layer ${order + 1}`;
+  return `Track ${order + 1}`;
 }
 
 export function hasCustomLayerLabel(layer: Pick<Layer, 'label' | 'order'>): boolean {
-  return layer.label !== getDefaultLayerLabel(layer.order);
+  const n = layer.order + 1;
+  return layer.label !== `Track ${n}` && layer.label !== `Layer ${n}`;
 }
 
 export type Folder = {
