@@ -7,6 +7,7 @@ import {
   ActionSheetIOS,
   ActivityIndicator,
   Alert,
+  type LayoutChangeEvent,
   Pressable,
   StyleSheet,
   Text,
@@ -158,6 +159,9 @@ export default function MemoEditorScreen() {
   const [activeEditor, setActiveEditor] = useState<EditorTool | null>(null);
   const [savingTrim, setSavingTrim] = useState(false);
   const [colorPickerLayerId, setColorPickerLayerId] = useState<string | null>(null);
+  const [layoutReady, setLayoutReady] = useState(false);
+  const lastLayoutHeightRef = useRef<number | null>(null);
+  const settleRafRef = useRef<number | null>(null);
   const stackModeRef = useRef(false);
   const replaceModeRef = useRef(false);
   const activeLayerIdRef = useRef<string | null>(null);
@@ -960,9 +964,49 @@ export default function MemoEditorScreen() {
     return unsubscribe;
   }, [engine, navigation, stopAndSaveActiveRecording]);
 
+  const resetLayoutReady = useCallback(() => {
+    setLayoutReady(false);
+    lastLayoutHeightRef.current = null;
+    if (settleRafRef.current !== null) {
+      cancelAnimationFrame(settleRafRef.current);
+      settleRafRef.current = null;
+    }
+  }, []);
+
+  const handleContentLayout = useCallback((event: LayoutChangeEvent) => {
+    const { height } = event.nativeEvent.layout;
+    if (height <= 0) {
+      return;
+    }
+
+    const previous = lastLayoutHeightRef.current;
+    lastLayoutHeightRef.current = height;
+
+    if (previous === height) {
+      setLayoutReady(true);
+      return;
+    }
+
+    if (settleRafRef.current !== null) {
+      cancelAnimationFrame(settleRafRef.current);
+    }
+    settleRafRef.current = requestAnimationFrame(() => {
+      settleRafRef.current = null;
+      if (lastLayoutHeightRef.current === height) {
+        setLayoutReady(true);
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('blur', resetLayoutReady);
+    return unsubscribe;
+  }, [navigation, resetLayoutReady]);
+
   useEffect(() => {
     void loadMemo();
     return () => {
+      resetLayoutReady();
       resetPerformanceWarningState();
       engine.pause();
       if (persistEffectsTimeout.current) {
@@ -980,7 +1024,7 @@ export default function MemoEditorScreen() {
         deactivateLoopForMemo(engine, current, setMemo);
       }
     };
-  }, [engine, loadMemo]);
+  }, [engine, loadMemo, resetLayoutReady]);
 
   const handleDone = useCallback(async () => {
     if (!memo) {
@@ -1531,14 +1575,6 @@ export default function MemoEditorScreen() {
     stackMode,
   ]);
 
-  if (loading || !memo) {
-    return (
-      <View style={styles.centered}>
-        <ActivityIndicator color={colors.accent} />
-      </View>
-    );
-  }
-
   const recordingLabel = monitorMixPreparing
     ? 'Preparing monitor…'
     : stackMode
@@ -1547,115 +1583,126 @@ export default function MemoEditorScreen() {
         ? 'Recording replacement…'
         : 'Recording…';
   const colorPickerLayer = colorPickerLayerId
-    ? memo.layers.find((entry) => entry.id === colorPickerLayerId)
+    ? memo?.layers.find((entry) => entry.id === colorPickerLayerId)
     : null;
+  const showEditorContent = Boolean(memo && !loading);
 
   return (
     <SafeAreaView edges={['bottom']} style={styles.screen}>
-      <View style={styles.content}>
+      <View onLayout={handleContentLayout} style={styles.content}>
         <View style={styles.tracksArea}>
-          <WaveformView
-            currentTime={waveformCurrentTime}
-            duration={waveformDuration}
-            getPlaybackTime={() => engine.getPlaybackTime()}
-            getRecordingTime={() =>
-              recordingStartTime.current + engine.getRecordingDuration()
-            }
-            isPlaying={engineState.isPlaying && !monitorMixPreparing}
-            isRecording={isRecording}
-            tracks={waveformTracks}
-            trimOverlay={
-              activeEditor === 'trim' && !savingTrim && activeLayer && activeLayerEffects
-                ? {
-                    layerId: activeLayer.id,
-                    trimIn: activeLayerEffects.trimIn,
-                    trimOut: activeLayerEffects.trimOut,
-                    onChange: handleTrimChange,
-                  }
-                : undefined
-            }
-            moveOverlay={
-              activeEditor === 'move' && activeLayer && activeLayerEffects
-                ? {
-                    layerId: activeLayer.id,
-                    startTime: activeLayer.startTime,
-                    trimIn: activeLayerEffects.trimIn,
-                    onChange: handleLayerStartTimeChange,
-                  }
-                : undefined
-            }
-            volumeVisualDb={
-              activeEditor === 'volume' && activeLayerEffects
-                ? activeLayerEffects.volumeDb
-                : undefined
-            }
-            loopOverlay={
-              memo && waveformDuration > 0
-                ? {
-                    loopStart: memo.loopStart ?? 0,
-                    loopEnd: memo.loopEnd ?? 0,
-                    loopEnabled: memo.loopEnabled ?? false,
-                    duration: waveformDuration,
-                    onChange: handleLoopChange,
-                  }
-                : undefined
-            }
-            onSeek={(time) => {
-              if (!isRecording) {
-                engine.seek(time);
+          {showEditorContent ? (
+            <WaveformView
+              currentTime={waveformCurrentTime}
+              duration={waveformDuration}
+              getPlaybackTime={() => engine.getPlaybackTime()}
+              getRecordingTime={() =>
+                recordingStartTime.current + engine.getRecordingDuration()
               }
-            }}
-            onTrackPress={handleTrackPress}
-            onTrackDeselect={handleTrackDeselect}
-            onTrackLongPress={showTrackOptions}
-          />
-        </View>
-
-        {activeLayerEffects ? (
-          <TrackEditorShell
-            activeTool={activeEditor}
-            availableTools={availableTools}
-            effects={activeLayerEffects}
-            layerDuration={activeLayer?.duration ?? 0}
-            visible={showTrackEditor}
-            onCancelDraft={handleCancelDraft}
-            onConfirmDraft={handleConfirmDraft}
-            onEffectsChange={handleEffectsChange}
-            onToolChange={handleEditorToolChange}
-          />
-        ) : null}
-
-        <View style={styles.footer}>
-          <View style={styles.timeDisplay}>
-            <Text style={styles.largeTime}>
-              {formatDurationWithTenths(
-                isRecording ? recordingTimelineTime : currentTime
-              )}
-            </Text>
-            {isRecording ? (
-              <Text style={styles.recordingLabel}>{recordingLabel}</Text>
-            ) : null}
-          </View>
-
-          {isRecording ? (
-            <Pressable onPress={() => void handleStopRecording()} style={styles.stopButton}>
-              <View style={styles.stopSquare} />
-            </Pressable>
-          ) : (
-            <PlaybackControls
-              currentTime={currentTime}
-              duration={duration}
-              isPlaying={engineState.isPlaying}
-              recordDisabled={!hasRecording(memo)}
-              showProgressBar={false}
-              showTimeLabels={false}
-              onPlayPause={() => void handlePlayPause()}
-              onRecordPress={showRecordOptions}
-              onSkipBack={() => engine.skip(-15)}
-              onSkipForward={() => engine.skip(15)}
+              isPlaying={engineState.isPlaying && !monitorMixPreparing}
+              isRecording={isRecording}
+              tracks={waveformTracks}
+              trimOverlay={
+                activeEditor === 'trim' && !savingTrim && activeLayer && activeLayerEffects
+                  ? {
+                      layerId: activeLayer.id,
+                      trimIn: activeLayerEffects.trimIn,
+                      trimOut: activeLayerEffects.trimOut,
+                      onChange: handleTrimChange,
+                    }
+                  : undefined
+              }
+              moveOverlay={
+                activeEditor === 'move' && activeLayer && activeLayerEffects
+                  ? {
+                      layerId: activeLayer.id,
+                      startTime: activeLayer.startTime,
+                      trimIn: activeLayerEffects.trimIn,
+                      onChange: handleLayerStartTimeChange,
+                    }
+                  : undefined
+              }
+              volumeVisualDb={
+                activeEditor === 'volume' && activeLayerEffects
+                  ? activeLayerEffects.volumeDb
+                  : undefined
+              }
+              loopOverlay={
+                memo && waveformDuration > 0
+                  ? {
+                      loopStart: memo.loopStart ?? 0,
+                      loopEnd: memo.loopEnd ?? 0,
+                      loopEnabled: memo.loopEnabled ?? false,
+                      duration: waveformDuration,
+                      onChange: handleLoopChange,
+                    }
+                  : undefined
+              }
+              onSeek={(time) => {
+                if (!isRecording) {
+                  engine.seek(time);
+                }
+              }}
+              onTrackPress={handleTrackPress}
+              onTrackDeselect={handleTrackDeselect}
+              onTrackLongPress={showTrackOptions}
             />
+          ) : (
+            <View style={styles.tracksLoading}>
+              <ActivityIndicator color={colors.accent} />
+            </View>
           )}
         </View>
+
+        {layoutReady && showEditorContent ? (
+          <>
+            {activeLayerEffects ? (
+              <TrackEditorShell
+                activeTool={activeEditor}
+                availableTools={availableTools}
+                effects={activeLayerEffects}
+                layerDuration={activeLayer?.duration ?? 0}
+                visible={showTrackEditor}
+                onCancelDraft={handleCancelDraft}
+                onConfirmDraft={handleConfirmDraft}
+                onEffectsChange={handleEffectsChange}
+                onToolChange={handleEditorToolChange}
+              />
+            ) : null}
+
+            <View style={styles.footer}>
+              <View style={styles.timeDisplay}>
+                <Text style={styles.largeTime}>
+                  {formatDurationWithTenths(
+                    isRecording ? recordingTimelineTime : currentTime
+                  )}
+                </Text>
+                {isRecording ? (
+                  <Text style={styles.recordingLabel}>{recordingLabel}</Text>
+                ) : null}
+              </View>
+
+              {isRecording ? (
+                <Pressable onPress={() => void handleStopRecording()} style={styles.stopButton}>
+                  <View style={styles.stopSquare} />
+                </Pressable>
+              ) : (
+                <PlaybackControls
+                  currentTime={currentTime}
+                  duration={duration}
+                  isPlaying={engineState.isPlaying}
+                  recordDisabled={!memo || !hasRecording(memo)}
+                  showProgressBar={false}
+                  showTimeLabels={false}
+                  onPlayPause={() => void handlePlayPause()}
+                  onRecordPress={showRecordOptions}
+                  onSkipBack={() => engine.skip(-15)}
+                  onSkipForward={() => engine.skip(15)}
+                />
+              )}
+            </View>
+          </>
+        ) : null}
       </View>
       <TrackColorPicker
         selectedColor={resolveTrackColor(colorPickerLayer?.color)}
@@ -1684,12 +1731,6 @@ function useMemoEditorStyles(
         content: {
           flex: 1,
           paddingHorizontal: 20,
-        },
-        centered: {
-          flex: 1,
-          alignItems: 'center',
-          justifyContent: 'center',
-          backgroundColor: colors.sheetBackground,
         },
         doneButton: {
           width: 32,
@@ -1731,6 +1772,11 @@ function useMemoEditorStyles(
           flex: 1,
           marginHorizontal: -20,
           paddingTop: 4,
+        },
+        tracksLoading: {
+          flex: 1,
+          alignItems: 'center',
+          justifyContent: 'center',
         },
         timeDisplay: {
           alignItems: 'center',
