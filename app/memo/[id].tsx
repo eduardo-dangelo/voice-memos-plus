@@ -63,12 +63,11 @@ import {
   clampLayerStartTime,
   getEarliestTrimInTimelineDelta,
   getLayerActiveDuration,
-  getLayerActiveEndTime,
   getLayerActiveStartTime,
   getLayerEffects,
-  getLayerFileOffsetAtTimeline,
   getMemoTimelineDuration,
   getPlayableLayers,
+  getReplaceSpliceParams,
   hasRecording,
 } from '@/src/storage/types';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
@@ -871,23 +870,16 @@ export default function MemoEditorScreen() {
             if (!replaceLayer || replaceLayer.duration <= 0) {
               throw new Error('No active layer');
             }
-            const effects = getLayerEffects(replaceLayer);
-            const fileTrimStart = getLayerFileOffsetAtTimeline(
-              replaceLayer,
-              capturedStartTime
-            );
-            const fileTrimEnd = Math.min(
-              fileTrimStart + duration,
-              effects.trimOut,
-              replaceLayer.duration
-            );
+            const { trimStart: fileTrimStart, trimEnd: fileTrimEnd, leadingPadSeconds } =
+              getReplaceSpliceParams(replaceLayer, capturedStartTime, duration);
             updated = await replaceLayerSegment(
               currentMemo.id,
               replaceLayer.id,
               fileTrimStart,
               fileTrimEnd,
               path,
-              peaks
+              peaks,
+              leadingPadSeconds
             );
           } else {
             updated = await saveRecording(currentMemo.id, path, duration, peaks);
@@ -1268,8 +1260,7 @@ export default function MemoEditorScreen() {
       const replaceLayer = memo.layers.find((layer) => layer.id === activeLayerId);
       if (replaceLayer) {
         const activeStart = getLayerActiveStartTime(replaceLayer);
-        const activeEnd = getLayerActiveEndTime(replaceLayer);
-        startTime = Math.max(activeStart, Math.min(startTime, activeEnd));
+        startTime = Math.max(activeStart, startTime);
       }
     }
 

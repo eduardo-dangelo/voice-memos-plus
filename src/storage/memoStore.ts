@@ -628,7 +628,8 @@ export async function replaceLayerSegment(
   trimStart: number,
   trimEnd: number,
   replacementPath: string,
-  capturedPeaks?: number[]
+  capturedPeaks?: number[],
+  leadingPadSeconds = 0
 ): Promise<Memo> {
   const memo = await getMemo(memoId);
   if (!memo) {
@@ -647,7 +648,9 @@ export async function replaceLayerSegment(
     output.delete();
   }
 
-  await spliceRecording(original.uri, trimStart, trimEnd, replacementPath, output.uri);
+  await spliceRecording(original.uri, trimStart, trimEnd, replacementPath, output.uri, {
+    leadingPadSeconds,
+  });
   await replaceLayerFile(memoId, layerId, output.uri, capturedPeaks);
   return (await getMemo(memoId))!;
 }

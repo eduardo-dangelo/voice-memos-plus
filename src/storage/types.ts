@@ -109,6 +109,32 @@ export function getLayerFileOffsetAtTimeline(layer: Layer, timelineTime: number)
   return effects.trimIn + clampedActiveOffset;
 }
 
+export function getReplaceSpliceParams(
+  layer: Layer,
+  timelineStart: number,
+  recordingDuration: number
+): { trimStart: number; trimEnd: number; leadingPadSeconds: number } {
+  const effects = getLayerEffects(layer);
+  const activeEnd = getLayerActiveEndTime(layer);
+  const timelineGap = Math.max(0, timelineStart - activeEnd);
+
+  if (timelineGap > 0) {
+    return {
+      trimStart: effects.trimOut,
+      trimEnd: effects.trimOut,
+      leadingPadSeconds: timelineGap,
+    };
+  }
+
+  const trimStart = getLayerFileOffsetAtTimeline(layer, timelineStart);
+  const trimEnd = Math.min(
+    trimStart + recordingDuration,
+    effects.trimOut,
+    layer.duration
+  );
+  return { trimStart, trimEnd, leadingPadSeconds: 0 };
+}
+
 export function getLayerEndTime(layer: Layer): number {
   return getLayerActiveEndTime(layer);
 }

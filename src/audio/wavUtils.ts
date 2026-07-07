@@ -309,7 +309,8 @@ export async function spliceRecording(
   trimStart: number,
   trimEnd: number,
   replacementPath: string,
-  outputPath: string
+  outputPath: string,
+  options?: { leadingPadSeconds?: number }
 ): Promise<number> {
   deleteLegacySpliceSidecars(originalPath);
 
@@ -325,11 +326,16 @@ export async function spliceRecording(
     parts.push(sliceBufferChannel(original, 0, clampedTrimStart));
   }
 
-  const replacementData = resampleChannelData(
+  let replacementData = resampleChannelData(
     replacement.getChannelData(0),
     replacement.sampleRate,
     targetSampleRate
   );
+  const leadingPadSeconds = options?.leadingPadSeconds ?? 0;
+  if (leadingPadSeconds > 0.001) {
+    const padSamples = Math.round(leadingPadSeconds * targetSampleRate);
+    replacementData = concatFloat32Parts([new Float32Array(padSamples), replacementData]);
+  }
   parts.push(replacementData);
 
   if (clampedTrimEnd < duration - 0.05) {
