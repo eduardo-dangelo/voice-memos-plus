@@ -1,36 +1,55 @@
 import {
-  AudioContext,
-  AudioManager,
-  AudioRecorder,
-  decodeAudioData,
-  FileDirectory,
-  FileFormat,
-  type AudioBuffer,
-  type AudioBufferSourceNode,
+    AudioContext,
+    AudioManager,
+    AudioRecorder,
+    decodeAudioData,
+    FileDirectory,
+    FileFormat,
+    FilePreset,
+    type AudioBuffer,
+    type AudioBufferSourceNode,
 } from 'react-native-audio-api';
 
 import {
-  peakToAbsoluteScale,
-  WAVEFORM_BAR_GAP,
-  WAVEFORM_BAR_WIDTH,
-  WAVEFORM_PIXELS_PER_SECOND,
+    assertRecordingRouteOk,
+    getActiveRouteSnapshot,
+    logRouteSnapshot,
+    pinBuiltInMicrophone,
+} from '@/src/audio/audioInputRouting';
+import {
+    clearReverbIrCache,
+    isDelayPathActive,
+    isReverbPathActive,
+    type LayerEffectPathNodes,
+} from '@/src/audio/layerEffectChain';
+import { mergeLayerEffects, normalizeLayerEffects, type LayerEffects, type LayerEffectsChange } from '@/src/audio/layerEffects';
+import { MemoMixGraph } from '@/src/audio/memoMixGraph';
+import {
+    peakToAbsoluteScale,
+    WAVEFORM_BAR_GAP,
+    WAVEFORM_BAR_WIDTH,
+    WAVEFORM_PIXELS_PER_SECOND,
 } from '@/src/audio/waveform';
 import {
-  clearReverbIrCache,
-  isDelayPathActive,
-  isReverbPathActive,
-  type LayerEffectPathNodes,
-} from '@/src/audio/layerEffectChain';
-import { normalizeLayerEffects, mergeLayerEffects, type LayerEffects, type LayerEffectsChange } from '@/src/audio/layerEffects';
-import { MemoMixGraph } from '@/src/audio/memoMixGraph';
+    normalizeRecordingFile,
+    recordingNeedsNormalize,
+    resampleMonoBufferFromRate,
+} from '@/src/audio/wavUtils';
+
+type SessionMode = 'recording' | 'playback' | null;
 
 const MAX_RECORDING_PEAKS = 150;
 const RECORDING_BAR_STEP = WAVEFORM_BAR_WIDTH + WAVEFORM_BAR_GAP;
 const RECORDING_SAMPLE_RATE = 44100;
-const RECORDING_BUFFER_LENGTH = RECORDING_SAMPLE_RATE * 0.1;
 const PLAYBACK_END_TOLERANCE = 0.05;
 const PLAYBACK_SCHEDULE_LEAD = 0.01;
 const PLAYBACK_UI_UPDATE_MS = 50;
+
+/** Sample rates the iOS AAC encoder accepts reliably when opening a file for writing. */
+const RECORDING_FILE_PRESET = {
+  ...FilePreset.Medium,
+  sampleRate: RECORDING_SAMPLE_RATE,
+};
 
 export type LoadedLayer = {
   id: string;
@@ -68,6 +87,8 @@ export type EngineState = {
   memoId: string | null;
   isRecording: boolean;
   isPlaying: boolean;
+  monitorMixActive: boolean;
+  monitorMixReady: boolean;
   currentTime: number;
   duration: number;
   trimStart: number;
@@ -85,6 +106,8 @@ const initialState: EngineState = {
   memoId: null,
   isRecording: false,
   isPlaying: false,
+  monitorMixActive: false,
+  monitorMixReady: false,
   currentTime: 0,
   duration: 0,
   trimStart: 0,
@@ -104,6 +127,8 @@ export class MemoAudioEngine {
   private sources: AudioBufferSourceNode[] = [];
   private loadedLayers: LoadedLayer[] = [];
   private layerBuffers = new Map<string, AudioBuffer>();
+  private activeRecordingSampleRate: number | null = null;
+  private recordingUsedWavFormat = false;
   private recordingTimer: ReturnType<typeof setInterval> | null = null;
   private playbackRafId: number | null = null;
   private playbackSessionId = 0;
@@ -111,10 +136,65 @@ export class MemoAudioEngine {
   private playbackStartAt = 0;
   private playbackEndAt = 0;
   private playbackContextStartWhen = 0;
-  private sessionConfigured = false;
+  private sessionMode: SessionMode = null;
+  private lastOutputRouteKey = '';
   private recordingPeaksBuffer: number[] = [];
   private activeLayerPlayback = new Map<string, ActiveLayerPlayback>();
   private mixGraph = new MemoMixGraph();
+
+  constructor() {
+    AudioManager.addSystemEventListener('routeChange', () => {
+      void this.handleRouteChange();
+    });
+  }
+
+  private async handleRouteChange(): Promise<void> {
+    if (this.state.isRecording) {
+      try {
+        await pinBuiltInMicrophone();
+        const routeSnapshot = await assertRecordingRouteOk();
+        logRouteSnapshot('recording-route-change', routeSnapshot);
+      } catch {
+        await this.cancelRecording();
+      }
+      return;
+    }
+
+    let devices;
+    try {
+      devices = await AudioManager.getDevicesInfo();
+    } catch {
+      return;
+    }
+
+    const routeKey = (devices.currentOutputs ?? [])
+      .map((device) => device.category)
+      .join('|');
+    if (routeKey === this.lastOutputRouteKey) {
+      return;
+    }
+    this.lastOutputRouteKey = routeKey;
+
+    const resumeTime = this.state.currentTime;
+    const wasPlaying = this.state.isPlaying;
+    await this.resetPlaybackGraph();
+    await this.configureForPlayback();
+    this.emit({ currentTime: resumeTime, isPlaying: false });
+    if (wasPlaying) {
+      await this.play();
+    }
+  }
+
+  private async refreshOutputRouteKey(): Promise<void> {
+    try {
+      const devices = await AudioManager.getDevicesInfo();
+      this.lastOutputRouteKey = (devices.currentOutputs ?? [])
+        .map((device) => device.category)
+        .join('|');
+    } catch {
+      this.lastOutputRouteKey = '';
+    }
+  }
 
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener);
@@ -144,22 +224,192 @@ export class MemoAudioEngine {
     }
   }
 
-  private async ensureSession(): Promise<void> {
-    if (!this.sessionConfigured) {
+  private async applySessionMode(target: 'recording' | 'playback'): Promise<void> {
+    if (this.sessionMode === target) {
+      try {
+        await AudioManager.setAudioSessionActivity(true);
+        return;
+      } catch {
+        this.sessionMode = null;
+      }
+    }
+
+    try {
+      await AudioManager.setAudioSessionActivity(false);
+    } catch {
+      // Session may already be inactive.
+    }
+
+    if (target === 'recording') {
       AudioManager.setAudioSessionOptions({
         iosCategory: 'playAndRecord',
         iosMode: 'default',
-        iosOptions: ['defaultToSpeaker', 'allowBluetoothHFP'],
+        iosOptions: ['defaultToSpeaker', 'allowBluetoothA2DP'],
       });
-      this.sessionConfigured = true;
+    } else {
+      AudioManager.setAudioSessionOptions({
+        iosCategory: 'playback',
+        iosMode: 'default',
+        iosOptions: ['allowBluetoothA2DP'],
+      });
     }
-    await AudioManager.setAudioSessionActivity(true);
+
+    this.sessionMode = target;
+
+    try {
+      await AudioManager.setAudioSessionActivity(true);
+    } catch (primaryError) {
+      if (target !== 'playback') {
+        throw primaryError;
+      }
+
+      try {
+        await AudioManager.setAudioSessionActivity(false);
+      } catch {
+        // Session may already be inactive.
+      }
+
+      AudioManager.setAudioSessionOptions({
+        iosCategory: 'playAndRecord',
+        iosMode: 'default',
+        iosOptions: ['defaultToSpeaker', 'allowBluetoothA2DP'],
+      });
+      await AudioManager.setAudioSessionActivity(true);
+    }
+
+    if (target === 'playback') {
+      await this.refreshOutputRouteKey();
+    }
+  }
+
+  private async configureForRecording(): Promise<void> {
+    await this.applySessionMode('recording');
+  }
+
+  /** Full session cycle — avoids stale playback state after context teardown. */
+  private async forceConfigureForRecording(): Promise<void> {
+    try {
+      await AudioManager.setAudioSessionActivity(false);
+    } catch {
+      // Session may already be inactive.
+    }
+
+    AudioManager.setAudioSessionOptions({
+      iosCategory: 'playAndRecord',
+      iosMode: 'default',
+      iosOptions: ['defaultToSpeaker', 'allowBluetoothA2DP'],
+    });
+    this.sessionMode = 'recording';
+
+    const activated = await AudioManager.setAudioSessionActivity(true);
+    if (!activated) {
+      throw new Error('Failed to activate audio session for recording');
+    }
+  }
+
+  private async prepareRecordingRoute(): Promise<void> {
+    await this.forceConfigureForRecording();
+    await pinBuiltInMicrophone();
+    const routeSnapshot = await assertRecordingRouteOk();
+    logRouteSnapshot('recording-start', routeSnapshot);
+    this.refreshActiveRecordingSampleRate();
+  }
+
+  private async configureForPlayback(): Promise<void> {
+    await this.applySessionMode('playback');
+  }
+
+  private async resetPlaybackGraph(): Promise<void> {
+    this.stopPlayback();
+    this.clearMonitorPlaybackState();
+    if (this.context) {
+      const context = this.context;
+      this.context = null;
+      await context.close();
+    }
+    this.disposeMixGraph();
+    this.invalidateLayerBuffers();
+    clearReverbIrCache();
+  }
+
+  private clearMonitorPlaybackState(): void {
+    // Monitor mix state is cleared when the playback graph is reset.
+  }
+
+  private getTargetContextSampleRate(): number {
+    if (this.state.isRecording && this.state.monitorMixActive) {
+      return Math.round(
+        this.activeRecordingSampleRate ?? AudioManager.getDevicePreferredSampleRate()
+      );
+    }
+    return RECORDING_SAMPLE_RATE;
+  }
+
+  private async createAudioContextAtRate(targetRate: number): Promise<AudioContext> {
+    try {
+      return new AudioContext({ sampleRate: targetRate });
+    } catch {
+      return new AudioContext();
+    }
+  }
+
+  private clearRecordingSampleRateState(): void {
+    this.activeRecordingSampleRate = null;
+    this.recordingUsedWavFormat = false;
+  }
+
+  private getRecordingCallbackConfig(): { sampleRate: number; bufferLength: number } {
+    return {
+      sampleRate: RECORDING_SAMPLE_RATE,
+      bufferLength: Math.max(1, Math.round(RECORDING_SAMPLE_RATE * 0.1)),
+    };
+  }
+
+  private async ensureMonitorContextReady(): Promise<void> {
+    const context = await this.ensureContext();
+    await Promise.all(
+      this.loadedLayers.map((layer) => this.getDecodedLayerBuffer(layer))
+    );
+    this.syncMixGraph(context);
+  }
+
+  private async beginMonitorPlayback(startTime: number): Promise<void> {
+    this.emit({
+      monitorMixReady: true,
+      currentTime: startTime,
+      isPlaying: false,
+    });
+    await this.play();
+  }
+
+  private refreshActiveRecordingSampleRate(): void {
+    this.activeRecordingSampleRate = Math.round(
+      AudioManager.getDevicePreferredSampleRate()
+    );
   }
 
   private async ensureContext(): Promise<AudioContext> {
-    if (!this.context) {
-      this.context = new AudioContext();
+    if (this.state.isRecording && this.state.monitorMixActive) {
+      await this.configureForRecording();
+    } else {
+      await this.configureForPlayback();
     }
+
+    const targetRate = this.getTargetContextSampleRate();
+
+    if (
+      this.context &&
+      Math.round(this.context.sampleRate) !== targetRate
+    ) {
+      const stale = this.context;
+      this.context = null;
+      await stale.close();
+    }
+
+    if (!this.context) {
+      this.context = await this.createAudioContextAtRate(targetRate);
+    }
+
     if (this.context.state === 'suspended') {
       await this.context.resume();
     }
@@ -445,7 +695,7 @@ export class MemoAudioEngine {
     this.layerBuffers.clear();
   }
 
-  private async getLayerBuffer(context: AudioContext, layer: LoadedLayer): Promise<AudioBuffer> {
+  private async getDecodedLayerBuffer(layer: LoadedLayer): Promise<AudioBuffer> {
     const cached = this.layerBuffers.get(layer.path);
     if (cached) {
       return cached;
@@ -453,6 +703,24 @@ export class MemoAudioEngine {
     const buffer = await decodeAudioData(layer.path);
     this.layerBuffers.set(layer.path, buffer);
     return buffer;
+  }
+
+  private async getLayerBuffer(context: AudioContext, layer: LoadedLayer): Promise<AudioBuffer> {
+    const decoded = await this.getDecodedLayerBuffer(layer);
+    const bufferRate = Math.round(decoded.sampleRate);
+    const contextRate = Math.round(context.sampleRate);
+
+    if (bufferRate === contextRate) {
+      return decoded;
+    }
+
+    if (__DEV__) {
+      console.log(
+        `[audio] resampling layer for playback: ${bufferRate} Hz -> ${contextRate} Hz`
+      );
+    }
+
+    return resampleMonoBufferFromRate(decoded, bufferRate, contextRate, context);
   }
 
   private buildPlaybackPlans(
@@ -737,18 +1005,37 @@ export class MemoAudioEngine {
     this.emit({ ...initialState });
   }
 
-  async startRecording(): Promise<void> {
+  async startRecording(options?: {
+    monitorMix?: boolean;
+    monitorStartTime?: number;
+  }): Promise<void> {
+    const monitorMix = options?.monitorMix ?? false;
+    const monitorStartTime = options?.monitorStartTime ?? 0;
+
     const granted = await this.requestPermission();
     if (!granted) {
       throw new Error('Microphone permission denied');
     }
 
-    await this.ensureSession();
-    this.stopPlayback();
+    this.clearRecordingSampleRateState();
+    await this.resetPlaybackGraph();
+    await this.prepareRecordingRoute();
 
+    if (this.recorder) {
+      try {
+        this.recorder.clearOnAudioReady();
+        this.recorder.stop();
+      } catch {
+        // Stale recorder from interrupted session.
+      }
+      this.recorder = null;
+    }
+
+    this.recordingUsedWavFormat = true;
     this.recorder = new AudioRecorder();
     const result = this.recorder.enableFileOutput({
-      format: FileFormat.M4A,
+      format: FileFormat.Wav,
+      preset: RECORDING_FILE_PRESET,
       directory: FileDirectory.Cache,
       subDirectory: 'voice-memos-plus',
       fileNamePrefix: 'recording',
@@ -759,11 +1046,13 @@ export class MemoAudioEngine {
       throw new Error(result.message);
     }
 
+    const callbackConfig = this.getRecordingCallbackConfig();
+
     this.recordingPeaksBuffer = [];
     this.recorder.onAudioReady(
       {
-        sampleRate: RECORDING_SAMPLE_RATE,
-        bufferLength: RECORDING_BUFFER_LENGTH,
+        sampleRate: callbackConfig.sampleRate,
+        bufferLength: callbackConfig.bufferLength,
         channelCount: 1,
       },
       ({ buffer }) => {
@@ -777,19 +1066,61 @@ export class MemoAudioEngine {
       }
     );
 
+    await this.prepareRecordingRoute();
+
     const startResult = this.recorder.start();
+
     if (startResult.status === 'error') {
       this.recorder.clearOnAudioReady();
       throw new Error(startResult.message);
     }
 
-    this.emit({ isRecording: true, recordingDuration: 0, recordingPeaks: [], isPlaying: false });
+    this.refreshActiveRecordingSampleRate();
+
+    this.emit({
+      isRecording: true,
+      recordingDuration: 0,
+      recordingPeaks: [],
+      monitorMixActive: monitorMix,
+      monitorMixReady: !monitorMix,
+      isPlaying: false,
+      currentTime: monitorMix ? monitorStartTime : this.state.currentTime,
+    });
     this.recordingTimer = setInterval(() => {
       this.emitRecordingProgress();
     }, 50);
+
+    if (monitorMix) {
+      await this.ensureMonitorContextReady();
+      await this.beginMonitorPlayback(monitorStartTime);
+    }
   }
 
-  stopRecording(): { path: string; duration: number; peaks: number[] } {
+  async cancelRecording(): Promise<void> {
+    if (!this.recorder) {
+      return;
+    }
+
+    this.clearRecordingTimer();
+    this.recorder.clearOnAudioReady();
+    this.recorder.stop();
+    this.recorder = null;
+    this.recordingPeaksBuffer = [];
+
+    this.clearRecordingSampleRateState();
+    await this.resetPlaybackGraph();
+    await this.configureForPlayback();
+
+    this.emit({
+      isRecording: false,
+      recordingDuration: 0,
+      recordingPeaks: [],
+      monitorMixActive: false,
+      monitorMixReady: false,
+    });
+  }
+
+  async stopRecording(): Promise<{ path: string; duration: number; peaks: number[] }> {
     if (!this.recorder) {
       throw new Error('No active recording');
     }
@@ -810,22 +1141,64 @@ export class MemoAudioEngine {
       throw new Error(result.message);
     }
 
-    this.emit({ isRecording: false, recordingDuration: 0, recordingPeaks: [] });
-    const path = result.paths[0];
+    let path = result.paths[0];
     if (!path) {
       throw new Error('Recording file missing');
     }
 
-    return { path, duration: result.duration, peaks };
+    let duration = result.duration;
+    const recorderDuration = duration;
+
+    const decoded = await decodeAudioData(path);
+    const needsNormalize = recordingNeedsNormalize(
+      decoded.sampleRate,
+      decoded.duration,
+      recorderDuration,
+      RECORDING_SAMPLE_RATE
+    );
+
+    if (needsNormalize) {
+      try {
+        const normalized = await normalizeRecordingFile(path, RECORDING_SAMPLE_RATE, {
+          recordedDuration: recorderDuration,
+        });
+        path = normalized.path;
+        duration = normalized.duration;
+      } catch (error) {
+        if (__DEV__) {
+          console.warn(
+            '[MemoAudioEngine] recording normalize failed, using raw file',
+            error
+          );
+        }
+      }
+    }
+
+    await this.resetPlaybackGraph();
+    await this.configureForPlayback();
+
+    this.clearRecordingSampleRateState();
+
+    this.emit({
+      isRecording: false,
+      recordingDuration: 0,
+      recordingPeaks: [],
+      monitorMixActive: false,
+      monitorMixReady: false,
+    });
+
+    return { path, duration, peaks };
   }
 
   async play(): Promise<void> {
-    if (this.loadedLayers.length === 0 || this.state.isRecording) {
+    if (this.loadedLayers.length === 0) {
+      return;
+    }
+    if (this.state.isRecording && !this.state.monitorMixActive) {
       return;
     }
 
     try {
-      await this.ensureSession();
       const context = await this.ensureContext();
       this.invalidateAndStopSources();
 

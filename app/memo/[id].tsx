@@ -14,10 +14,16 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { useColorScheme } from '@/components/useColorScheme';
 import { DEFAULT_TRACK_COLOR, pickRandomTrackColor } from '@/constants/VoiceMemosColors';
 import { showMemoActionSheet } from '@/src/actions/showMemoActionSheet';
-import { useColorScheme } from '@/components/useColorScheme';
 import { useAudioEngine, useAudioEngineState } from '@/src/audio/AudioEngineContext';
+import {
+  isHeadphonesConnected,
+  needsMonitorMix,
+  requiresHeadphones,
+  subscribeHeadphoneDisconnect,
+} from '@/src/audio/headphoneDetection';
 import type { LayerEffects, LayerEffectsChange } from '@/src/audio/layerEffects';
 import { mergeLayerEffects } from '@/src/audio/layerEffects';
 import {
@@ -158,6 +164,7 @@ export default function MemoEditorScreen() {
   const isSavingRecordingOnExit = useRef(false);
   const saveRecordingInFlight = useRef<Promise<boolean> | null>(null);
   const pendingRecordingColor = useRef<string | null>(null);
+  const monitorMixRef = useRef(false);
   const editDraftRef = useRef<EditDraftSnapshot | null>(null);
   const draftGenerationRef = useRef(0);
   stackModeRef.current = stackMode;
@@ -785,6 +792,8 @@ export default function MemoEditorScreen() {
       setActiveLayerId(defaultLayer?.id ?? null);
       if (hasRecording(loaded)) {
         await loadMemoIntoEngine(engine, loaded);
+      } else {
+        engine.unload();
       }
     }
     setLoading(false);
@@ -832,7 +841,7 @@ export default function MemoEditorScreen() {
       const savePromise = (async (): Promise<boolean> => {
         isSavingRecordingOnExit.current = true;
         try {
-          const { path, duration, peaks } = engine.stopRecording();
+          const { path, duration, peaks } = await engine.stopRecording();
           await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
           const wasStackMode = stackModeRef.current;
@@ -873,7 +882,8 @@ export default function MemoEditorScreen() {
               replaceLayer.id,
               fileTrimStart,
               fileTrimEnd,
-              path
+              path,
+              peaks
             );
           } else {
             updated = await saveRecording(currentMemo.id, path, duration, peaks);
@@ -883,6 +893,7 @@ export default function MemoEditorScreen() {
           setMemo(updated);
           setReplaceMode(false);
           setStackMode(false);
+          monitorMixRef.current = false;
           pendingRecordingColor.current = null;
           if (reloadEngine) {
             await loadMemoIntoEngine(
@@ -914,6 +925,18 @@ export default function MemoEditorScreen() {
     },
     [engine]
   );
+
+  const cancelActiveRecording = useCallback(async () => {
+    if (!engine.getState().isRecording) {
+      return;
+    }
+
+    await engine.cancelRecording();
+    monitorMixRef.current = false;
+    setReplaceMode(false);
+    setStackMode(false);
+    pendingRecordingColor.current = null;
+  }, [engine]);
 
   useEffect(() => {
     const unsubscribe = navigation.addListener('beforeRemove', (e) => {
@@ -1184,6 +1207,17 @@ export default function MemoEditorScreen() {
       }
     }
 
+    if (requiresHeadphones(memo, mode) && !(await isHeadphonesConnected())) {
+      Alert.alert(
+        'Connect headphones',
+        'Plug in earbuds or headphones to record over existing tracks. Audio plays through your headphones; recording uses your iPhone microphone.'
+      );
+      return;
+    }
+
+    const useMonitorMix = needsMonitorMix(memo, mode);
+    monitorMixRef.current = useMonitorMix;
+
     engine.pause();
     let startTime = engine.getPlaybackTime();
     if (mode === 'replace' && activeLayerId) {
@@ -1194,6 +1228,7 @@ export default function MemoEditorScreen() {
         startTime = Math.max(activeStart, Math.min(startTime, activeEnd));
       }
     }
+
     recordingStartTime.current = startTime;
     setReplaceMode(mode === 'replace');
     setStackMode(mode === 'stack');
@@ -1206,10 +1241,16 @@ export default function MemoEditorScreen() {
       pendingRecordingColor.current = null;
     }
 
+    engine.seek(startTime);
+
     try {
-      await engine.startRecording();
+      await engine.startRecording({
+        monitorMix: useMonitorMix,
+        monitorStartTime: useMonitorMix ? startTime : undefined,
+      });
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     } catch (error) {
+      monitorMixRef.current = false;
       setReplaceMode(false);
       setStackMode(false);
       pendingRecordingColor.current = null;
@@ -1259,6 +1300,12 @@ export default function MemoEditorScreen() {
       : timelineDuration;
   const isRecording = engineState.isRecording;
   const currentTime = memo && isActiveMemo ? engineState.currentTime : 0;
+  const recordingTimelineTime =
+    recordingStartTime.current + engineState.recordingDuration;
+  const monitorMixPreparing =
+    isRecording &&
+    engineState.monitorMixActive &&
+    !engineState.monitorMixReady;
 
   useEffect(() => {
     if (!isRecording) {
@@ -1269,6 +1316,21 @@ export default function MemoEditorScreen() {
       setActiveEditor(null);
     })();
   }, [cancelEditDraft, isRecording]);
+
+  useEffect(() => {
+    if (!isRecording || !engineState.monitorMixActive) {
+      return;
+    }
+
+    return subscribeHeadphoneDisconnect(() => {
+      void cancelActiveRecording().then(() => {
+        Alert.alert(
+          'Headphones disconnected',
+          'Recording stopped. Connect headphones to stack tracks.'
+        );
+      });
+    });
+  }, [cancelActiveRecording, engineState.monitorMixActive, isRecording]);
 
   const showTrackEditor =
     !isRecording &&
@@ -1307,11 +1369,9 @@ export default function MemoEditorScreen() {
   }, [navigation, blockSheetGesture]);
 
   const waveformDuration = isRecording
-    ? Math.max(duration, recordingStartTime.current + engineState.recordingDuration, 0.01)
+    ? Math.max(duration, recordingTimelineTime, 0.01)
     : duration;
-  const waveformCurrentTime = isRecording
-    ? recordingStartTime.current + engineState.recordingDuration
-    : currentTime;
+  const waveformCurrentTime = isRecording ? recordingTimelineTime : currentTime;
 
   const waveformTracks = useMemo((): TrackData[] => {
     if (!memo) {
@@ -1479,11 +1539,13 @@ export default function MemoEditorScreen() {
     );
   }
 
-  const recordingLabel = stackMode
-    ? 'Recording stack…'
-    : replaceMode
-      ? 'Recording replacement…'
-      : 'Recording…';
+  const recordingLabel = monitorMixPreparing
+    ? 'Preparing monitor…'
+    : stackMode
+      ? 'Recording stack…'
+      : replaceMode
+        ? 'Recording replacement…'
+        : 'Recording…';
   const colorPickerLayer = colorPickerLayerId
     ? memo.layers.find((entry) => entry.id === colorPickerLayerId)
     : null;
@@ -1499,7 +1561,7 @@ export default function MemoEditorScreen() {
             getRecordingTime={() =>
               recordingStartTime.current + engine.getRecordingDuration()
             }
-            isPlaying={engineState.isPlaying}
+            isPlaying={engineState.isPlaying && !monitorMixPreparing}
             isRecording={isRecording}
             tracks={waveformTracks}
             trimOverlay={
@@ -1566,7 +1628,9 @@ export default function MemoEditorScreen() {
         <View style={styles.footer}>
           <View style={styles.timeDisplay}>
             <Text style={styles.largeTime}>
-              {formatDurationWithTenths(isRecording ? engineState.recordingDuration : currentTime)}
+              {formatDurationWithTenths(
+                isRecording ? recordingTimelineTime : currentTime
+              )}
             </Text>
             {isRecording ? (
               <Text style={styles.recordingLabel}>{recordingLabel}</Text>

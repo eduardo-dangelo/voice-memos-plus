@@ -33,7 +33,8 @@
   "scripts": {
     "start": "expo start",
     "ios": "expo run:ios",
-    "prebuild:ios": "expo prebuild --platform ios"
+    "prebuild:ios": "expo prebuild --platform ios",
+    "test": "npx tsx --test src/audio/normalizeRecordingLogic.test.ts"
   },
   "private": true
 }

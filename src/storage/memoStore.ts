@@ -39,6 +39,15 @@ import {
   getEarliestTrimInTimelineDelta,
 } from './types';
 
+function alignLayerFileNameWithSource(layer: Layer, sourcePath: string): void {
+  const sourceIsWav = sourcePath.toLowerCase().endsWith('.wav');
+  if (sourceIsWav && layer.fileName.endsWith('.m4a')) {
+    layer.fileName = layer.fileName.replace(/\.m4a$/, '.wav');
+  } else if (!sourceIsWav && layer.fileName.endsWith('.wav')) {
+    layer.fileName = layer.fileName.replace(/\.wav$/, '.m4a');
+  }
+}
+
 function createLayer(
   order: number,
   startTime = 0,
@@ -516,6 +525,7 @@ export async function saveRecording(
   const layer = memo.layers[0] ?? createLayer(0);
   memo.layers = [layer];
   layer.startTime = 0;
+  alignLayerFileNameWithSource(layer, sourcePath);
   const dest = requireLayerFile(memoId, layer.fileName);
   const source = new File(sourcePath);
 
@@ -550,14 +560,14 @@ export async function replaceLayerFile(
   }
 
   const source = new File(sourcePath);
-  const sourceIsWav = sourcePath.toLowerCase().endsWith('.wav');
+  const previousFileName = layer.fileName;
+  alignLayerFileNameWithSource(layer, sourcePath);
 
-  if (sourceIsWav && layer.fileName.endsWith('.m4a')) {
-    const oldFile = requireLayerFile(memoId, layer.fileName);
+  if (previousFileName !== layer.fileName) {
+    const oldFile = requireLayerFile(memoId, previousFileName);
     if (oldFile.exists) {
       oldFile.delete();
     }
-    layer.fileName = layer.fileName.replace(/\.m4a$/, '.wav');
   }
 
   const dest = requireLayerFile(memoId, layer.fileName);
@@ -595,6 +605,7 @@ export async function addStackedLayer(
   if (color && isTrackColorAllowed(color)) {
     layer.color = color;
   }
+  alignLayerFileNameWithSource(layer, sourcePath);
   const dest = requireLayerFile(memoId, layer.fileName);
   const source = new File(sourcePath);
 

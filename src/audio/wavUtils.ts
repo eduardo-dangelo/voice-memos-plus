@@ -1,11 +1,22 @@
 import { File, Paths } from 'expo-file-system';
 import {
-  AudioBuffer,
-  AudioContext,
-  decodeAudioData,
+    AudioBuffer,
+    AudioContext,
+    decodeAudioData,
 } from 'react-native-audio-api';
 
 import { randomId } from '@/src/utils/id';
+import {
+  computeNormalizeFromRate,
+  recordingNeedsNormalize,
+  TARGET_SAMPLE_RATE,
+} from '@/src/audio/normalizeRecordingLogic';
+
+export {
+  computeNormalizeFromRate,
+  recordingNeedsNormalize,
+  TARGET_SAMPLE_RATE,
+} from '@/src/audio/normalizeRecordingLogic';
 
 function getTrimSampleRange(
   buffer: AudioBuffer,
@@ -139,6 +150,111 @@ export async function trimAudioFile(
   const { startSample, length, sampleRate } = getTrimSampleRange(buffer, trimIn, trimOut);
   const samples = buffer.getChannelData(0).slice(startSample, startSample + length);
   await exportMonoSamplesToPath(samples, sampleRate, outputPath);
+}
+
+export function resampleMonoBuffer(
+  buffer: AudioBuffer,
+  targetRate: number,
+  context: AudioContext
+): AudioBuffer {
+  return resampleMonoBufferFromRate(
+    buffer,
+    buffer.sampleRate,
+    targetRate,
+    context
+  );
+}
+
+export function resampleMonoBufferFromRate(
+  buffer: AudioBuffer,
+  fromRate: number,
+  targetRate: number,
+  context: AudioContext
+): AudioBuffer {
+  const roundedFrom = Math.round(fromRate);
+  const roundedTarget = Math.round(targetRate);
+  if (roundedFrom === roundedTarget) {
+    return buffer;
+  }
+
+  const resampled = resampleChannelData(
+    buffer.getChannelData(0),
+    roundedFrom,
+    roundedTarget
+  );
+  const out = context.createBuffer(1, resampled.length, roundedTarget);
+  out.copyToChannel(resampled, 0);
+  return out;
+}
+
+export type NormalizeRecordingOptions = {
+  recordedDuration?: number;
+};
+
+export type NormalizeRecordingResult = {
+  path: string;
+  duration: number;
+  fromRateUsed: number;
+  fileRate: number;
+  bufferLength: number;
+  skipped: boolean;
+};
+
+export async function normalizeRecordingFile(
+  inputPath: string,
+  targetSampleRate = TARGET_SAMPLE_RATE,
+  options?: NormalizeRecordingOptions
+): Promise<NormalizeRecordingResult> {
+  const target = Math.round(targetSampleRate);
+  const buffer = await decodeAudioData(inputPath);
+  const fileRate = Math.round(buffer.sampleRate);
+  const samples = buffer.getChannelData(0);
+
+  const { fromRate, shouldResample } = computeNormalizeFromRate(
+    fileRate,
+    buffer.duration,
+    options?.recordedDuration,
+    target
+  );
+
+  if (!shouldResample) {
+    return {
+      path: inputPath,
+      duration: buffer.duration,
+      fromRateUsed: fromRate,
+      fileRate,
+      bufferLength: samples.length,
+      skipped: true,
+    };
+  }
+
+  const resampledSamples = resampleChannelData(samples, fromRate, target);
+
+  const outputPath = isWavPath(inputPath)
+    ? inputPath
+    : inputPath.replace(/\.m4a$/i, '.wav');
+
+  const duration = await exportMonoSamplesToPath(
+    resampledSamples,
+    target,
+    outputPath
+  );
+
+  if (outputPath !== inputPath) {
+    const inputFile = new File(inputPath);
+    if (inputFile.exists) {
+      inputFile.delete();
+    }
+  }
+
+  return {
+    path: outputPath,
+    duration,
+    fromRateUsed: fromRate,
+    fileRate,
+    bufferLength: samples.length,
+    skipped: false,
+  };
 }
 
 function resampleChannelData(
