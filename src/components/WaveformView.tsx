@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   LayoutChangeEvent,
   NativeScrollEvent,
@@ -86,9 +86,9 @@ function getLayoutDuration(
   duration: number,
   currentTime: number,
   viewportWidth: number,
-  isRecording: boolean
+  recordingLayoutActive: boolean
 ): number {
-  if (!isRecording) {
+  if (!recordingLayoutActive) {
     return duration;
   }
   const viewportSeconds = viewportWidth > 0 ? viewportWidth / PIXELS_PER_SECOND : 0;
@@ -120,6 +120,7 @@ type Props = {
   currentTime: number;
   duration: number;
   isRecording?: boolean;
+  recordingLayoutActive?: boolean;
   isPlaying?: boolean;
   getPlaybackTime?: () => number;
   getRecordingTime?: () => number;
@@ -524,20 +525,51 @@ function getTrackBandBackground(track: TrackData, colors: VoiceMemosColorScheme)
   return colors.waveformBandBackground;
 }
 
-function TrackWaveformRow({
-  track,
-  bandWidth,
-  contentWidth,
-  sidePadding,
-  trackHeight,
-  onPress,
-  onLongPress,
-  trimOverlay,
-  moveOverlay,
-  volumeVisualDb,
-  trimScrollHelpers,
-  scrollPriority = false,
-}: {
+function areTrackDataEqual(a: TrackData, b: TrackData): boolean {
+  if (a.id !== b.id) {
+    return false;
+  }
+  if (a.peaks !== b.peaks) {
+    return false;
+  }
+  if (a.startTime !== b.startTime) {
+    return false;
+  }
+  if (a.duration !== b.duration) {
+    return false;
+  }
+  if (a.isActive !== b.isActive) {
+    return false;
+  }
+  if (a.isMuted !== b.isMuted) {
+    return false;
+  }
+  if (a.color !== b.color) {
+    return false;
+  }
+  if (a.replaceTailDimFrom !== b.replaceTailDimFrom) {
+    return false;
+  }
+  const aLive = a.liveRecording;
+  const bLive = b.liveRecording;
+  if (aLive !== bLive) {
+    if (!aLive || !bLive) {
+      return false;
+    }
+    if (aLive.peaks !== bLive.peaks) {
+      return false;
+    }
+    if (aLive.startTime !== bLive.startTime) {
+      return false;
+    }
+    if (aLive.duration !== bLive.duration) {
+      return false;
+    }
+  }
+  return true;
+}
+
+type TrackWaveformRowProps = {
   track: TrackData;
   bandWidth: number;
   contentWidth: number;
@@ -550,7 +582,54 @@ function TrackWaveformRow({
   volumeVisualDb?: number;
   trimScrollHelpers?: TrimScrollHelpers;
   scrollPriority?: boolean;
-}) {
+};
+
+function areTrackWaveformRowPropsEqual(
+  prev: TrackWaveformRowProps,
+  next: TrackWaveformRowProps
+): boolean {
+  if (
+    prev.bandWidth !== next.bandWidth ||
+    prev.contentWidth !== next.contentWidth ||
+    prev.sidePadding !== next.sidePadding ||
+    prev.trackHeight !== next.trackHeight ||
+    prev.scrollPriority !== next.scrollPriority ||
+    prev.volumeVisualDb !== next.volumeVisualDb ||
+    prev.trimScrollHelpers !== next.trimScrollHelpers
+  ) {
+    return false;
+  }
+  if (
+    prev.trimOverlay?.layerId !== next.trimOverlay?.layerId ||
+    prev.trimOverlay?.trimIn !== next.trimOverlay?.trimIn ||
+    prev.trimOverlay?.trimOut !== next.trimOverlay?.trimOut
+  ) {
+    return false;
+  }
+  if (
+    prev.moveOverlay?.layerId !== next.moveOverlay?.layerId ||
+    prev.moveOverlay?.startTime !== next.moveOverlay?.startTime ||
+    prev.moveOverlay?.trimIn !== next.moveOverlay?.trimIn
+  ) {
+    return false;
+  }
+  return areTrackDataEqual(prev.track, next.track);
+}
+
+const TrackWaveformRow = memo(function TrackWaveformRow({
+  track,
+  bandWidth,
+  contentWidth,
+  sidePadding,
+  trackHeight,
+  onPress,
+  onLongPress,
+  trimOverlay,
+  moveOverlay,
+  volumeVisualDb,
+  trimScrollHelpers,
+  scrollPriority = false,
+}: TrackWaveformRowProps) {
   const { styles, colors } = useWaveformTheme();
   const touchStartRef = useRef({ x: 0, y: 0 });
   const touchDraggedRef = useRef(false);
@@ -858,13 +937,14 @@ function TrackWaveformRow({
       {rowContent}
     </Pressable>
   );
-}
+}, areTrackWaveformRowPropsEqual);
 
 export function WaveformView({
   tracks,
   currentTime,
   duration,
   isRecording = false,
+  recordingLayoutActive = false,
   isPlaying = false,
   getPlaybackTime,
   getRecordingTime,
@@ -905,11 +985,13 @@ export function WaveformView({
   const [viewportWidth, setViewportWidth] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
 
+  const followRecordingScroll = recordingLayoutActive || isRecording;
+
   const layoutDuration = getLayoutDuration(
     duration,
     currentTime,
     viewportWidth,
-    isRecording
+    followRecordingScroll
   );
   const targetWidth = layoutDuration > 0 ? layoutDuration * PIXELS_PER_SECOND : 0;
   const barCount =
@@ -1065,17 +1147,23 @@ export function WaveformView({
     if (
       viewportWidth <= 0 ||
       isPlaying ||
-      isRecording ||
+      followRecordingScroll ||
       gestureOverlay ||
       isUserScrollingRef.current
     ) {
       return;
     }
     scrollRef.current?.scrollTo({ x: scrollX, animated: true });
-  }, [scrollX, viewportWidth, isRecording, isPlaying, gestureOverlay]);
+  }, [scrollX, viewportWidth, followRecordingScroll, isPlaying, gestureOverlay]);
 
   useEffect(() => {
-    if (!isPlaying || duration <= 0 || viewportWidth <= 0 || contentWidth <= 0) {
+    if (
+      followRecordingScroll ||
+      !isPlaying ||
+      duration <= 0 ||
+      viewportWidth <= 0 ||
+      contentWidth <= 0
+    ) {
       return;
     }
 
@@ -1088,10 +1176,20 @@ export function WaveformView({
 
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [isPlaying, duration, contentWidth, viewportWidth]);
+  }, [isPlaying, followRecordingScroll, duration, contentWidth, viewportWidth]);
+
+  useLayoutEffect(() => {
+    if (!followRecordingScroll || viewportWidth <= 0) {
+      return;
+    }
+    const time = getRecordingTimeRef.current?.() ?? currentTimeRef.current;
+    const x = timeToScrollX(time, contentWidthRef.current);
+    scrollOffsetRef.current = x;
+    scrollRef.current?.scrollTo({ x, animated: false });
+  }, [followRecordingScroll, viewportWidth]);
 
   useEffect(() => {
-    if (!isRecording || viewportWidth <= 0) {
+    if (!followRecordingScroll || viewportWidth <= 0) {
       return;
     }
 
@@ -1109,7 +1207,7 @@ export function WaveformView({
 
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [isRecording, viewportWidth]);
+  }, [followRecordingScroll, contentWidth, viewportWidth]);
 
   return (
     <WaveformThemeContext.Provider value={theme}>
@@ -1119,7 +1217,7 @@ export function WaveformView({
         horizontal
         bounces={false}
         nestedScrollEnabled
-        scrollEnabled={!isPlaying && !isRecording && !trimGestureActive}
+        scrollEnabled={!isPlaying && !followRecordingScroll && !trimGestureActive}
         scrollEventThrottle={16}
         showsHorizontalScrollIndicator={false}
         onScroll={handleScroll}
@@ -1148,7 +1246,7 @@ export function WaveformView({
               trackHeight={trackHeight}
               scrollPriority={Boolean(
                 isPlaying ||
-                isRecording ||
+                followRecordingScroll ||
                 (gestureOverlay && gestureOverlay.layerId !== track.id)
               )}
               moveOverlay={moveOverlay}

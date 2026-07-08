@@ -1334,23 +1334,25 @@ export default function MemoEditorScreen() {
       ? engineState.duration
       : timelineDuration;
   const isRecording = engineState.isRecording;
+  const pendingRecordingLayout = stackMode || replaceMode || isRecording;
   const currentTime = memo && isActiveMemo ? engineState.currentTime : 0;
   const recordingTimelineTime =
     recordingStartTime.current + engineState.recordingDuration;
+  const pendingTimelineTime = recordingStartTime.current;
   const monitorMixPreparing =
     isRecording &&
     engineState.monitorMixActive &&
     !engineState.monitorMixReady;
 
   useEffect(() => {
-    if (!isRecording) {
+    if (!pendingRecordingLayout) {
       return;
     }
     void (async () => {
       await cancelEditDraft();
       setActiveEditor(null);
     })();
-  }, [cancelEditDraft, isRecording]);
+  }, [cancelEditDraft, pendingRecordingLayout]);
 
   useEffect(() => {
     if (!isRecording || !engineState.monitorMixActive) {
@@ -1368,7 +1370,7 @@ export default function MemoEditorScreen() {
   }, [cancelActiveRecording, engineState.monitorMixActive, isRecording]);
 
   const showTrackEditor =
-    !isRecording &&
+    !pendingRecordingLayout &&
     Boolean(activeLayer && activeLayer.duration > 0 && !activeLayerEffects?.muted);
 
   const availableTools = useMemo((): EditorTool[] => {
@@ -1403,17 +1405,25 @@ export default function MemoEditorScreen() {
     navigation.setOptions({ gestureEnabled: !blockSheetGesture });
   }, [navigation, blockSheetGesture]);
 
-  const waveformDuration = isRecording
-    ? Math.max(duration, recordingTimelineTime, 0.01)
+  const waveformDuration = pendingRecordingLayout
+    ? Math.max(
+        duration,
+        isRecording ? recordingTimelineTime : pendingTimelineTime,
+        0.01
+      )
     : duration;
-  const waveformCurrentTime = isRecording ? recordingTimelineTime : currentTime;
+  const waveformCurrentTime = pendingRecordingLayout
+    ? isRecording
+      ? recordingTimelineTime
+      : pendingTimelineTime
+    : currentTime;
 
-  const waveformTracks = useMemo((): TrackData[] => {
+  const playableTrackRows = useMemo((): TrackData[] => {
     if (!memo) {
       return [];
     }
 
-    const playableTracks = [...memo.layers]
+    return [...memo.layers]
       .filter((layer) => layer.duration > 0)
       .sort((a, b) => b.order - a.order)
       .map((layer) => {
@@ -1477,33 +1487,55 @@ export default function MemoEditorScreen() {
           ...trackMeta,
         };
       });
+  }, [activeEditor, activeLayerId, memo, savingTrim]);
 
-    if (isRecording) {
+  const inactivePlayableTracks = useMemo(
+    () => playableTrackRows.map((track) => ({ ...track, isActive: false })),
+    [playableTrackRows]
+  );
+
+  const inactivePlayableById = useMemo(() => {
+    const map = new Map<string, TrackData>();
+    for (const track of inactivePlayableTracks) {
+      map.set(track.id, track);
+    }
+    return map;
+  }, [inactivePlayableTracks]);
+
+  const waveformTracks = useMemo((): TrackData[] => {
+    if (!memo) {
+      return [];
+    }
+
+    if (pendingRecordingLayout) {
       const recordingColor = stackMode
         ? (pendingRecordingColor.current ?? undefined)
         : resolveTrackColor(memo.layers[0]?.color);
+      const recordingDuration = isRecording
+        ? Math.max(engineState.recordingDuration, 0.01)
+        : 0.01;
+      const recordingPeaks =
+        isRecording && engineState.recordingPeaks.length > 0
+          ? engineState.recordingPeaks
+          : undefined;
       const recordingTrack: TrackData = {
         id: '__recording__',
-        peaks:
-          engineState.recordingPeaks.length > 0 ? engineState.recordingPeaks : undefined,
+        peaks: recordingPeaks,
         startTime: replaceMode || stackMode ? recordingStartTime.current : 0,
-        duration: Math.max(engineState.recordingDuration, 0.01),
+        duration: recordingDuration,
         isActive: true,
         color: recordingColor,
       };
 
       if (stackMode) {
-        return [recordingTrack, ...playableTracks.map((track) => ({ ...track, isActive: false }))];
+        return [recordingTrack, ...inactivePlayableTracks];
       }
 
       if (replaceMode && activeLayerId) {
         const replaceStart = recordingStartTime.current;
-        return playableTracks.map((track) => {
+        return playableTrackRows.map((track) => {
           if (track.id !== activeLayerId) {
-            return {
-              ...track,
-              isActive: false,
-            };
+            return inactivePlayableById.get(track.id) ?? { ...track, isActive: false };
           }
 
           const keptDuration = Math.max(0.01, replaceStart - track.startTime);
@@ -1523,14 +1555,15 @@ export default function MemoEditorScreen() {
             isActive: true,
             peaks: prefixPeaks,
             duration: Math.min(track.duration, keptDuration),
-            liveRecording: {
-              peaks:
-                engineState.recordingPeaks.length > 0
-                  ? engineState.recordingPeaks
-                  : undefined,
-              startTime: replaceStart,
-              duration: Math.max(engineState.recordingDuration, 0.01),
-            },
+            ...(isRecording
+              ? {
+                  liveRecording: {
+                    peaks: recordingPeaks,
+                    startTime: replaceStart,
+                    duration: recordingDuration,
+                  },
+                }
+              : {}),
             replaceTailDimFrom: replaceStart,
           };
         });
@@ -1539,7 +1572,7 @@ export default function MemoEditorScreen() {
       return [recordingTrack];
     }
 
-    if (playableTracks.length === 0) {
+    if (playableTrackRows.length === 0) {
       return [
         {
           id: memo.layers[0]?.id ?? 'empty',
@@ -1552,27 +1585,22 @@ export default function MemoEditorScreen() {
       ];
     }
 
-    return playableTracks;
+    return playableTrackRows;
   }, [
-    activeEditor,
     activeLayerId,
     duration,
     engineState.recordingDuration,
     engineState.recordingPeaks,
+    inactivePlayableById,
+    inactivePlayableTracks,
     isRecording,
     memo,
+    pendingRecordingLayout,
+    playableTrackRows,
     replaceMode,
-    savingTrim,
     stackMode,
   ]);
 
-  const recordingLabel = monitorMixPreparing
-    ? 'Preparing monitor…'
-    : stackMode
-      ? 'Recording stack…'
-      : replaceMode
-        ? 'Recording replacement…'
-        : 'Recording…';
   const colorPickerLayer = colorPickerLayerId
     ? memo?.layers.find((entry) => entry.id === colorPickerLayerId)
     : null;
@@ -1592,6 +1620,7 @@ export default function MemoEditorScreen() {
               }
               isPlaying={engineState.isPlaying && !monitorMixPreparing}
               isRecording={isRecording}
+              recordingLayoutActive={pendingRecordingLayout}
               tracks={waveformTracks}
               trimOverlay={
                 activeEditor === 'trim' && !savingTrim && activeLayer && activeLayerEffects
@@ -1665,32 +1694,26 @@ export default function MemoEditorScreen() {
               <View style={styles.timeDisplay}>
                 <Text style={styles.largeTime}>
                   {formatDurationWithTenths(
-                    isRecording ? recordingTimelineTime : currentTime
+                    pendingRecordingLayout ? waveformCurrentTime : currentTime
                   )}
                 </Text>
-                {isRecording ? (
-                  <Text style={styles.recordingLabel}>{recordingLabel}</Text>
-                ) : null}
               </View>
 
-              {isRecording ? (
-                <Pressable onPress={() => void handleStopRecording()} style={styles.stopButton}>
-                  <View style={styles.stopSquare} />
-                </Pressable>
-              ) : (
-                <PlaybackControls
-                  currentTime={currentTime}
-                  duration={duration}
-                  isPlaying={engineState.isPlaying}
-                  recordDisabled={!memo || !hasRecording(memo)}
-                  showProgressBar={false}
-                  showTimeLabels={false}
-                  onPlayPause={() => void handlePlayPause()}
-                  onRecordPress={showRecordOptions}
-                  onSkipBack={() => engine.skip(-15)}
-                  onSkipForward={() => engine.skip(15)}
-                />
-              )}
+              <PlaybackControls
+                currentTime={currentTime}
+                duration={duration}
+                isPlaying={engineState.isPlaying}
+                isRecording={pendingRecordingLayout}
+                recordDisabled={!memo || !hasRecording(memo)}
+                showProgressBar={false}
+                showTimeLabels={false}
+                stopRecordingDisabled={!isRecording}
+                onPlayPause={() => void handlePlayPause()}
+                onRecordPress={showRecordOptions}
+                onSkipBack={() => engine.skip(-15)}
+                onSkipForward={() => engine.skip(15)}
+                onStopRecording={() => void handleStopRecording()}
+              />
             </View>
           </>
         ) : null}
@@ -1780,32 +1803,12 @@ function useMemoEditorStyles(
           color: colors.text,
           fontVariant: ['tabular-nums'],
         },
-        recordingLabel: {
-          fontSize: 15,
-          color: colors.secondaryText,
-        },
         footer: {
           paddingTop: 8,
           paddingBottom: 8,
           gap: 8,
           borderTopWidth: StyleSheet.hairlineWidth,
           borderTopColor: colors.separator,
-        },
-        stopButton: {
-          alignSelf: 'center',
-          width: 72,
-          height: 72,
-          borderRadius: 36,
-          borderWidth: 4,
-          borderColor: colors.separator,
-          alignItems: 'center',
-          justifyContent: 'center',
-        },
-        stopSquare: {
-          width: 24,
-          height: 24,
-          borderRadius: 4,
-          backgroundColor: colors.recordRed,
         },
       }),
     [colors, moreButtonBackground]

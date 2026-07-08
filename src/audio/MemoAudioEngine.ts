@@ -319,7 +319,7 @@ export class MemoAudioEngine {
     await this.applySessionMode('playback');
   }
 
-  private async resetPlaybackGraph(): Promise<void> {
+  private async resetPlaybackGraph(options?: { preserveLayerBuffers?: boolean }): Promise<void> {
     this.stopPlayback();
     this.clearMonitorPlaybackState();
     if (this.context) {
@@ -328,7 +328,11 @@ export class MemoAudioEngine {
       await context.close();
     }
     this.disposeMixGraph();
-    this.invalidateLayerBuffers();
+    if (options?.preserveLayerBuffers) {
+      this.pruneLayerBuffers();
+    } else {
+      this.invalidateLayerBuffers();
+    }
     clearReverbIrCache();
   }
 
@@ -481,7 +485,9 @@ export class MemoAudioEngine {
 
       if (frameMs - lastUiUpdateMs >= PLAYBACK_UI_UPDATE_MS) {
         lastUiUpdateMs = frameMs;
-        this.emit({ currentTime: nextTime, isPlaying: true });
+        if (!this.state.isRecording) {
+          this.emit({ currentTime: nextTime, isPlaying: true });
+        }
       }
 
       if (nextTime >= this.playbackEndAt - PLAYBACK_END_TOLERANCE) {
@@ -492,7 +498,9 @@ export class MemoAudioEngine {
       this.playbackRafId = requestAnimationFrame(tick);
     };
 
-    this.emit({ currentTime: this.playbackStartAt, isPlaying: true });
+    if (!this.state.isRecording) {
+      this.emit({ currentTime: this.playbackStartAt, isPlaying: true });
+    }
     this.playbackRafId = requestAnimationFrame(tick);
   }
 
@@ -693,6 +701,15 @@ export class MemoAudioEngine {
 
   private invalidateLayerBuffers(): void {
     this.layerBuffers.clear();
+  }
+
+  private pruneLayerBuffers(): void {
+    const activePaths = new Set(this.loadedLayers.map((layer) => layer.path));
+    for (const path of this.layerBuffers.keys()) {
+      if (!activePaths.has(path)) {
+        this.layerBuffers.delete(path);
+      }
+    }
   }
 
   private async getDecodedLayerBuffer(layer: LoadedLayer): Promise<AudioBuffer> {
@@ -1018,7 +1035,9 @@ export class MemoAudioEngine {
     }
 
     this.clearRecordingSampleRateState();
-    await this.resetPlaybackGraph();
+    await this.resetPlaybackGraph({
+      preserveLayerBuffers: this.loadedLayers.length > 0,
+    });
     await this.prepareRecordingRoute();
 
     if (this.recorder) {

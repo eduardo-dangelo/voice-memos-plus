@@ -73,13 +73,15 @@ export async function resolveWaveformPeaks(
   duration?: number,
   capturedPeaks?: number[]
 ): Promise<number[] | undefined> {
+  if (capturedPeaks && capturedPeaks.length > 0) {
+    const peakCount = duration ? peakCountForDuration(duration) : capturedPeaks.length;
+    return resamplePeaks(capturedPeaks.map(peakToAbsoluteScale), peakCount);
+  }
+
   try {
     const peakCount = duration ? peakCountForDuration(duration) : DEFAULT_PEAK_COUNT;
     return await computeWaveformPeaks(filePath, peakCount);
   } catch {
-    if (capturedPeaks && capturedPeaks.length > 0) {
-      return resamplePeaks(capturedPeaks.map(peakToAbsoluteScale));
-    }
     return undefined;
   }
 }

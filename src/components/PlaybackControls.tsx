@@ -2,8 +2,8 @@ import { SymbolView } from 'expo-symbols';
 import { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { formatDuration } from '@/src/utils/format';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
+import { formatDuration } from '@/src/utils/format';
 
 type Props = {
   isPlaying: boolean;
@@ -13,7 +13,10 @@ type Props = {
   onSkipBack: () => void;
   onSkipForward: () => void;
   onRecordPress?: () => void;
+  onStopRecording?: () => void;
   recordDisabled?: boolean;
+  stopRecordingDisabled?: boolean;
+  isRecording?: boolean;
   compact?: boolean;
   showProgressBar?: boolean;
   showTimeLabels?: boolean;
@@ -27,7 +30,10 @@ export function PlaybackControls({
   onSkipBack,
   onSkipForward,
   onRecordPress,
+  onStopRecording,
   recordDisabled = false,
+  stopRecordingDisabled = false,
+  isRecording = false,
   compact = false,
   showProgressBar = true,
   showTimeLabels = true,
@@ -43,36 +49,55 @@ export function PlaybackControls({
           <View style={[styles.progressFill, { width: `${Math.min(progress * 100, 100)}%` }]} />
         </View>
       ) : null}
-      <View style={[styles.controlsRow, !showTimeLabels && styles.controlsRowCentered]}>
+      <View
+        style={[
+          styles.controlsRow,
+          styles.controlsRowMinHeight,
+          !showTimeLabels && styles.controlsRowCentered,
+        ]}>
         {showTimeLabels ? <Text style={styles.time}>{formatDuration(currentTime)}</Text> : null}
-        <View style={styles.buttons}>
-          <Pressable accessibilityLabel="Skip back 15 seconds" onPress={onSkipBack} style={styles.iconButton}>
-            <SymbolView name={{ ios: 'gobackward.15' }} size={compact ? 24 : 28} tintColor={colors.text} />
+        {isRecording ? (
+          <Pressable
+            accessibilityLabel="Stop recording"
+            disabled={stopRecordingDisabled}
+            onPress={onStopRecording}
+            style={[
+              styles.stopButton,
+              compact && styles.stopButtonCompact,
+              stopRecordingDisabled && styles.recordDisabled,
+            ]}>
+            <View style={[styles.stopSquare, compact && styles.stopSquareCompact]} />
           </Pressable>
-          <Pressable accessibilityLabel={isPlaying ? 'Pause' : 'Play'} onPress={onPlayPause} style={styles.playButton}>
-            <SymbolView
-              name={{ ios: isPlaying ? 'pause.fill' : 'play.fill' }}
-              size={compact ? 28 : 34}
-              tintColor={colors.text}
-            />
-          </Pressable>
-          {onRecordPress ? (
-            <Pressable
-              accessibilityLabel="Record"
-              disabled={recordDisabled}
-              onPress={onRecordPress}
-              style={[
-                styles.recordButton,
-                compact && styles.recordButtonCompact,
-                recordDisabled && styles.recordDisabled,
-              ]}>
-              <View style={[styles.recordDot, compact && styles.recordDotCompact]} />
+        ) : (
+          <View style={styles.buttons}>
+            <Pressable accessibilityLabel="Skip back 15 seconds" onPress={onSkipBack} style={styles.iconButton}>
+              <SymbolView name={{ ios: 'gobackward.15' }} size={compact ? 24 : 28} tintColor={colors.text} />
             </Pressable>
-          ) : null}
-          <Pressable accessibilityLabel="Skip forward 15 seconds" onPress={onSkipForward} style={styles.iconButton}>
-            <SymbolView name={{ ios: 'goforward.15' }} size={compact ? 24 : 28} tintColor={colors.text} />
-          </Pressable>
-        </View>
+            <Pressable accessibilityLabel={isPlaying ? 'Pause' : 'Play'} onPress={onPlayPause} style={styles.playButton}>
+              <SymbolView
+                name={{ ios: isPlaying ? 'pause.fill' : 'play.fill' }}
+                size={compact ? 28 : 34}
+                tintColor={colors.text}
+              />
+            </Pressable>
+            {onRecordPress ? (
+              <Pressable
+                accessibilityLabel="Record"
+                disabled={recordDisabled}
+                onPress={onRecordPress}
+                style={[
+                  styles.recordButton,
+                  compact && styles.recordButtonCompact,
+                  recordDisabled && styles.recordDisabled,
+                ]}>
+                <View style={[styles.recordDot, compact && styles.recordDotCompact]} />
+              </Pressable>
+            ) : null}
+            <Pressable accessibilityLabel="Skip forward 15 seconds" onPress={onSkipForward} style={styles.iconButton}>
+              <SymbolView name={{ ios: 'goforward.15' }} size={compact ? 24 : 28} tintColor={colors.text} />
+            </Pressable>
+          </View>
+        )}
         {showTimeLabels ? <Text style={styles.time}>{formatDuration(duration)}</Text> : null}
       </View>
     </View>
@@ -101,6 +126,9 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           alignItems: 'center',
           justifyContent: 'space-between',
         },
+        controlsRowMinHeight: {
+          minHeight: 40,
+        },
         controlsRowCentered: {
           justifyContent: 'center',
         },
@@ -128,6 +156,19 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           height: 28,
           borderRadius: 14,
         },
+        stopButton: {
+          width: 32,
+          height: 32,
+          borderRadius: 16,
+          backgroundColor: colors.recordRed,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        stopButtonCompact: {
+          width: 28,
+          height: 28,
+          borderRadius: 14,
+        },
         recordDisabled: {
           opacity: 0.4,
         },
@@ -141,6 +182,17 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           width: 10,
           height: 10,
           borderRadius: 5,
+        },
+        stopSquare: {
+          width: 12,
+          height: 12,
+          borderRadius: 2,
+          backgroundColor: '#FFFFFF',
+        },
+        stopSquareCompact: {
+          width: 10,
+          height: 10,
+          borderRadius: 2,
         },
         time: {
           width: 52,
