@@ -24,6 +24,7 @@ import {
   needsMonitorMix,
   requiresHeadphones,
   subscribeHeadphoneDisconnect,
+  useHeadphonesConnected,
 } from '@/src/audio/headphoneDetection';
 import type { LayerEffects, LayerEffectsChange } from '@/src/audio/layerEffects';
 import { mergeLayerEffects } from '@/src/audio/layerEffects';
@@ -32,6 +33,8 @@ import {
   resetPerformanceWarningState,
 } from '@/src/audio/performanceWarning';
 import { slicePeaksForTrim } from '@/src/audio/waveform';
+import { MetronomeButton } from '@/src/components/MetronomeButton';
+import { MetronomeSettingsSheet } from '@/src/components/MetronomeSettingsSheet';
 import { PlaybackControls } from '@/src/components/PlaybackControls';
 import { TrackEditorShell } from '@/src/components/track-editor/TrackEditorShell';
 import type { EditorTool } from '@/src/components/track-editor/types';
@@ -54,10 +57,11 @@ import {
   updateLayerLabel,
   updateLayerStartTimes,
   updateLoopRegion,
+  updateMetronomeSettings,
   updateTitle,
 } from '@/src/storage/memoStore';
 import { getMemoPlaybackTimeline, isMemoInTrash } from '@/src/storage/paths';
-import type { Layer, Memo } from '@/src/storage/types';
+import type { Layer, Memo, MetronomeSettings } from '@/src/storage/types';
 import {
   applyTimelineDeltaToLayers,
   clampLayerStartTime,
@@ -65,10 +69,12 @@ import {
   getLayerActiveDuration,
   getLayerActiveStartTime,
   getLayerEffects,
+  getMemoMetronomeSettings,
   getMemoTimelineDuration,
   getPlayableLayers,
   getReplaceSpliceParams,
   hasRecording,
+  normalizeMetronomeSettings,
 } from '@/src/storage/types';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 import { formatDurationWithTenths } from '@/src/utils/format';
@@ -92,6 +98,7 @@ async function loadMemoIntoEngine(
   if (seekTime !== undefined) {
     engine.seek(seekTime);
   }
+  engine.setMetronome(getMemoMetronomeSettings(memo));
 }
 
 function deactivateLoopForMemo(
@@ -131,11 +138,17 @@ export default function MemoEditorScreen() {
   const navigation = useNavigation();
   const engine = useAudioEngine();
   const engineState = useAudioEngineState();
+  const headphonesConnected = useHeadphonesConnected();
   const autoRecordStarted = useRef(false);
   const recordingStartTime = useRef(0);
   const persistEffectsTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const persistStartTimeTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const persistLoopTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const persistMetronomeTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingMetronomePersist = useRef<{
+    memoId: string;
+    settings: MetronomeSettings;
+  } | null>(null);
   const pendingEffectsPersist = useRef<{
     memoId: string;
     layerId: string;
@@ -158,6 +171,7 @@ export default function MemoEditorScreen() {
   const [activeEditor, setActiveEditor] = useState<EditorTool | null>(null);
   const [savingTrim, setSavingTrim] = useState(false);
   const [colorPickerLayerId, setColorPickerLayerId] = useState<string | null>(null);
+  const [metronomeSettingsVisible, setMetronomeSettingsVisible] = useState(false);
   const [layoutReady, setLayoutReady] = useState(false);
   const lastLayoutHeightRef = useRef<number | null>(null);
   const settleRafRef = useRef<number | null>(null);
@@ -610,6 +624,48 @@ export default function MemoEditorScreen() {
     [engine, memo]
   );
 
+  const flushMetronomePersist = useCallback(() => {
+    if (persistMetronomeTimeout.current) {
+      clearTimeout(persistMetronomeTimeout.current);
+      persistMetronomeTimeout.current = null;
+    }
+    const pending = pendingMetronomePersist.current;
+    if (pending) {
+      pendingMetronomePersist.current = null;
+      void updateMetronomeSettings(pending.memoId, pending.settings);
+    }
+  }, []);
+
+  const handleMetronomeChange = useCallback(
+    (partial: Partial<MetronomeSettings>) => {
+      if (!memo) {
+        return;
+      }
+      const next = normalizeMetronomeSettings({
+        ...getMemoMetronomeSettings(memo),
+        ...partial,
+      });
+      setMemo({ ...memo, metronome: next });
+      engine.setMetronome(next);
+      pendingMetronomePersist.current = { memoId: memo.id, settings: next };
+
+      if (persistMetronomeTimeout.current) {
+        clearTimeout(persistMetronomeTimeout.current);
+      }
+      persistMetronomeTimeout.current = setTimeout(() => {
+        flushMetronomePersist();
+      }, 300);
+    },
+    [engine, flushMetronomePersist, memo]
+  );
+
+  const handleMetronomeToggle = useCallback(() => {
+    if (!memo) {
+      return;
+    }
+    handleMetronomeChange({ enabled: !getMemoMetronomeSettings(memo).enabled });
+  }, [handleMetronomeChange, memo]);
+
   const handleTrackPress = useCallback(
     (trackId: string) => {
       if (trackId === activeLayerId || savingTrim) {
@@ -1011,12 +1067,13 @@ export default function MemoEditorScreen() {
         clearTimeout(persistLoopTimeout.current);
         persistLoopTimeout.current = null;
       }
+      flushMetronomePersist();
       const current = memoRef.current;
       if (current) {
         deactivateLoopForMemo(engine, current, setMemo);
       }
     };
-  }, [engine, loadMemo, resetLayoutReady]);
+  }, [engine, flushMetronomePersist, loadMemo, resetLayoutReady]);
 
   const handleDone = useCallback(async () => {
     if (!memo) {
@@ -1030,6 +1087,7 @@ export default function MemoEditorScreen() {
     await cancelEditDraft();
     flushEffectsPersist();
     flushStartTimePersist();
+    flushMetronomePersist();
     if (persistLoopTimeout.current) {
       clearTimeout(persistLoopTimeout.current);
       persistLoopTimeout.current = null;
@@ -1043,6 +1101,7 @@ export default function MemoEditorScreen() {
     cancelEditDraft,
     engine,
     flushEffectsPersist,
+    flushMetronomePersist,
     flushStartTimePersist,
     memo,
     stopAndSaveActiveRecording,
@@ -1060,6 +1119,7 @@ export default function MemoEditorScreen() {
     await cancelEditDraft();
     flushEffectsPersist();
     flushStartTimePersist();
+    flushMetronomePersist();
     if (persistLoopTimeout.current) {
       clearTimeout(persistLoopTimeout.current);
       persistLoopTimeout.current = null;
@@ -1073,6 +1133,7 @@ export default function MemoEditorScreen() {
     cancelEditDraft,
     engine,
     flushEffectsPersist,
+    flushMetronomePersist,
     flushStartTimePersist,
     memo,
     stopAndSaveActiveRecording,
@@ -1369,6 +1430,30 @@ export default function MemoEditorScreen() {
     });
   }, [cancelActiveRecording, engineState.monitorMixActive, isRecording]);
 
+  useEffect(() => {
+    if (!memo?.metronome?.enabled) {
+      return;
+    }
+
+    return subscribeHeadphoneDisconnect(() => {
+      const current = memoRef.current;
+      if (!current?.metronome?.enabled) {
+        return;
+      }
+      const next = normalizeMetronomeSettings({
+        ...getMemoMetronomeSettings(current),
+        enabled: false,
+      });
+      setMemo({ ...current, metronome: next });
+      engine.setMetronome(next);
+      void updateMetronomeSettings(current.id, { enabled: false });
+      Alert.alert(
+        'Headphones disconnected',
+        'Metronome turned off. Connect headphones to use it.'
+      );
+    });
+  }, [engine, memo?.metronome?.enabled]);
+
   const showTrackEditor =
     !pendingRecordingLayout &&
     Boolean(activeLayer && activeLayer.duration > 0 && !activeLayerEffects?.muted);
@@ -1417,6 +1502,10 @@ export default function MemoEditorScreen() {
       ? recordingTimelineTime
       : pendingTimelineTime
     : currentTime;
+  const metronomeSettings = useMemo(
+    () => (memo ? getMemoMetronomeSettings(memo) : normalizeMetronomeSettings()),
+    [memo]
+  );
 
   const playableTrackRows = useMemo((): TrackData[] => {
     if (!memo) {
@@ -1692,11 +1781,20 @@ export default function MemoEditorScreen() {
 
             <View style={styles.footer}>
               <View style={styles.timeDisplay}>
+                <View style={styles.timeDisplaySide}>
+                  <MetronomeButton
+                    headphonesConnected={headphonesConnected}
+                    settings={metronomeSettings}
+                    onOpenSettings={() => setMetronomeSettingsVisible(true)}
+                    onToggle={handleMetronomeToggle}
+                  />
+                </View>
                 <Text style={styles.largeTime}>
                   {formatDurationWithTenths(
                     pendingRecordingLayout ? waveformCurrentTime : currentTime
                   )}
                 </Text>
+                <View style={styles.timeDisplaySide} />
               </View>
 
               <PlaybackControls
@@ -1723,6 +1821,12 @@ export default function MemoEditorScreen() {
         visible={colorPickerLayerId !== null}
         onClose={() => setColorPickerLayerId(null)}
         onSelect={handleTrackColorSelect}
+      />
+      <MetronomeSettingsSheet
+        settings={metronomeSettings}
+        visible={metronomeSettingsVisible}
+        onChange={handleMetronomeChange}
+        onClose={() => setMetronomeSettingsVisible(false)}
       />
     </SafeAreaView>
   );
@@ -1793,15 +1897,20 @@ function useMemoEditorStyles(
           justifyContent: 'center',
         },
         timeDisplay: {
+          flexDirection: 'row',
           alignItems: 'center',
-          gap: 4,
           paddingBottom: 4,
         },
+        timeDisplaySide: {
+          width: 32,
+        },
         largeTime: {
+          flex: 1,
           fontSize: 36,
           fontWeight: '300',
           color: colors.text,
           fontVariant: ['tabular-nums'],
+          textAlign: 'center',
         },
         footer: {
           paddingTop: 8,

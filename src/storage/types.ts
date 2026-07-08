@@ -1,4 +1,5 @@
 import {
+  DEFAULT_BPM,
   normalizeLayerEffects,
   type LayerEffects,
 } from '@/src/audio/layerEffects';
@@ -33,6 +34,65 @@ export type Folder = {
   order: number;
 };
 
+export type TimeSignaturePreset = '4/4' | '3/4' | '2/4' | '6/8' | '5/4';
+
+export const TIME_SIGNATURE_PRESETS: TimeSignaturePreset[] = [
+  '4/4',
+  '3/4',
+  '2/4',
+  '6/8',
+  '5/4',
+];
+
+export type MetronomeSettings = {
+  enabled: boolean;
+  bpm: number;
+  timeSignature: TimeSignaturePreset;
+  accentEnabled: boolean;
+  volume: number;
+};
+
+/** @deprecated Legacy field migrated to timeSignature in normalizeMetronomeSettings */
+type LegacyMetronomeSubdivision = '1/4' | '1/8';
+
+type MetronomeSettingsInput = Partial<MetronomeSettings> & {
+  subdivision?: LegacyMetronomeSubdivision;
+};
+
+export const DEFAULT_METRONOME_SETTINGS: MetronomeSettings = {
+  enabled: false,
+  bpm: DEFAULT_BPM,
+  timeSignature: '4/4',
+  accentEnabled: true,
+  volume: 70,
+};
+
+function isTimeSignaturePreset(value: string): value is TimeSignaturePreset {
+  return (TIME_SIGNATURE_PRESETS as string[]).includes(value);
+}
+
+export function normalizeMetronomeSettings(
+  metronome?: MetronomeSettingsInput
+): MetronomeSettings {
+  const defaults = DEFAULT_METRONOME_SETTINGS;
+  const timeSignature =
+    metronome?.timeSignature && isTimeSignaturePreset(metronome.timeSignature)
+      ? metronome.timeSignature
+      : defaults.timeSignature;
+
+  return {
+    enabled: metronome?.enabled ?? defaults.enabled,
+    bpm: Math.max(40, Math.min(240, metronome?.bpm ?? defaults.bpm)),
+    timeSignature,
+    accentEnabled: metronome?.accentEnabled ?? defaults.accentEnabled,
+    volume: Math.max(0, Math.min(100, metronome?.volume ?? defaults.volume)),
+  };
+}
+
+export function getMemoMetronomeSettings(memo: Pick<Memo, 'metronome'>): MetronomeSettings {
+  return normalizeMetronomeSettings(memo.metronome);
+}
+
 export type Memo = {
   id: string;
   title: string;
@@ -44,6 +104,7 @@ export type Memo = {
   loopStart?: number;
   loopEnd?: number;
   loopEnabled?: boolean;
+  metronome?: MetronomeSettings;
   folderId?: string;
   deletedAt?: string;
   layers: Layer[];

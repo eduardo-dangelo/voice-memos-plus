@@ -8,6 +8,7 @@ import {
     FilePreset,
     type AudioBuffer,
     type AudioBufferSourceNode,
+    type GainNode,
 } from 'react-native-audio-api';
 
 import {
@@ -23,6 +24,7 @@ import {
     type LayerEffectPathNodes,
 } from '@/src/audio/layerEffectChain';
 import { mergeLayerEffects, normalizeLayerEffects, type LayerEffects, type LayerEffectsChange } from '@/src/audio/layerEffects';
+import { scheduleMetronomeClicks } from '@/src/audio/metronome';
 import { MemoMixGraph } from '@/src/audio/memoMixGraph';
 import {
     peakToAbsoluteScale,
@@ -35,6 +37,11 @@ import {
     recordingNeedsNormalize,
     resampleMonoBufferFromRate,
 } from '@/src/audio/wavUtils';
+import {
+    DEFAULT_METRONOME_SETTINGS,
+    normalizeMetronomeSettings,
+    type MetronomeSettings,
+} from '@/src/storage/types';
 
 type SessionMode = 'recording' | 'playback' | null;
 
@@ -98,6 +105,7 @@ export type EngineState = {
   loopEnabled: boolean;
   recordingDuration: number;
   recordingPeaks: number[];
+  metronome: MetronomeSettings;
 };
 
 type Listener = (state: EngineState) => void;
@@ -117,6 +125,7 @@ const initialState: EngineState = {
   loopEnabled: false,
   recordingDuration: 0,
   recordingPeaks: [],
+  metronome: DEFAULT_METRONOME_SETTINGS,
 };
 
 export class MemoAudioEngine {
@@ -141,6 +150,9 @@ export class MemoAudioEngine {
   private recordingPeaksBuffer: number[] = [];
   private activeLayerPlayback = new Map<string, ActiveLayerPlayback>();
   private mixGraph = new MemoMixGraph();
+  private metronomeSettings: MetronomeSettings = DEFAULT_METRONOME_SETTINGS;
+  private metronomeGain: GainNode | null = null;
+  private metronomeSources: AudioBufferSourceNode[] = [];
 
   constructor() {
     AudioManager.addSystemEventListener('routeChange', () => {
@@ -527,14 +539,84 @@ export class MemoAudioEngine {
     this.activeLayerPlayback.clear();
   }
 
+  private stopMetronomeSources(): void {
+    for (const source of this.metronomeSources) {
+      this.stopSource(source);
+    }
+    this.metronomeSources = [];
+  }
+
   private invalidateAndStopSources(): void {
     this.invalidatePlaybackSession();
     this.clearPlaybackTimer();
     this.playbackContextStartWhen = 0;
+    this.stopMetronomeSources();
     this.stopActiveSources();
   }
 
+  private ensureMetronomeGain(context: AudioContext): GainNode {
+    if (!this.metronomeGain) {
+      const master = this.mixGraph.getMasterGain(context);
+      this.metronomeGain = context.createGain();
+      this.metronomeGain.gain.value = this.metronomeSettings.volume / 100;
+      this.metronomeGain.connect(master);
+    }
+    return this.metronomeGain;
+  }
+
+  private shouldPlayMetronome(): boolean {
+    if (!this.metronomeSettings.enabled) {
+      return false;
+    }
+    if (this.state.isRecording && !this.state.monitorMixActive) {
+      return false;
+    }
+    return this.playbackContextStartWhen > 0 || this.state.isPlaying;
+  }
+
+  private scheduleMetronome(
+    context: AudioContext,
+    startAt: number,
+    endAt: number,
+    startWhen: number
+  ): void {
+    this.stopMetronomeSources();
+    if (!this.shouldPlayMetronome()) {
+      return;
+    }
+
+    const gain = this.ensureMetronomeGain(context);
+    gain.gain.value = this.metronomeSettings.volume / 100;
+    this.metronomeSources = scheduleMetronomeClicks(
+      context,
+      gain,
+      this.metronomeSettings,
+      startAt,
+      endAt,
+      startWhen
+    );
+  }
+
+  private resyncMetronome(): void {
+    if (!this.context || this.playbackContextStartWhen <= 0) {
+      return;
+    }
+
+    const startAt = this.getElapsedPlaybackTime(this.context);
+    const endAt = this.playbackEndAt;
+    const startWhen = this.context.currentTime + PLAYBACK_SCHEDULE_LEAD;
+    this.scheduleMetronome(this.context, startAt, endAt, startWhen);
+  }
+
   private disposeMixGraph(): void {
+    if (this.metronomeGain) {
+      try {
+        this.metronomeGain.disconnect();
+      } catch {
+        // Already disconnected.
+      }
+      this.metronomeGain = null;
+    }
     this.mixGraph.dispose();
     this.mixGraph = new MemoMixGraph();
   }
@@ -800,6 +882,7 @@ export class MemoAudioEngine {
     }
     if (this.state.loopEnabled && this.hasValidLoop()) {
       this.clearPlaybackTimer();
+      this.stopMetronomeSources();
       this.stopActiveSources();
       this.playbackContextStartWhen = 0;
       this.emit({ currentTime: this.state.loopStart, isPlaying: true });
@@ -945,6 +1028,20 @@ export class MemoAudioEngine {
     this.resyncPlaybackAtCurrentTime();
   }
 
+  setMetronome(settings: MetronomeSettings): void {
+    const normalized = normalizeMetronomeSettings(settings);
+    this.metronomeSettings = normalized;
+    this.emit({ metronome: normalized });
+
+    if (this.context && this.metronomeGain) {
+      this.metronomeGain.gain.value = normalized.volume / 100;
+    }
+
+    if (this.playbackContextStartWhen > 0) {
+      this.resyncMetronome();
+    }
+  }
+
   updateLayerEffects(layerId: string, partial: LayerEffectsChange): void {
     const layer = this.loadedLayers.find((entry) => entry.id === layerId);
     if (!layer) {
@@ -1016,6 +1113,7 @@ export class MemoAudioEngine {
   unload(): void {
     this.stopPlayback();
     this.loadedLayers = [];
+    this.metronomeSettings = DEFAULT_METRONOME_SETTINGS;
     this.disposeMixGraph();
     clearReverbIrCache();
     this.invalidateLayerBuffers();
@@ -1381,6 +1479,7 @@ export class MemoAudioEngine {
         return;
       }
 
+      this.scheduleMetronome(context, startAt, endAt, when);
       this.startPlaybackTimer(sessionId, context);
     } catch (error) {
       this.invalidateAndStopSources();

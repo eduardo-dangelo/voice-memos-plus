@@ -28,14 +28,16 @@ import {
   requireLayerFile,
   resolveMemoDir,
 } from './paths';
-import type { Layer, Memo } from './types';
+import type { Layer, Memo, MetronomeSettings } from './types';
 import {
   getDefaultLayerLabel,
   getLayerEffects,
+  getMemoMetronomeSettings,
   getMemoTimelineDuration,
   getPlayableLayers,
   normalizeLayers,
   normalizeLoopRegion,
+  normalizeMetronomeSettings,
   getEarliestTrimInTimelineDelta,
 } from './types';
 
@@ -331,6 +333,23 @@ export async function deactivateMemoLoop(memoId: string): Promise<Memo | null> {
     return memo;
   }
   return updateLoopRegion(memoId, memo.loopStart ?? 0, memo.loopEnd ?? 0, false);
+}
+
+export async function updateMetronomeSettings(
+  memoId: string,
+  partial: Partial<MetronomeSettings>
+): Promise<Memo> {
+  const memo = await getMemo(memoId);
+  if (!memo) {
+    throw new Error('Memo not found');
+  }
+  memo.metronome = normalizeMetronomeSettings({
+    ...getMemoMetronomeSettings(memo),
+    ...partial,
+  });
+  memo.updatedAt = new Date().toISOString();
+  writeManifest(memo);
+  return memo;
 }
 
 export async function updateTrim(
