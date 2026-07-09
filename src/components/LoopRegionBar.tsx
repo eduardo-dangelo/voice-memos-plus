@@ -8,12 +8,10 @@ import {
   type PanResponderGestureState,
 } from 'react-native';
 
-import { WAVEFORM_PIXELS_PER_SECOND } from '@/src/audio/waveform';
 import { MIN_LOOP_DURATION } from '@/src/storage/types';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
 export const LOOP_ROW_HEIGHT = 16;
-const PIXELS_PER_SECOND = WAVEFORM_PIXELS_PER_SECOND;
 const LOOP_HANDLE_TOUCH = 14;
 const LOOP_ENABLED_FILL = '#FFCC00';
 const TAP_MOVE_THRESHOLD = 6;
@@ -36,29 +34,37 @@ export type LoopOverlayConfig = {
 type Props = {
   bandWidth: number;
   sidePadding: number;
+  pixelsPerSecond: number;
   config: LoopOverlayConfig;
   scrollHelpers: LoopScrollHelpers;
   disabled?: boolean;
   editDisabled?: boolean;
 };
 
-function contentXToTime(x: number, sidePadding: number, duration: number): number {
-  return Math.max(0, Math.min(duration, (x - sidePadding) / PIXELS_PER_SECOND));
+function contentXToTime(
+  x: number,
+  sidePadding: number,
+  duration: number,
+  pixelsPerSecond: number
+): number {
+  return Math.max(0, Math.min(duration, (x - sidePadding) / pixelsPerSecond));
 }
 
-function timeToContentX(time: number, sidePadding: number): number {
-  return sidePadding + time * PIXELS_PER_SECOND;
+function timeToContentX(time: number, sidePadding: number, pixelsPerSecond: number): number {
+  return sidePadding + time * pixelsPerSecond;
 }
 
 function LoopRulerTicks({
   sidePadding,
   duration,
   height,
+  pixelsPerSecond,
   styles,
 }: {
   sidePadding: number;
   duration: number;
   height: number;
+  pixelsPerSecond: number;
   styles: ReturnType<typeof createLoopRegionStyles>;
 }) {
   const seconds = useMemo(() => {
@@ -78,7 +84,7 @@ function LoopRulerTicks({
         <View
           key={second}
           pointerEvents="none"
-          style={[styles.rulerMarker, { left: sidePadding + second * PIXELS_PER_SECOND }]}>
+          style={[styles.rulerMarker, { left: sidePadding + second * pixelsPerSecond }]}>
           <View style={[styles.rulerTick, { height: Math.min(6, height) }]} />
         </View>
       ))}
@@ -89,6 +95,7 @@ function LoopRulerTicks({
 export function LoopRegionBar({
   bandWidth,
   sidePadding,
+  pixelsPerSecond,
   config,
   scrollHelpers,
   disabled = false,
@@ -120,6 +127,7 @@ export function LoopRegionBar({
   const scrollHelpersRef = useRef(scrollHelpers);
   const sidePaddingRef = useRef(sidePadding);
   const durationRef = useRef(duration);
+  const pixelsPerSecondRef = useRef(pixelsPerSecond);
   const loopEnabledRef = useRef(loopEnabled);
   const loopStartRef = useRef(loopStart);
   const loopEndRef = useRef(loopEnd);
@@ -128,6 +136,7 @@ export function LoopRegionBar({
   scrollHelpersRef.current = scrollHelpers;
   sidePaddingRef.current = sidePadding;
   durationRef.current = duration;
+  pixelsPerSecondRef.current = pixelsPerSecond;
   loopEnabledRef.current = loopEnabled;
   loopStartRef.current = loopStart;
   loopEndRef.current = loopEnd;
@@ -176,7 +185,12 @@ export function LoopRegionBar({
     }
     beginGesture();
     grantX.current = event.nativeEvent.locationX;
-    const time = contentXToTime(event.nativeEvent.locationX, sidePaddingRef.current, durationRef.current);
+    const time = contentXToTime(
+      event.nativeEvent.locationX,
+      sidePaddingRef.current,
+      durationRef.current,
+      pixelsPerSecondRef.current
+    );
     createStartTime.current = time;
     updatePreview({ start: time, end: time });
   };
@@ -188,9 +202,10 @@ export function LoopRegionBar({
     }
     const padding = sidePaddingRef.current;
     const dur = durationRef.current;
+    const pps = pixelsPerSecondRef.current;
     const endX = grantX.current + getEffectiveDx(gesture);
     applyEdgeAutoScroll(endX);
-    const endTime = contentXToTime(endX, padding, dur);
+    const endTime = contentXToTime(endX, padding, dur, pps);
     const startTime = createStartTime.current;
     updatePreview({
       start: Math.min(startTime, endTime),
@@ -206,9 +221,10 @@ export function LoopRegionBar({
     }
     const padding = sidePaddingRef.current;
     const dur = durationRef.current;
+    const pps = pixelsPerSecondRef.current;
     const movement = Math.abs(gesture.dx) + Math.abs(gesture.dy);
     const endX = grantX.current + getEffectiveDx(gesture);
-    const endTime = contentXToTime(endX, padding, dur);
+    const endTime = contentXToTime(endX, padding, dur, pps);
     const startTime = createStartTime.current;
     const nextStart = Math.min(startTime, endTime);
     const nextEnd = Math.max(startTime, endTime);
@@ -222,12 +238,15 @@ export function LoopRegionBar({
   const leftMoveRef = useRef((_event: GestureResponderEvent, gesture: PanResponderGestureState) => {});
   leftMoveRef.current = (_event, gesture) => {
     const padding = sidePaddingRef.current;
+    const pps = pixelsPerSecondRef.current;
     const preliminaryDx = getEffectiveDx(gesture);
-    applyEdgeAutoScroll(padding + (startLoopStart.current + preliminaryDx / PIXELS_PER_SECOND) * PIXELS_PER_SECOND);
+    applyEdgeAutoScroll(
+      padding + (startLoopStart.current + preliminaryDx / pps) * pps
+    );
     const effectiveDx = getEffectiveDx(gesture);
     const nextStart = Math.max(
       0,
-      Math.min(startLoopStart.current + effectiveDx / PIXELS_PER_SECOND, startLoopEnd.current - MIN_LOOP_DURATION)
+      Math.min(startLoopStart.current + effectiveDx / pps, startLoopEnd.current - MIN_LOOP_DURATION)
     );
     updatePreview({ start: nextStart, end: startLoopEnd.current });
   };
@@ -244,12 +263,15 @@ export function LoopRegionBar({
   const rightMoveRef = useRef((_event: GestureResponderEvent, gesture: PanResponderGestureState) => {});
   rightMoveRef.current = (_event, gesture) => {
     const padding = sidePaddingRef.current;
+    const pps = pixelsPerSecondRef.current;
     const preliminaryDx = getEffectiveDx(gesture);
-    applyEdgeAutoScroll(padding + (startLoopEnd.current + preliminaryDx / PIXELS_PER_SECOND) * PIXELS_PER_SECOND);
+    applyEdgeAutoScroll(
+      padding + (startLoopEnd.current + preliminaryDx / pps) * pps
+    );
     const effectiveDx = getEffectiveDx(gesture);
     const nextEnd = Math.min(
       durationRef.current,
-      Math.max(startLoopEnd.current + effectiveDx / PIXELS_PER_SECOND, startLoopStart.current + MIN_LOOP_DURATION)
+      Math.max(startLoopEnd.current + effectiveDx / pps, startLoopStart.current + MIN_LOOP_DURATION)
     );
     updatePreview({ start: startLoopStart.current, end: nextEnd });
   };
@@ -349,8 +371,8 @@ export function LoopRegionBar({
     })
   ).current;
 
-  const regionLeft = displayHasRegion ? timeToContentX(displayStart, sidePadding) : 0;
-  const regionRight = displayHasRegion ? timeToContentX(displayEnd, sidePadding) : 0;
+  const regionLeft = displayHasRegion ? timeToContentX(displayStart, sidePadding, pixelsPerSecond) : 0;
+  const regionRight = displayHasRegion ? timeToContentX(displayEnd, sidePadding, pixelsPerSecond) : 0;
   const regionWidth = displayHasRegion ? Math.max(2, regionRight - regionLeft) : 0;
   const regionFillColor = displayEnabled
     ? LOOP_ENABLED_FILL
@@ -359,7 +381,13 @@ export function LoopRegionBar({
   return (
     <View style={[styles.bar, { width: bandWidth, height: LOOP_ROW_HEIGHT }]}>
       <View pointerEvents="none" style={[styles.rulerLayer, { width: bandWidth, height: LOOP_ROW_HEIGHT }]}>
-        <LoopRulerTicks duration={duration} height={LOOP_ROW_HEIGHT} sidePadding={sidePadding} styles={styles} />
+        <LoopRulerTicks
+          duration={duration}
+          height={LOOP_ROW_HEIGHT}
+          pixelsPerSecond={pixelsPerSecond}
+          sidePadding={sidePadding}
+          styles={styles}
+        />
       </View>
 
       {displayHasRegion ? (

@@ -1,27 +1,35 @@
-import { createContext, memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import * as Haptics from 'expo-haptics';
+import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   LayoutChangeEvent,
   NativeScrollEvent,
   NativeSyntheticEvent,
   PanResponder,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
   type GestureResponderEvent,
   type PanResponderGestureState,
 } from 'react-native';
+import { ScrollView } from 'react-native-gesture-handler';
 
 import { colorWithAlpha, type VoiceMemosColorScheme } from '@/constants/VoiceMemosColors';
 import { clampTrimValues, dbToLinear } from '@/src/audio/layerEffects';
+import {
+  applyPinchDeltaToPixelsPerSecond,
+  applyPinchDeltaToTrackZoom,
+  clampTimelinePixelsPerSecond,
+  clampTimelineTrackZoom,
+  getTimelineZoomBounds,
+  TIMELINE_DEFAULT_PIXELS_PER_SECOND,
+} from '@/src/audio/timelineZoom';
 import {
   getPeaksForMemo,
   peakToAbsoluteScale,
   resamplePeaks,
   WAVEFORM_BAR_GAP,
   WAVEFORM_BAR_WIDTH,
-  WAVEFORM_PIXELS_PER_SECOND,
 } from '@/src/audio/waveform';
 import { LOOP_ROW_HEIGHT, LoopRegionBar, type LoopOverlayConfig } from '@/src/components/LoopRegionBar';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
@@ -30,7 +38,6 @@ import { formatMarkerTime } from '@/src/utils/format';
 const BAR_WIDTH = WAVEFORM_BAR_WIDTH;
 const BAR_GAP = WAVEFORM_BAR_GAP;
 const BAR_STEP = BAR_WIDTH + BAR_GAP;
-const PIXELS_PER_SECOND = WAVEFORM_PIXELS_PER_SECOND;
 const MARKER_ROW_HEIGHT = 24;
 const PLAYHEAD_CAP_SIZE = 6;
 const MIN_LABEL_SPACING = 48;
@@ -43,6 +50,59 @@ const TRIM_EDGE_SCROLL_ZONE = 56;
 const TRIM_EDGE_SCROLL_MAX_SPEED = 12;
 const TRIM_HANDLE_COLOR = '#FFCC00';
 const MOVE_BORDER_WIDTH = 2;
+const MIN_PINCH_SPAN = 10;
+const TRACK_ZOOM_SCROLL_THRESHOLD = 1.01;
+
+type ZoomGestureStart = {
+  spanX: number;
+  spanY: number;
+  pixelsPerSecond: number;
+  trackZoom: number;
+  scrollX: number;
+  scrollY: number;
+  focalX: number;
+  focalY: number;
+  tracksTop: number;
+};
+
+type FrozenTimelineZoom = {
+  pixelsPerSecond: number;
+  trackZoom: number;
+  verticalScrollY: number;
+};
+
+type PageOffset = {
+  x: number;
+  y: number;
+};
+
+function getTwoFingerSpan(
+  touches: ReadonlyArray<{ pageX: number; pageY: number }>,
+  offset: PageOffset
+): Pick<ZoomGestureStart, 'spanX' | 'spanY' | 'focalX' | 'focalY'> | null {
+  if (touches.length < 2) {
+    return null;
+  }
+  const first = touches[0];
+  const second = touches[1];
+  const firstX = first.pageX - offset.x;
+  const firstY = first.pageY - offset.y;
+  const secondX = second.pageX - offset.x;
+  const secondY = second.pageY - offset.y;
+  return {
+    spanX: Math.max(Math.abs(firstX - secondX), MIN_PINCH_SPAN),
+    spanY: Math.max(Math.abs(firstY - secondY), MIN_PINCH_SPAN),
+    focalX: (firstX + secondX) / 2,
+    focalY: (firstY + secondY) / 2,
+  };
+}
+
+function shouldCaptureTwoFingerZoom(
+  touches: ReadonlyArray<unknown>,
+  zoomEnabled: boolean
+): boolean {
+  return zoomEnabled && touches.length >= 2;
+}
 
 type WaveformTheme = {
   colors: VoiceMemosColorScheme;
@@ -86,12 +146,13 @@ function getLayoutDuration(
   duration: number,
   currentTime: number,
   viewportWidth: number,
-  recordingLayoutActive: boolean
+  recordingLayoutActive: boolean,
+  pixelsPerSecond: number
 ): number {
   if (!recordingLayoutActive) {
     return duration;
   }
-  const viewportSeconds = viewportWidth > 0 ? viewportWidth / PIXELS_PER_SECOND : 0;
+  const viewportSeconds = viewportWidth > 0 ? viewportWidth / pixelsPerSecond : 0;
   const headroom = Math.max(TIMELINE_HEADROOM_SECONDS, viewportSeconds);
   const raw = currentTime + headroom;
   return Math.max(duration, Math.ceil(raw / LAYOUT_DURATION_STEP_SECONDS) * LAYOUT_DURATION_STEP_SECONDS);
@@ -135,33 +196,37 @@ type Props = {
   volumeVisualDb?: number;
 };
 
-function getMarkerInterval(): number {
-  if (PIXELS_PER_SECOND >= MIN_LABEL_SPACING) {
+function getMarkerInterval(pixelsPerSecond: number): number {
+  if (pixelsPerSecond >= MIN_LABEL_SPACING) {
     return 1;
   }
-  if (PIXELS_PER_SECOND * 5 >= MIN_LABEL_SPACING) {
+  if (pixelsPerSecond * 5 >= MIN_LABEL_SPACING) {
     return 5;
   }
-  if (PIXELS_PER_SECOND * 10 >= MIN_LABEL_SPACING) {
+  if (pixelsPerSecond * 10 >= MIN_LABEL_SPACING) {
     return 10;
   }
   return 30;
 }
 
-function getTrackBarCount(trackDuration: number, contentWidth: number): number {
+function getTrackBarCount(
+  trackDuration: number,
+  contentWidth: number,
+  pixelsPerSecond: number
+): number {
   if (trackDuration <= 0) {
     return 0;
   }
-  const targetWidth = trackDuration * PIXELS_PER_SECOND;
+  const targetWidth = trackDuration * pixelsPerSecond;
   return Math.max(1, Math.floor(Math.min(contentWidth, targetWidth) / BAR_STEP));
 }
 
-function timeToScrollX(time: number, contentWidth: number): number {
-  return Math.max(0, Math.min(contentWidth, time * PIXELS_PER_SECOND));
+function timeToScrollX(time: number, contentWidth: number, pixelsPerSecond: number): number {
+  return Math.max(0, Math.min(contentWidth, time * pixelsPerSecond));
 }
 
-function scrollXToTime(x: number, duration: number): number {
-  return Math.max(0, Math.min(duration, x / PIXELS_PER_SECOND));
+function scrollXToTime(x: number, duration: number, pixelsPerSecond: number): number {
+  return Math.max(0, Math.min(duration, x / pixelsPerSecond));
 }
 
 function isOutsideTimelinePress(
@@ -217,6 +282,7 @@ function TrackTrimOverlay({
   trackHeight,
   trimIn,
   trimOut,
+  pixelsPerSecond,
   onChange,
   trimScrollHelpers,
 }: {
@@ -225,14 +291,15 @@ function TrackTrimOverlay({
   trackHeight: number;
   trimIn: number;
   trimOut: number;
+  pixelsPerSecond: number;
   onChange: (trimIn: number, trimOut: number) => void;
   trimScrollHelpers: TrimScrollHelpers;
 }) {
   const { styles } = useWaveformTheme();
-  const trackOffset = sidePadding + track.startTime * PIXELS_PER_SECOND;
-  const trimLeft = trackOffset + trimIn * PIXELS_PER_SECOND;
-  const trimRight = trackOffset + trimOut * PIXELS_PER_SECOND;
-  const trackEnd = trackOffset + track.duration * PIXELS_PER_SECOND;
+  const trackOffset = sidePadding + track.startTime * pixelsPerSecond;
+  const trimLeft = trackOffset + trimIn * pixelsPerSecond;
+  const trimRight = trackOffset + trimOut * pixelsPerSecond;
+  const trackEnd = trackOffset + track.duration * pixelsPerSecond;
   const startTrimIn = useRef(trimIn);
   const startTrimOut = useRef(trimOut);
   const scrollXAtGrant = useRef(0);
@@ -240,10 +307,12 @@ function TrackTrimOverlay({
   const trimScrollHelpersRef = useRef(trimScrollHelpers);
   const trackRef = useRef(track);
   const sidePaddingRef = useRef(sidePadding);
+  const pixelsPerSecondRef = useRef(pixelsPerSecond);
   onChangeRef.current = onChange;
   trimScrollHelpersRef.current = trimScrollHelpers;
   trackRef.current = track;
   sidePaddingRef.current = sidePadding;
+  pixelsPerSecondRef.current = pixelsPerSecond;
 
   const beginTrimGestureRef = useRef(() => {});
   beginTrimGestureRef.current = () => {
@@ -270,14 +339,15 @@ function TrackTrimOverlay({
   const leftMoveRef = useRef((_event: GestureResponderEvent, gesture: PanResponderGestureState) => {});
   leftMoveRef.current = (_event, gesture) => {
     const trackData = trackRef.current;
-    const offset = sidePaddingRef.current + trackData.startTime * PIXELS_PER_SECOND;
+    const pps = pixelsPerSecondRef.current;
+    const offset = sidePaddingRef.current + trackData.startTime * pps;
     const preliminaryDx = getEffectiveDx(gesture);
     applyEdgeAutoScroll(
-      offset + (startTrimIn.current + preliminaryDx / PIXELS_PER_SECOND) * PIXELS_PER_SECOND
+      offset + (startTrimIn.current + preliminaryDx / pps) * pps
     );
     const effectiveDx = getEffectiveDx(gesture);
     const next = clampTrimValues(
-      startTrimIn.current + effectiveDx / PIXELS_PER_SECOND,
+      startTrimIn.current + effectiveDx / pps,
       startTrimOut.current,
       trackData.duration
     );
@@ -287,15 +357,16 @@ function TrackTrimOverlay({
   const rightMoveRef = useRef((_event: GestureResponderEvent, gesture: PanResponderGestureState) => {});
   rightMoveRef.current = (_event, gesture) => {
     const trackData = trackRef.current;
-    const offset = sidePaddingRef.current + trackData.startTime * PIXELS_PER_SECOND;
+    const pps = pixelsPerSecondRef.current;
+    const offset = sidePaddingRef.current + trackData.startTime * pps;
     const preliminaryDx = getEffectiveDx(gesture);
     applyEdgeAutoScroll(
-      offset + (startTrimOut.current + preliminaryDx / PIXELS_PER_SECOND) * PIXELS_PER_SECOND
+      offset + (startTrimOut.current + preliminaryDx / pps) * pps
     );
     const effectiveDx = getEffectiveDx(gesture);
     const next = clampTrimValues(
       startTrimIn.current,
-      startTrimOut.current + effectiveDx / PIXELS_PER_SECOND,
+      startTrimOut.current + effectiveDx / pps,
       trackData.duration
     );
     onChangeRef.current(next.trimIn, next.trimOut);
@@ -399,6 +470,7 @@ function TrackMoveOverlay({
   trackColor,
   layerStartTime,
   trimIn,
+  pixelsPerSecond,
   onChange,
   trimScrollHelpers,
 }: {
@@ -408,22 +480,25 @@ function TrackMoveOverlay({
   trackColor: string;
   layerStartTime: number;
   trimIn: number;
+  pixelsPerSecond: number;
   onChange: (startTime: number) => void;
   trimScrollHelpers: TrimScrollHelpers;
 }) {
   const { styles } = useWaveformTheme();
-  const segmentLeft = sidePadding + track.startTime * PIXELS_PER_SECOND;
-  const segmentWidth = track.duration * PIXELS_PER_SECOND;
+  const segmentLeft = sidePadding + track.startTime * pixelsPerSecond;
+  const segmentWidth = track.duration * pixelsPerSecond;
   const startLayerStartTime = useRef(layerStartTime);
   const scrollXAtGrant = useRef(0);
   const onChangeRef = useRef(onChange);
   const trimScrollHelpersRef = useRef(trimScrollHelpers);
   const sidePaddingRef = useRef(sidePadding);
   const trimInRef = useRef(trimIn);
+  const pixelsPerSecondRef = useRef(pixelsPerSecond);
   onChangeRef.current = onChange;
   trimScrollHelpersRef.current = trimScrollHelpers;
   sidePaddingRef.current = sidePadding;
   trimInRef.current = trimIn;
+  pixelsPerSecondRef.current = pixelsPerSecond;
 
   const beginGestureRef = useRef(() => {});
   beginGestureRef.current = () => {
@@ -448,6 +523,7 @@ function TrackMoveOverlay({
 
   const moveRef = useRef((_event: GestureResponderEvent, gesture: PanResponderGestureState) => {});
   moveRef.current = (_event, gesture) => {
+    const pps = pixelsPerSecondRef.current;
     const preliminaryDx = getEffectiveDx(gesture);
     applyEdgeAutoScroll(
       segmentLeft + preliminaryDx
@@ -455,7 +531,7 @@ function TrackMoveOverlay({
     const effectiveDx = getEffectiveDx(gesture);
     const nextStartTime = Math.max(
       -trimInRef.current,
-      startLayerStartTime.current + effectiveDx / PIXELS_PER_SECOND
+      startLayerStartTime.current + effectiveDx / pps
     );
     onChangeRef.current(nextStartTime);
   };
@@ -575,6 +651,7 @@ type TrackWaveformRowProps = {
   contentWidth: number;
   sidePadding: number;
   trackHeight: number;
+  pixelsPerSecond: number;
   onPress: (locationX: number) => void;
   onLongPress?: () => void;
   trimOverlay?: TrimOverlayConfig;
@@ -582,6 +659,7 @@ type TrackWaveformRowProps = {
   volumeVisualDb?: number;
   trimScrollHelpers?: TrimScrollHelpers;
   scrollPriority?: boolean;
+  showBottomDivider?: boolean;
 };
 
 function areTrackWaveformRowPropsEqual(
@@ -593,7 +671,9 @@ function areTrackWaveformRowPropsEqual(
     prev.contentWidth !== next.contentWidth ||
     prev.sidePadding !== next.sidePadding ||
     prev.trackHeight !== next.trackHeight ||
+    prev.pixelsPerSecond !== next.pixelsPerSecond ||
     prev.scrollPriority !== next.scrollPriority ||
+    prev.showBottomDivider !== next.showBottomDivider ||
     prev.volumeVisualDb !== next.volumeVisualDb ||
     prev.trimScrollHelpers !== next.trimScrollHelpers
   ) {
@@ -622,6 +702,7 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
   contentWidth,
   sidePadding,
   trackHeight,
+  pixelsPerSecond,
   onPress,
   onLongPress,
   trimOverlay,
@@ -629,6 +710,7 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
   volumeVisualDb,
   trimScrollHelpers,
   scrollPriority = false,
+  showBottomDivider = false,
 }: TrackWaveformRowProps) {
   const { styles, colors } = useWaveformTheme();
   const touchStartRef = useRef({ x: 0, y: 0 });
@@ -647,8 +729,8 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
     }
   };
 
-  const barCount = getTrackBarCount(track.duration, contentWidth);
-  const trackOffset = track.startTime * PIXELS_PER_SECOND;
+  const barCount = getTrackBarCount(track.duration, contentWidth, pixelsPerSecond);
+  const trackOffset = track.startTime * pixelsPerSecond;
   const trackWidth = barCount * BAR_STEP;
 
   const normalizedPeaks = useMemo(() => {
@@ -661,9 +743,9 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
 
   const liveRecording = track.liveRecording;
   const liveBarCount = liveRecording
-    ? getTrackBarCount(liveRecording.duration, contentWidth)
+    ? getTrackBarCount(liveRecording.duration, contentWidth, pixelsPerSecond)
     : 0;
-  const liveTrackOffset = liveRecording ? liveRecording.startTime * PIXELS_PER_SECOND : 0;
+  const liveTrackOffset = liveRecording ? liveRecording.startTime * pixelsPerSecond : 0;
   const liveTrackWidth = liveBarCount * BAR_STEP;
 
   const normalizedLivePeaks = useMemo(() => {
@@ -679,13 +761,13 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
 
   const replaceTailDimLeft =
     track.replaceTailDimFrom !== undefined
-      ? sidePadding + track.replaceTailDimFrom * PIXELS_PER_SECOND
+      ? sidePadding + track.replaceTailDimFrom * pixelsPerSecond
       : 0;
   const replaceTailDimWidth =
     track.replaceTailDimFrom !== undefined
       ? Math.max(
           0,
-          (track.startTime + track.duration - track.replaceTailDimFrom) * PIXELS_PER_SECOND
+          (track.startTime + track.duration - track.replaceTailDimFrom) * pixelsPerSecond
         )
       : 0;
 
@@ -715,11 +797,11 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
         : liveTrackOffset + liveTrackWidth;
   const selectionStart =
     showTrimOverlay && trimOverlay
-      ? trackOffset + trimOverlay.trimIn * PIXELS_PER_SECOND
+      ? trackOffset + trimOverlay.trimIn * pixelsPerSecond
       : fullSelectionStart;
   const selectionEnd =
     showTrimOverlay && trimOverlay
-      ? trackOffset + trimOverlay.trimOut * PIXELS_PER_SECOND
+      ? trackOffset + trimOverlay.trimOut * pixelsPerSecond
       : fullSelectionEnd;
   const selectionWidth = selectionEnd - selectionStart;
 
@@ -780,7 +862,7 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
                   scaled <= 0.01
                     ? 2
                     : Math.max(4, Math.min(trackHeight - 16, scaled * (trackHeight - 16)));
-                const barTime = (index * BAR_STEP) / PIXELS_PER_SECOND;
+                const barTime = (index * BAR_STEP) / pixelsPerSecond;
                 const inKeepRegion =
                   !showTrimOverlay ||
                   !trimOverlay ||
@@ -849,6 +931,7 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
       ) : null}
       {showTrimOverlay && trimOverlay && trimScrollHelpers ? (
         <TrackTrimOverlay
+          pixelsPerSecond={pixelsPerSecond}
           sidePadding={sidePadding}
           track={track}
           trackHeight={trackHeight}
@@ -861,6 +944,7 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
       {showMoveOverlay && moveOverlay && trimScrollHelpers ? (
         <TrackMoveOverlay
           layerStartTime={moveOverlay.startTime}
+          pixelsPerSecond={pixelsPerSecond}
           sidePadding={sidePadding}
           track={track}
           trackColor={trackColor}
@@ -889,6 +973,10 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
       ) : null}
     </View>
   );
+
+  const bottomDivider = showBottomDivider ? (
+    <View pointerEvents="none" style={[styles.trackDivider, { width: bandWidth }]} />
+  ) : null;
 
   if (scrollPriority) {
     return (
@@ -924,6 +1012,7 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
           }
         }}>
         {rowContent}
+        {bottomDivider}
       </View>
     );
   }
@@ -935,6 +1024,7 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
       onPress={(event) => onPress(event.nativeEvent.locationX)}
       style={[styles.trackRow, { height: trackHeight }]}>
       {rowContent}
+      {bottomDivider}
     </Pressable>
   );
 }, areTrackWaveformRowPropsEqual);
@@ -962,11 +1052,16 @@ export function WaveformView({
   const styles = useMemo(() => createWaveformStyles(colors), [colors]);
   const theme = useMemo(() => ({ colors, styles }), [colors, styles]);
   const scrollRef = useRef<ScrollView>(null);
+  const verticalScrollRef = useRef<ScrollView>(null);
   const isUserScrollingRef = useRef(false);
   const scrollOffsetRef = useRef(0);
+  const verticalScrollOffsetRef = useRef(0);
   const trimGestureActiveRef = useRef(false);
+  const zoomGestureActiveRef = useRef(false);
   const [trimGestureActive, setTrimGestureActive] = useState(false);
+  const [zoomGestureActive, setZoomGestureActive] = useState(false);
   const maxScrollXRef = useRef(0);
+  const maxScrollYRef = useRef(0);
   const getPlaybackTimeRef = useRef(getPlaybackTime);
   getPlaybackTimeRef.current = getPlaybackTime;
   const getRecordingTimeRef = useRef(getRecordingTime);
@@ -984,16 +1079,43 @@ export function WaveformView({
   onTrackLongPressRef.current = onTrackLongPress;
   const [viewportWidth, setViewportWidth] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
+  const [pixelsPerSecond, setPixelsPerSecond] = useState(TIMELINE_DEFAULT_PIXELS_PER_SECOND);
+  const [trackZoom, setTrackZoom] = useState(1);
+  const pixelsPerSecondRef = useRef(pixelsPerSecond);
+  pixelsPerSecondRef.current = pixelsPerSecond;
+  const trackZoomRef = useRef(trackZoom);
+  trackZoomRef.current = trackZoom;
+  const zoomBoundsRef = useRef(getTimelineZoomBounds(0, 0, 1));
+  const zoomGestureStartRef = useRef<ZoomGestureStart | null>(null);
+  const hitZoomBoundRef = useRef(false);
+  const containerRef = useRef<View>(null);
+  const containerPageOffsetRef = useRef<PageOffset>({ x: 0, y: 0 });
+  const loopOverlayRef = useRef(loopOverlay);
+  loopOverlayRef.current = loopOverlay;
+  const lastDoubleTapAtRef = useRef(0);
+  const frozenZoomRef = useRef<FrozenTimelineZoom | null>(null);
+  const prevFollowRecordingScrollRef = useRef(false);
 
   const followRecordingScroll = recordingLayoutActive || isRecording;
+  const followRecordingScrollRef = useRef(followRecordingScroll);
+  followRecordingScrollRef.current = followRecordingScroll;
+  const zoomBounds = useMemo(
+    () => getTimelineZoomBounds(viewportWidth, duration, tracks.length),
+    [viewportWidth, duration, tracks.length]
+  );
+  zoomBoundsRef.current = zoomBounds;
+  const frozenZoom = followRecordingScroll ? frozenZoomRef.current : null;
+  const layoutPixelsPerSecond = frozenZoom?.pixelsPerSecond ?? pixelsPerSecond;
+  const layoutTrackZoom = frozenZoom?.trackZoom ?? trackZoom;
 
   const layoutDuration = getLayoutDuration(
     duration,
     currentTime,
     viewportWidth,
-    followRecordingScroll
+    followRecordingScroll,
+    layoutPixelsPerSecond
   );
-  const targetWidth = layoutDuration > 0 ? layoutDuration * PIXELS_PER_SECOND : 0;
+  const targetWidth = layoutDuration > 0 ? layoutDuration * layoutPixelsPerSecond : 0;
   const barCount =
     targetWidth > 0
       ? Math.max(1, Math.floor(targetWidth / BAR_STEP))
@@ -1012,11 +1134,15 @@ export function WaveformView({
     viewportHeight > 0 ? viewportHeight - MARKER_ROW_HEIGHT - LOOP_ROW_HEIGHT : 1
   );
   const playheadHeight = waveformAreaHeight + LOOP_ROW_HEIGHT;
-  const trackHeight = waveformAreaHeight / Math.max(1, tracks.length);
+  const baseTrackHeight = waveformAreaHeight / Math.max(1, tracks.length);
+  const trackHeight = baseTrackHeight * layoutTrackZoom;
+  const tracksContentHeight = trackHeight * Math.max(1, tracks.length);
+  const verticalScrollEnabled = layoutTrackZoom > TRACK_ZOOM_SCROLL_THRESHOLD;
+  maxScrollYRef.current = Math.max(0, tracksContentHeight - waveformAreaHeight);
 
-  const scrollX = timeToScrollX(currentTime, contentWidth);
+  const scrollX = timeToScrollX(currentTime, contentWidth, layoutPixelsPerSecond);
 
-  const markerInterval = getMarkerInterval();
+  const markerInterval = getMarkerInterval(layoutPixelsPerSecond);
   const markerSeconds = useMemo(() => {
     if (layoutDuration <= 0) {
       return [];
@@ -1028,11 +1154,38 @@ export function WaveformView({
     return ticks;
   }, [layoutDuration]);
 
+  useLayoutEffect(() => {
+    const wasFollowing = prevFollowRecordingScrollRef.current;
+    if (followRecordingScroll && !wasFollowing) {
+      const snapshot: FrozenTimelineZoom = {
+        pixelsPerSecond,
+        trackZoom,
+        verticalScrollY: verticalScrollOffsetRef.current,
+      };
+      frozenZoomRef.current = snapshot;
+      verticalScrollRef.current?.scrollTo({ y: snapshot.verticalScrollY, animated: false });
+    } else if (!followRecordingScroll && wasFollowing) {
+      frozenZoomRef.current = null;
+    }
+    prevFollowRecordingScrollRef.current = followRecordingScroll;
+  }, [followRecordingScroll, pixelsPerSecond, trackZoom]);
+
+  useEffect(() => {
+    if (followRecordingScroll) {
+      return;
+    }
+    setPixelsPerSecond((current) => clampTimelinePixelsPerSecond(current, zoomBounds));
+    setTrackZoom((current) => clampTimelineTrackZoom(current, zoomBounds));
+  }, [zoomBounds, followRecordingScroll]);
+
   const handleLayout = (event: LayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout;
     setViewportWidth(width);
     setViewportHeight(height);
     onWidthChange?.(width);
+    containerRef.current?.measureInWindow((x, y) => {
+      containerPageOffsetRef.current = { x, y };
+    });
   };
 
   const handleTrackPress = (trackId: string, locationX: number) => {
@@ -1048,8 +1201,172 @@ export function WaveformView({
       return;
     }
     const waveformX = locationX - sidePadding;
-    onSeek(scrollXToTime(waveformX, duration));
+    onSeek(scrollXToTime(waveformX, duration, layoutPixelsPerSecond));
   };
+
+  const applyZoomFromGesture = useCallback((currentSpanX: number, currentSpanY: number, start: ZoomGestureStart) => {
+    const bounds = zoomBoundsRef.current;
+    const nextPixelsPerSecond = applyPinchDeltaToPixelsPerSecond(
+      start.pixelsPerSecond,
+      start.spanX,
+      currentSpanX,
+      bounds
+    );
+    const nextTrackZoom = applyPinchDeltaToTrackZoom(
+      start.trackZoom,
+      start.spanY,
+      currentSpanY,
+      bounds
+    );
+    const hitBound =
+      nextPixelsPerSecond === bounds.pixelsPerSecondMin ||
+      nextPixelsPerSecond === bounds.pixelsPerSecondMax ||
+      nextTrackZoom === bounds.trackZoomMin ||
+      nextTrackZoom === bounds.trackZoomMax;
+    if (hitBound && !hitZoomBoundRef.current) {
+      hitZoomBoundRef.current = true;
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } else if (!hitBound) {
+      hitZoomBoundRef.current = false;
+    }
+
+    const padding = viewportWidth / 2;
+    const timeAtFocal = (start.scrollX + start.focalX - padding) / start.pixelsPerSecond;
+    const nextScrollX = Math.max(
+      0,
+      Math.min(maxScrollXRef.current, padding + timeAtFocal * nextPixelsPerSecond - start.focalX)
+    );
+
+    const oldTrackHeight = (waveformAreaHeight / Math.max(1, tracks.length)) * start.trackZoom;
+    const nextTrackHeight = (waveformAreaHeight / Math.max(1, tracks.length)) * nextTrackZoom;
+    const focalYInTracks = Math.max(0, start.focalY - start.tracksTop);
+    const trackIndex = oldTrackHeight > 0 ? (start.scrollY + focalYInTracks) / oldTrackHeight : 0;
+    const nextTracksContentHeight = nextTrackHeight * Math.max(1, tracks.length);
+    const nextMaxScrollY = Math.max(0, nextTracksContentHeight - waveformAreaHeight);
+    const nextScrollY = Math.max(
+      0,
+      Math.min(nextMaxScrollY, trackIndex * nextTrackHeight - focalYInTracks)
+    );
+
+    setPixelsPerSecond(nextPixelsPerSecond);
+    setTrackZoom(nextTrackZoom);
+    scrollOffsetRef.current = nextScrollX;
+    verticalScrollOffsetRef.current = nextScrollY;
+    scrollRef.current?.scrollTo({ x: nextScrollX, animated: false });
+    verticalScrollRef.current?.scrollTo({ y: nextScrollY, animated: false });
+  }, [tracks.length, viewportWidth, waveformAreaHeight]);
+
+  const resetZoom = useCallback(() => {
+    const bounds = zoomBoundsRef.current;
+    setPixelsPerSecond(bounds.pixelsPerSecondDefault);
+    setTrackZoom(1);
+    verticalScrollOffsetRef.current = 0;
+    verticalScrollRef.current?.scrollTo({ y: 0, animated: true });
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  }, []);
+
+  const setZoomGestureActiveOnJs = useCallback((active: boolean) => {
+    zoomGestureActiveRef.current = active;
+    setZoomGestureActive(active);
+  }, []);
+
+  const beginTwoFingerZoomRef = useRef((_event: GestureResponderEvent) => {});
+  beginTwoFingerZoomRef.current = (event) => {
+    if (followRecordingScrollRef.current || trimGestureActiveRef.current) {
+      return;
+    }
+    const span = getTwoFingerSpan(event.nativeEvent.touches, containerPageOffsetRef.current);
+    if (!span) {
+      return;
+    }
+    const loopOffset = loopOverlayRef.current ? LOOP_ROW_HEIGHT : 0;
+    zoomGestureStartRef.current = {
+      ...span,
+      pixelsPerSecond: pixelsPerSecondRef.current,
+      trackZoom: trackZoomRef.current,
+      scrollX: scrollOffsetRef.current,
+      scrollY: verticalScrollOffsetRef.current,
+      tracksTop: loopOffset,
+    };
+    hitZoomBoundRef.current = false;
+    setZoomGestureActiveOnJs(true);
+  };
+
+  const moveTwoFingerZoomRef = useRef((_event: GestureResponderEvent) => {});
+  moveTwoFingerZoomRef.current = (event) => {
+    const start = zoomGestureStartRef.current;
+    if (!start || event.nativeEvent.touches.length < 2) {
+      return;
+    }
+    const span = getTwoFingerSpan(event.nativeEvent.touches, containerPageOffsetRef.current);
+    if (!span) {
+      return;
+    }
+    applyZoomFromGesture(span.spanX, span.spanY, start);
+  };
+
+  const endTwoFingerZoomRef = useRef(() => {});
+  endTwoFingerZoomRef.current = () => {
+    zoomGestureStartRef.current = null;
+    hitZoomBoundRef.current = false;
+    setZoomGestureActiveOnJs(false);
+  };
+
+  const maybeHandleDoubleTapResetRef = useRef((_event: GestureResponderEvent) => {});
+  maybeHandleDoubleTapResetRef.current = (event) => {
+    if (
+      followRecordingScrollRef.current ||
+      trimGestureActiveRef.current ||
+      event.nativeEvent.touches.length !== 1
+    ) {
+      return;
+    }
+    const now = Date.now();
+    if (now - lastDoubleTapAtRef.current < 320) {
+      lastDoubleTapAtRef.current = 0;
+      resetZoom();
+      return;
+    }
+    lastDoubleTapAtRef.current = now;
+  };
+
+  const zoomEnabled = !followRecordingScroll && !trimGestureActive;
+  const zoomEnabledRef = useRef(zoomEnabled);
+  zoomEnabledRef.current = zoomEnabled;
+
+  const twoFingerZoomResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: (event) =>
+        shouldCaptureTwoFingerZoom(event.nativeEvent.touches, zoomEnabledRef.current),
+      onMoveShouldSetPanResponder: (event) =>
+        shouldCaptureTwoFingerZoom(event.nativeEvent.touches, zoomEnabledRef.current),
+      onStartShouldSetPanResponderCapture: (event) =>
+        shouldCaptureTwoFingerZoom(event.nativeEvent.touches, zoomEnabledRef.current),
+      onMoveShouldSetPanResponderCapture: (event) =>
+        shouldCaptureTwoFingerZoom(event.nativeEvent.touches, zoomEnabledRef.current),
+      onPanResponderGrant: (event) => {
+        if (event.nativeEvent.touches.length >= 2) {
+          beginTwoFingerZoomRef.current(event);
+          return;
+        }
+        maybeHandleDoubleTapResetRef.current(event);
+      },
+      onPanResponderMove: (event) => {
+        if (event.nativeEvent.touches.length >= 2) {
+          if (!zoomGestureStartRef.current) {
+            beginTwoFingerZoomRef.current(event);
+          }
+          moveTwoFingerZoomRef.current(event);
+          return;
+        }
+        if (zoomGestureStartRef.current) {
+          endTwoFingerZoomRef.current();
+        }
+      },
+      onPanResponderRelease: () => endTwoFingerZoomRef.current(),
+      onPanResponderTerminate: () => endTwoFingerZoomRef.current(),
+    })
+  ).current;
 
   const handleScrollBeginDrag = () => {
     if (trimGestureActiveRef.current) {
@@ -1067,7 +1384,11 @@ export function WaveformView({
     if (!isUserScrollingRef.current || duration <= 0 || contentWidth <= 0) {
       return;
     }
-    onSeekRef.current(scrollXToTime(x, duration));
+    onSeekRef.current(scrollXToTime(x, duration, layoutPixelsPerSecond));
+  };
+
+  const handleVerticalScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    verticalScrollOffsetRef.current = event.nativeEvent.contentOffset.y;
   };
 
   const gestureOverlay = trimOverlay ?? moveOverlay;
@@ -1154,7 +1475,7 @@ export function WaveformView({
       return;
     }
     scrollRef.current?.scrollTo({ x: scrollX, animated: true });
-  }, [scrollX, viewportWidth, followRecordingScroll, isPlaying, gestureOverlay]);
+  }, [scrollX, viewportWidth, followRecordingScroll, isPlaying, gestureOverlay, layoutPixelsPerSecond]);
 
   useEffect(() => {
     if (
@@ -1170,23 +1491,26 @@ export function WaveformView({
     let raf = 0;
     const tick = () => {
       const time = getPlaybackTimeRef.current?.() ?? currentTimeRef.current;
-      scrollRef.current?.scrollTo({ x: timeToScrollX(time, contentWidth), animated: false });
+      scrollRef.current?.scrollTo({
+        x: timeToScrollX(time, contentWidth, layoutPixelsPerSecond),
+        animated: false,
+      });
       raf = requestAnimationFrame(tick);
     };
 
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [isPlaying, followRecordingScroll, duration, contentWidth, viewportWidth]);
+  }, [isPlaying, followRecordingScroll, duration, contentWidth, viewportWidth, layoutPixelsPerSecond]);
 
   useLayoutEffect(() => {
     if (!followRecordingScroll || viewportWidth <= 0) {
       return;
     }
     const time = getRecordingTimeRef.current?.() ?? currentTimeRef.current;
-    const x = timeToScrollX(time, contentWidthRef.current);
+    const x = timeToScrollX(time, contentWidthRef.current, layoutPixelsPerSecond);
     scrollOffsetRef.current = x;
     scrollRef.current?.scrollTo({ x, animated: false });
-  }, [followRecordingScroll, viewportWidth]);
+  }, [followRecordingScroll, viewportWidth, layoutPixelsPerSecond]);
 
   useEffect(() => {
     if (!followRecordingScroll || viewportWidth <= 0) {
@@ -1201,23 +1525,32 @@ export function WaveformView({
       }
       const time = getRecordingTimeRef.current?.() ?? currentTimeRef.current;
       const width = contentWidthRef.current;
-      scrollRef.current?.scrollTo({ x: timeToScrollX(time, width), animated: false });
+      scrollRef.current?.scrollTo({ x: timeToScrollX(time, width, layoutPixelsPerSecond), animated: false });
       raf = requestAnimationFrame(tick);
     };
 
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [followRecordingScroll, contentWidth, viewportWidth]);
+  }, [followRecordingScroll, contentWidth, viewportWidth, layoutPixelsPerSecond]);
 
   return (
     <WaveformThemeContext.Provider value={theme}>
-    <View onLayout={handleLayout} style={styles.container}>
+    <View
+      ref={containerRef}
+      {...twoFingerZoomResponder.panHandlers}
+      onLayout={handleLayout}
+      style={styles.container}>
       <ScrollView
         ref={scrollRef}
         horizontal
         bounces={false}
         nestedScrollEnabled
-        scrollEnabled={!isPlaying && !followRecordingScroll && !trimGestureActive}
+        scrollEnabled={
+          !isPlaying &&
+          !followRecordingScroll &&
+          !trimGestureActive &&
+          !zoomGestureActive
+        }
         scrollEventThrottle={16}
         showsHorizontalScrollIndicator={false}
         onScroll={handleScroll}
@@ -1232,42 +1565,57 @@ export function WaveformView({
               config={loopOverlay}
               disabled={isRecording}
               editDisabled={isPlaying}
+              pixelsPerSecond={layoutPixelsPerSecond}
               scrollHelpers={loopScrollHelpers}
               sidePadding={sidePadding}
             />
           ) : null}
-          {tracks.map((track) => (
-            <TrackWaveformRow
-              key={track.id}
-              bandWidth={bandWidth}
-              contentWidth={contentWidth}
-              sidePadding={sidePadding}
-              track={track}
-              trackHeight={trackHeight}
-              scrollPriority={Boolean(
-                isPlaying ||
-                followRecordingScroll ||
-                (gestureOverlay && gestureOverlay.layerId !== track.id)
-              )}
-              moveOverlay={moveOverlay}
-              trimOverlay={trimOverlay}
-              trimScrollHelpers={trimScrollHelpers}
-              volumeVisualDb={volumeVisualDb}
-              onLongPress={
-                onTrackLongPressRef.current &&
-                track.id !== '__recording__' &&
-                track.id !== 'empty'
-                  ? () => onTrackLongPressRef.current?.(track.id)
-                  : undefined
-              }
-              onPress={(locationX) => handleTrackPress(track.id, locationX)}
-            />
-          ))}
+          <ScrollView
+            ref={verticalScrollRef}
+            bounces={false}
+            nestedScrollEnabled
+            scrollEnabled={verticalScrollEnabled && !trimGestureActive && !zoomGestureActive}
+            scrollEventThrottle={16}
+            showsVerticalScrollIndicator={false}
+            style={{ height: waveformAreaHeight }}
+            onScroll={handleVerticalScroll}>
+            <View style={{ height: tracksContentHeight }}>
+              {tracks.map((track, index) => (
+                <TrackWaveformRow
+                  key={track.id}
+                  bandWidth={bandWidth}
+                  contentWidth={contentWidth}
+                  pixelsPerSecond={layoutPixelsPerSecond}
+                  showBottomDivider={index < tracks.length - 1}
+                  sidePadding={sidePadding}
+                  track={track}
+                  trackHeight={trackHeight}
+                  scrollPriority={Boolean(
+                    isPlaying ||
+                    followRecordingScroll ||
+                    (gestureOverlay && gestureOverlay.layerId !== track.id)
+                  )}
+                  moveOverlay={moveOverlay}
+                  trimOverlay={trimOverlay}
+                  trimScrollHelpers={trimScrollHelpers}
+                  volumeVisualDb={volumeVisualDb}
+                  onLongPress={
+                    onTrackLongPressRef.current &&
+                    track.id !== '__recording__' &&
+                    track.id !== 'empty'
+                      ? () => onTrackLongPressRef.current?.(track.id)
+                      : undefined
+                  }
+                  onPress={(locationX) => handleTrackPress(track.id, locationX)}
+                />
+              ))}
+            </View>
+          </ScrollView>
           <View
             pointerEvents="none"
             style={[styles.markerBand, { width: bandWidth }]}>
             {markerSeconds.map((second) => {
-              const x = sidePadding + second * PIXELS_PER_SECOND;
+              const x = sidePadding + second * layoutPixelsPerSecond;
               const showLabel = second % markerInterval === 0;
               return (
                 <View key={second} style={[styles.marker, { left: x }]}>
@@ -1307,6 +1655,14 @@ function createWaveformStyles(colors: VoiceMemosColorScheme) {
   },
   trackRow: {
     overflow: 'hidden',
+    position: 'relative',
+  },
+  trackDivider: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: colors.waveformCenterLine,
   },
   waveformBand: {
     position: 'relative',
