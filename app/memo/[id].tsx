@@ -27,7 +27,7 @@ import {
   useHeadphonesConnected,
 } from '@/src/audio/headphoneDetection';
 import type { LayerEffects, LayerEffectsChange } from '@/src/audio/layerEffects';
-import { mergeLayerEffects } from '@/src/audio/layerEffects';
+import { hasAnySoloActive, isLayerSelectable, mergeLayerEffects } from '@/src/audio/layerEffects';
 import {
   maybeShowPerformanceWarning,
   resetPerformanceWarningState,
@@ -282,6 +282,7 @@ export default function MemoEditorScreen() {
           trimOut: nextEffects!.trimOut,
           volumeDb: nextEffects!.volumeDb,
           muted: nextEffects!.muted,
+          solo: nextEffects!.solo,
           reverb: nextEffects!.reverb,
           delay: nextEffects!.delay,
           eq: nextEffects!.eq,
@@ -318,6 +319,7 @@ export default function MemoEditorScreen() {
       trimOut: pending.effects.trimOut,
       volumeDb: pending.effects.volumeDb,
       muted: pending.effects.muted,
+      solo: pending.effects.solo,
       reverb: pending.effects.reverb,
       delay: pending.effects.delay,
       eq: pending.effects.eq,
@@ -428,6 +430,7 @@ export default function MemoEditorScreen() {
             trimOut: effects.trimOut,
             volumeDb: effects.volumeDb,
             muted: effects.muted,
+            solo: effects.solo,
             reverb: effects.reverb,
             delay: effects.delay,
             eq: effects.eq,
@@ -660,7 +663,10 @@ export default function MemoEditorScreen() {
       }
 
       const layer = memo?.layers.find((entry) => entry.id === trackId);
-      if (layer && getLayerEffects(layer).muted) {
+      const anySoloActive = memo
+        ? hasAnySoloActive(memo.layers.map((entry) => getLayerEffects(entry)))
+        : false;
+      if (layer && !isLayerSelectable(getLayerEffects(layer), anySoloActive)) {
         return;
       }
 
@@ -749,13 +755,17 @@ export default function MemoEditorScreen() {
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
       const effects = getLayerEffects(layer);
+      const anySoloActive = hasAnySoloActive(
+        memo.layers.map((entry) => getLayerEffects(entry))
+      );
       const muteLabel = effects.muted ? 'Unmute' : 'Mute';
+      const soloLabel = effects.solo ? 'Unsolo' : 'Solo';
       const canDelete = getPlayableLayers(memo).length > 1;
       const options = canDelete
-        ? ['Rename Track', 'Change Color', muteLabel, 'Delete Track', 'Cancel']
-        : ['Rename Track', 'Change Color', muteLabel, 'Cancel'];
-      const destructiveButtonIndex = canDelete ? 3 : undefined;
-      const cancelButtonIndex = canDelete ? 4 : 3;
+        ? ['Rename Track', 'Change Color', muteLabel, soloLabel, 'Delete Track', 'Cancel']
+        : ['Rename Track', 'Change Color', muteLabel, soloLabel, 'Cancel'];
+      const destructiveButtonIndex = canDelete ? 4 : undefined;
+      const cancelButtonIndex = canDelete ? 5 : 4;
 
       ActionSheetIOS.showActionSheetWithOptions(
         {
@@ -765,7 +775,7 @@ export default function MemoEditorScreen() {
         },
         (index) => {
           if (index === 0) {
-            if (layerId !== activeLayerId && !effects.muted) {
+            if (layerId !== activeLayerId && isLayerSelectable(effects, anySoloActive)) {
               setActiveLayerId(layerId);
             }
             Alert.prompt('Rename Track', undefined, [
@@ -782,7 +792,7 @@ export default function MemoEditorScreen() {
             return;
           }
           if (index === 1) {
-            if (layerId !== activeLayerId && !effects.muted) {
+            if (layerId !== activeLayerId && isLayerSelectable(effects, anySoloActive)) {
               setActiveLayerId(layerId);
             }
             setColorPickerLayerId(layerId);
@@ -792,7 +802,11 @@ export default function MemoEditorScreen() {
             applyLayerEffectsChange(layerId, { muted: !effects.muted });
             return;
           }
-          if (canDelete && index === 3) {
+          if (index === 3) {
+            applyLayerEffectsChange(layerId, { solo: !effects.solo });
+            return;
+          }
+          if (canDelete && index === 4) {
             Alert.alert('Delete Track', 'Delete this track? This cannot be undone.', [
               { text: 'Cancel', style: 'cancel' },
               {
@@ -832,8 +846,12 @@ export default function MemoEditorScreen() {
     const loaded = next && hasRecording(next) ? await ensureWaveformPeaks(next) : next;
     setMemo(loaded);
     if (loaded) {
+      const anySoloActive = hasAnySoloActive(
+        loaded.layers.map((entry) => getLayerEffects(entry))
+      );
       const defaultLayer = loaded.layers.find(
-        (layer) => layer.duration > 0 && !getLayerEffects(layer).muted
+        (layer) =>
+          layer.duration > 0 && isLayerSelectable(getLayerEffects(layer), anySoloActive)
       );
       setActiveLayerId(defaultLayer?.id ?? null);
       if (hasRecording(loaded)) {
@@ -1429,7 +1447,17 @@ export default function MemoEditorScreen() {
 
   const showTrackEditor =
     !pendingRecordingLayout &&
-    Boolean(activeLayer && activeLayer.duration > 0 && !activeLayerEffects?.muted);
+    Boolean(
+      activeLayer &&
+        activeLayer.duration > 0 &&
+        activeLayerEffects &&
+        isLayerSelectable(
+          activeLayerEffects,
+          memo
+            ? hasAnySoloActive(memo.layers.map((entry) => getLayerEffects(entry)))
+            : false
+        )
+    );
 
   const availableTools = useMemo((): EditorTool[] => {
     const base: EditorTool[] = ['trim', 'volume', 'reverb', 'delay', 'eq'];
@@ -1450,7 +1478,10 @@ export default function MemoEditorScreen() {
       return;
     }
     const layer = memo.layers.find((entry) => entry.id === activeLayerId);
-    if (layer && getLayerEffects(layer).muted) {
+    const anySoloActive = hasAnySoloActive(
+      memo.layers.map((entry) => getLayerEffects(entry))
+    );
+    if (layer && !isLayerSelectable(getLayerEffects(layer), anySoloActive)) {
       setActiveLayerId(null);
       setActiveEditor(null);
     }
@@ -1485,6 +1516,10 @@ export default function MemoEditorScreen() {
       return [];
     }
 
+    const anySoloActive = hasAnySoloActive(
+      memo.layers.map((entry) => getLayerEffects(entry))
+    );
+
     return [...memo.layers]
       .filter((layer) => layer.duration > 0)
       .sort((a, b) => b.order - a.order)
@@ -1500,13 +1535,16 @@ export default function MemoEditorScreen() {
 
         if (isTrimEditing) {
           const effects = getLayerEffects(layer);
+          const selectable = isLayerSelectable(effects, anySoloActive);
           return {
             id: layer.id,
             peaks: layer.waveformPeaks,
             startTime: layer.startTime,
             duration: layer.duration,
-            isActive: !effects.muted,
+            isActive: layer.id === activeLayerId && selectable,
             isMuted: effects.muted,
+            isSoloed: effects.solo,
+            isSoloedOut: anySoloActive && !effects.solo,
             ...trackMeta,
           };
         }
@@ -1514,6 +1552,7 @@ export default function MemoEditorScreen() {
         if (isMoveEditing) {
           const effects = getLayerEffects(layer);
           const activeDuration = getLayerActiveDuration(layer);
+          const selectable = isLayerSelectable(effects, anySoloActive);
 
           return {
             id: layer.id,
@@ -1525,14 +1564,17 @@ export default function MemoEditorScreen() {
             ),
             startTime: getLayerActiveStartTime(layer),
             duration: Math.max(activeDuration, 0.01),
-            isActive: !effects.muted,
+            isActive: layer.id === activeLayerId && selectable,
             isMuted: effects.muted,
+            isSoloed: effects.solo,
+            isSoloedOut: anySoloActive && !effects.solo,
             ...trackMeta,
           };
         }
 
         const effects = getLayerEffects(layer);
         const activeDuration = getLayerActiveDuration(layer);
+        const selectable = isLayerSelectable(effects, anySoloActive);
 
         return {
           id: layer.id,
@@ -1544,8 +1586,10 @@ export default function MemoEditorScreen() {
           ),
           startTime: getLayerActiveStartTime(layer),
           duration: Math.max(activeDuration, 0.01),
-          isActive: layer.id === activeLayerId && !effects.muted,
+          isActive: layer.id === activeLayerId && selectable,
           isMuted: effects.muted,
+          isSoloed: effects.solo,
+          isSoloedOut: anySoloActive && !effects.solo,
           ...trackMeta,
         };
       });

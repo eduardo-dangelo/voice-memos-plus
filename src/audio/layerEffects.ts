@@ -98,6 +98,7 @@ export type LayerEffects = {
   trimOut: number;
   volumeDb: number;
   muted?: boolean;
+  solo?: boolean;
   reverb: LayerReverbEffects;
   delay: LayerDelayEffects;
   eq: LayerEqEffects;
@@ -209,6 +210,7 @@ export function createDefaultLayerEffects(duration: number): LayerEffects {
     trimOut: duration > 0 ? duration : 0,
     volumeDb: 0,
     muted: false,
+    solo: false,
     reverb: { preset: 'off', mix: 0, decay: 0.8 },
     delay: { preset: 'off', sync: 'off', timeMs: 320, mix: 0, feedback: 40 },
     eq: { preset: 'off', bands: [0, 0, 0, 0, 0] },
@@ -246,6 +248,24 @@ export function hasActiveEq(effects: LayerEffects): boolean {
     return true;
   }
   return effects.eq.bands.some((bandDb) => bandDb !== 0);
+}
+
+export function hasAnySoloActive(effectsList: LayerEffects[]): boolean {
+  return effectsList.some((effects) => Boolean(effects.solo));
+}
+
+export function isLayerAudible(effects: LayerEffects, anySoloActive: boolean): boolean {
+  if (effects.muted) {
+    return false;
+  }
+  if (!anySoloActive) {
+    return true;
+  }
+  return Boolean(effects.solo);
+}
+
+export function isLayerSelectable(effects: LayerEffects, anySoloActive: boolean): boolean {
+  return isLayerAudible(effects, anySoloActive);
 }
 
 export function hasActiveVolumeEffect(effects: LayerEffects): boolean {
@@ -310,6 +330,7 @@ export function normalizeLayerEffects(
     trimOut: layer.duration > 0 ? trimOut : defaults.trimOut,
     volumeDb: layer.effects.volumeDb ?? 0,
     muted: layer.effects.muted ?? false,
+    solo: layer.effects.solo ?? false,
     reverb: {
       preset: reverbPreset,
       mix:

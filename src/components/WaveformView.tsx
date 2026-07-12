@@ -167,6 +167,8 @@ export type TrackData = {
   duration: number;
   isActive: boolean;
   isMuted?: boolean;
+  isSoloed?: boolean;
+  isSoloedOut?: boolean;
   label?: string;
   showLabel?: boolean;
   color?: string;
@@ -613,7 +615,7 @@ const TAP_DRAG_THRESHOLD = 10;
 const LONG_PRESS_DELAY_MS = 400;
 
 function getTrackBarColor(track: TrackData, colors: VoiceMemosColorScheme): string {
-  if (track.isMuted) {
+  if (track.isMuted || track.isSoloedOut) {
     return colors.waveformBar;
   }
   return track.color ?? colors.accent;
@@ -643,6 +645,12 @@ function areTrackDataEqual(a: TrackData, b: TrackData): boolean {
     return false;
   }
   if (a.isMuted !== b.isMuted) {
+    return false;
+  }
+  if (a.isSoloed !== b.isSoloed) {
+    return false;
+  }
+  if (a.isSoloedOut !== b.isSoloedOut) {
     return false;
   }
   if (a.color !== b.color) {
@@ -868,6 +876,16 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
           pointerEvents="none"
           style={[styles.mutedBadge, { left: sidePadding + 6 }]}>
           <Text style={styles.mutedBadgeText}>M</Text>
+        </View>
+      ) : null}
+      {track.isSoloed ? (
+        <View
+          pointerEvents="none"
+          style={[
+            styles.soloBadge,
+            { left: track.isMuted ? sidePadding + 28 : sidePadding + 6 },
+          ]}>
+          <Text style={styles.soloBadgeText}>S</Text>
         </View>
       ) : null}
       {trackWidth > 0 || liveTrackWidth > 0 || replaceTailDimWidth > 0 ? (
@@ -1218,7 +1236,8 @@ export function WaveformView({
 
   const handleTrackPress = (trackId: string, locationX: number) => {
     const track = tracks.find((entry) => entry.id === trackId);
-    if (!track?.isMuted) {
+    const isSelectable = track && !track.isMuted && !track.isSoloedOut;
+    if (isSelectable) {
       if (isOutsideTimelinePress(locationX, sidePadding, contentWidth)) {
         onTrackDeselectRef.current?.();
       } else {
@@ -1767,6 +1786,24 @@ function createWaveformStyles(colors: VoiceMemosColorScheme) {
     fontSize: 11,
     fontWeight: '700',
     color: colors.background,
+    lineHeight: 13,
+  },
+  soloBadge: {
+    position: 'absolute',
+    top: 6,
+    zIndex: 6,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 4,
+    paddingHorizontal: 4,
+    backgroundColor: colors.soloBadge,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  soloBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.soloBadgeText,
     lineHeight: 13,
   },
   dimRegion: {

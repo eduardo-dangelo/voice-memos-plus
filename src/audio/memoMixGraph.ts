@@ -124,9 +124,11 @@ export class MemoMixGraph {
       }
     }
 
+    const anySoloActive = layers.some((layer) => Boolean(layer.effects.solo));
+
     for (const layer of layers) {
       this.ensureChannel(context, layer.id);
-      this.applyLayerEffects(context, layer.id, layer.effects);
+      this.applyLayerEffects(context, layer.id, layer.effects, anySoloActive);
     }
   }
 
@@ -509,7 +511,12 @@ export class MemoMixGraph {
     channel.reverbBusKey = nextKey;
   }
 
-  applyLayerEffects(context: AudioContext, layerId: string, effects: LayerEffects): void {
+  applyLayerEffects(
+    context: AudioContext,
+    layerId: string,
+    effects: LayerEffects,
+    anySoloActive: boolean
+  ): void {
     const channel = this.ensureChannel(context, layerId);
     const now = context.currentTime;
     const delayActive = isDelayPathActive(effects);
@@ -517,13 +524,13 @@ export class MemoMixGraph {
     const delayMix = delayActive ? effects.delay.mix / 100 : 0;
     const reverbMix = reverbActive ? getEffectiveReverbMix(effects) : 0;
 
-    applyPathInputEffects(channel.dry, effects, context);
+    applyPathInputEffects(channel.dry, effects, context, anySoloActive);
     // Send-style: dry stays full; wet is additive.
     channel.dry.dryGain.gain.setValueAtTime(1, now);
 
     if (delayActive) {
       channel.delay = this.ensureWetPath(context, channel.delay);
-      applyPathInputEffects(channel.delay, effects, context);
+      applyPathInputEffects(channel.delay, effects, context, anySoloActive);
       this.syncDelayBus(context, channel, effects);
       channel.delay.send.gain.setValueAtTime(delayMix, now);
     } else {
@@ -535,7 +542,7 @@ export class MemoMixGraph {
 
     if (reverbActive) {
       channel.reverb = this.ensureWetPath(context, channel.reverb);
-      applyPathInputEffects(channel.reverb, effects, context);
+      applyPathInputEffects(channel.reverb, effects, context, anySoloActive);
       this.syncReverbBus(context, channel, effects);
       channel.reverb.send.gain.setValueAtTime(reverbMix, now);
     } else {

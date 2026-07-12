@@ -24,7 +24,7 @@ import {
     isReverbPathActive,
     type LayerEffectPathNodes,
 } from '@/src/audio/layerEffectChain';
-import { mergeLayerEffects, normalizeLayerEffects, type LayerEffects, type LayerEffectsChange } from '@/src/audio/layerEffects';
+import { hasAnySoloActive, mergeLayerEffects, normalizeLayerEffects, type LayerEffects, type LayerEffectsChange } from '@/src/audio/layerEffects';
 import { scheduleMetronomeClicks } from '@/src/audio/metronome';
 import { MemoMixGraph } from '@/src/audio/memoMixGraph';
 import { accumulatePeaksFromSamples } from '@/src/audio/recordingWaveformPeaks';
@@ -744,6 +744,28 @@ export class MemoAudioEngine {
     );
   }
 
+  private getAnySoloActive(): boolean {
+    return hasAnySoloActive(
+      this.loadedLayers.map((layer) => this.getLoadedLayerEffects(layer))
+    );
+  }
+
+  private syncAllLayerGains(context: AudioContext): void {
+    const anySoloActive = this.getAnySoloActive();
+    for (const layer of this.loadedLayers) {
+      const layerId = layer.id;
+      const effects = this.getLoadedLayerEffects(layer);
+      if (!this.mixGraph.getChannel(layerId)) {
+        continue;
+      }
+      this.mixGraph.applyLayerEffects(context, layerId, effects, anySoloActive);
+      const active = this.activeLayerPlayback.get(layerId);
+      if (active) {
+        active.playbackEffects = effects;
+      }
+    }
+  }
+
   private schedulePathSource(
     context: AudioContext,
     path: LayerEffectPathNodes,
@@ -781,7 +803,7 @@ export class MemoAudioEngine {
     const reverbChanged = active.hasReverb !== wantReverb;
 
     if (!delayChanged && !reverbChanged) {
-      this.mixGraph.applyLayerEffects(context, layerId, nextEffects);
+      this.mixGraph.applyLayerEffects(context, layerId, nextEffects, this.getAnySoloActive());
       active.playbackEffects = nextEffects;
       return true;
     }
@@ -835,7 +857,7 @@ export class MemoAudioEngine {
       active.reverbSources = [];
     }
 
-    this.mixGraph.applyLayerEffects(context, layerId, nextEffects);
+    this.mixGraph.applyLayerEffects(context, layerId, nextEffects, this.getAnySoloActive());
     const nextChannel = this.mixGraph.getChannel(layerId);
     if (!nextChannel) {
       return false;
@@ -1174,10 +1196,21 @@ export class MemoAudioEngine {
       return;
     }
 
-    if (this.context && this.mixGraph.getChannel(layerId)) {
-      this.mixGraph.applyLayerEffects(this.context, layerId, nextEffects);
-      if (active) {
-        active.playbackEffects = nextEffects;
+    if (this.context) {
+      if (partial.solo !== undefined) {
+        this.syncAllLayerGains(this.context);
+        return;
+      }
+      if (this.mixGraph.getChannel(layerId)) {
+        this.mixGraph.applyLayerEffects(
+          this.context,
+          layerId,
+          nextEffects,
+          this.getAnySoloActive()
+        );
+        if (active) {
+          active.playbackEffects = nextEffects;
+        }
       }
     }
   }

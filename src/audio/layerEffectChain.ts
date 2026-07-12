@@ -9,6 +9,7 @@ import type {
 import {
   dbToLinear,
   EQ_FREQUENCIES,
+  isLayerAudible,
   syncDelayTimeMs,
   type LayerEffects,
   type ReverbPreset,
@@ -216,11 +217,12 @@ export function syncReverbConvolver(
 export function applyPathInputEffects(
   path: LayerEffectPathNodes,
   effects: LayerEffects,
-  context: AudioContext
+  context: AudioContext,
+  anySoloActive: boolean
 ): void {
   const now = context.currentTime;
   path.gain.gain.setValueAtTime(
-    effects.muted ? 0 : dbToLinear(effects.volumeDb),
+    isLayerAudible(effects, anySoloActive) ? dbToLinear(effects.volumeDb) : 0,
     now
   );
   effects.eq.bands.forEach((bandDb, index) => {
