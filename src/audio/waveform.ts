@@ -16,6 +16,8 @@ export function peakCountForDuration(duration: number): number {
   return Math.max(DEFAULT_PEAK_COUNT, Math.floor(duration * WAVEFORM_PIXELS_PER_SECOND / barStep));
 }
 
+export { accumulatePeaksFromSamples, getBarIndexForTime } from './recordingWaveformPeaks';
+
 export async function computeWaveformPeaks(
   filePath: string,
   peakCount = DEFAULT_PEAK_COUNT

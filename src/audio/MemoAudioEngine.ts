@@ -27,6 +27,7 @@ import {
 import { mergeLayerEffects, normalizeLayerEffects, type LayerEffects, type LayerEffectsChange } from '@/src/audio/layerEffects';
 import { scheduleMetronomeClicks } from '@/src/audio/metronome';
 import { MemoMixGraph } from '@/src/audio/memoMixGraph';
+import { accumulatePeaksFromSamples } from '@/src/audio/recordingWaveformPeaks';
 import {
     peakToAbsoluteScale,
     WAVEFORM_BAR_GAP,
@@ -1045,24 +1046,6 @@ export class MemoAudioEngine {
     return raw.slice(0, barCount);
   }
 
-  private updateRecordingPeak(rawPeak: number, elapsedSec: number): void {
-    const barIndex = Math.floor(
-      elapsedSec * WAVEFORM_PIXELS_PER_SECOND / RECORDING_BAR_STEP
-    );
-
-    if (barIndex < 0) {
-      return;
-    }
-
-    while (this.recordingPeaksBuffer.length <= barIndex) {
-      this.recordingPeaksBuffer.push(0);
-    }
-    this.recordingPeaksBuffer[barIndex] = Math.max(
-      this.recordingPeaksBuffer[barIndex] ?? 0,
-      rawPeak
-    );
-  }
-
   private emitRecordingProgress(): void {
     if (!this.recorder) {
       return;
@@ -1298,12 +1281,17 @@ export class MemoAudioEngine {
       },
       ({ buffer }) => {
         const channelData = buffer.getChannelData(0);
-        let max = 0;
-        for (let i = 0; i < channelData.length; i++) {
-          max = Math.max(max, Math.abs(channelData[i]));
-        }
-        const elapsedSec = this.recorder?.getCurrentDuration() ?? 0;
-        this.updateRecordingPeak(max, elapsedSec);
+        const bufferEndSec = this.recorder?.getCurrentDuration() ?? 0;
+        const bufferStartSec = Math.max(
+          0,
+          bufferEndSec - channelData.length / callbackConfig.sampleRate
+        );
+        this.recordingPeaksBuffer = accumulatePeaksFromSamples(
+          channelData,
+          bufferStartSec,
+          callbackConfig.sampleRate,
+          this.recordingPeaksBuffer
+        );
       }
     );
 
