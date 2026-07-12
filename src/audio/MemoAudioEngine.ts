@@ -10,6 +10,7 @@ import {
     type AudioBufferSourceNode,
     type GainNode,
 } from 'react-native-audio-api';
+import { AppState } from 'react-native';
 
 import {
     assertRecordingRouteOk,
@@ -38,10 +39,21 @@ import {
     resampleMonoBufferFromRate,
 } from '@/src/audio/wavUtils';
 import {
+    awaitSaveInFlight,
+    clearSession,
+    getSession,
+} from '@/src/recording/activeRecordingSession';
+import {
+    endRecordingLiveActivity,
+    startRecordingLiveActivity,
+} from '@/src/widgets/recordingLiveActivityController';
+import {
     DEFAULT_METRONOME_SETTINGS,
     normalizeMetronomeSettings,
     type MetronomeSettings,
+    type Memo,
 } from '@/src/storage/types';
+import { loadMemoIntoEngine } from '@/src/audio/loadMemoIntoEngine';
 
 type SessionMode = 'recording' | 'playback' | null;
 
@@ -153,10 +165,23 @@ export class MemoAudioEngine {
   private metronomeSettings: MetronomeSettings = DEFAULT_METRONOME_SETTINGS;
   private metronomeGain: GainNode | null = null;
   private metronomeSources: AudioBufferSourceNode[] = [];
+  private deferredPlaybackSetup = false;
+  private pendingEngineReload: { memo: Memo; seekTime: number } | null = null;
+  private deferredSetupInFlight: Promise<void> | null = null;
+  private recordingSessionPrewarmed = false;
 
   constructor() {
     AudioManager.addSystemEventListener('routeChange', () => {
       void this.handleRouteChange();
+    });
+
+    AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        void (async () => {
+          await awaitSaveInFlight();
+          await this.finishDeferredPlaybackSetup();
+        })();
+      }
     });
   }
 
@@ -227,6 +252,72 @@ export class MemoAudioEngine {
 
   getRecordingDuration(): number {
     return this.recorder?.getCurrentDuration() ?? this.state.recordingDuration;
+  }
+
+  async prewarmRecordingSession(): Promise<void> {
+    if (this.recordingSessionPrewarmed || this.state.isRecording) {
+      return;
+    }
+
+    const granted = await this.requestPermission();
+    if (!granted) {
+      return;
+    }
+
+    try {
+      await this.configureForRecording();
+      this.recordingSessionPrewarmed = true;
+    } catch (error) {
+      if (__DEV__) {
+        console.warn('[MemoAudioEngine] prewarm recording session failed', error);
+      }
+    }
+  }
+
+  scheduleDeferredEngineReload(memo: Memo, seekTime: number): void {
+    this.pendingEngineReload = { memo, seekTime };
+  }
+
+  async finishDeferredPlaybackSetup(): Promise<void> {
+    if (this.deferredSetupInFlight) {
+      return this.deferredSetupInFlight;
+    }
+
+    if (!this.deferredPlaybackSetup && !this.pendingEngineReload) {
+      return;
+    }
+
+    const setupPromise = (async (): Promise<void> => {
+      const pending = this.pendingEngineReload;
+      this.pendingEngineReload = null;
+      this.deferredPlaybackSetup = false;
+
+      try {
+        await this.resetPlaybackGraph();
+        await this.configureForPlayback();
+        if (pending) {
+          await loadMemoIntoEngine(this, pending.memo, pending.seekTime);
+        }
+      } catch (error) {
+        this.sessionMode = null;
+        if (__DEV__) {
+          console.warn('[MemoAudioEngine] deferred playback setup failed', error);
+        }
+      }
+    })();
+
+    this.deferredSetupInFlight = setupPromise;
+    try {
+      await setupPromise;
+    } finally {
+      if (this.deferredSetupInFlight === setupPromise) {
+        this.deferredSetupInFlight = null;
+      }
+    }
+  }
+
+  private isAppInBackground(): boolean {
+    return AppState.currentState !== 'active';
   }
 
   private emit(partial: Partial<EngineState>): void {
@@ -300,6 +391,8 @@ export class MemoAudioEngine {
 
   /** Full session cycle — avoids stale playback state after context teardown. */
   private async forceConfigureForRecording(): Promise<void> {
+    this.sessionMode = null;
+
     try {
       await AudioManager.setAudioSessionActivity(false);
     } catch {
@@ -1132,11 +1225,14 @@ export class MemoAudioEngine {
       throw new Error('Microphone permission denied');
     }
 
+    if (this.deferredPlaybackSetup || this.pendingEngineReload) {
+      await this.finishDeferredPlaybackSetup();
+    }
+
     this.clearRecordingSampleRateState();
     await this.resetPlaybackGraph({
       preserveLayerBuffers: this.loadedLayers.length > 0,
     });
-    await this.prepareRecordingRoute();
 
     if (this.recorder) {
       try {
@@ -1211,6 +1307,11 @@ export class MemoAudioEngine {
       await this.ensureMonitorContextReady();
       await this.beginMonitorPlayback(monitorStartTime);
     }
+
+    const session = getSession();
+    if (session) {
+      startRecordingLiveActivity(session);
+    }
   }
 
   async cancelRecording(): Promise<void> {
@@ -1235,9 +1336,15 @@ export class MemoAudioEngine {
       monitorMixActive: false,
       monitorMixReady: false,
     });
+    clearSession();
+    void endRecordingLiveActivity();
   }
 
-  async stopRecording(): Promise<{ path: string; duration: number; peaks: number[] }> {
+  async stopRecording(options?: { deferPlaybackSetup?: boolean }): Promise<{
+    path: string;
+    duration: number;
+    peaks: number[];
+  }> {
     if (!this.recorder) {
       throw new Error('No active recording');
     }
@@ -1253,6 +1360,16 @@ export class MemoAudioEngine {
     const result = this.recorder.stop();
     this.recorder = null;
     this.recordingPeaksBuffer = [];
+
+    const wasMonitorMix = this.state.monitorMixActive;
+    this.clearRecordingSampleRateState();
+    this.emit({
+      isRecording: false,
+      recordingDuration: 0,
+      recordingPeaks: [],
+      monitorMixActive: false,
+      monitorMixReady: false,
+    });
 
     if (result.status === 'error') {
       throw new Error(result.message);
@@ -1291,18 +1408,21 @@ export class MemoAudioEngine {
       }
     }
 
-    await this.resetPlaybackGraph();
-    await this.configureForPlayback();
+    const deferPlaybackSetup =
+      options?.deferPlaybackSetup ?? this.isAppInBackground();
 
-    this.clearRecordingSampleRateState();
+    if (wasMonitorMix) {
+      this.stopPlayback();
+    }
 
-    this.emit({
-      isRecording: false,
-      recordingDuration: 0,
-      recordingPeaks: [],
-      monitorMixActive: false,
-      monitorMixReady: false,
-    });
+    if (deferPlaybackSetup) {
+      this.deferredPlaybackSetup = true;
+    } else {
+      await this.resetPlaybackGraph();
+      await this.configureForPlayback();
+    }
+
+    void endRecordingLiveActivity();
 
     return { path, duration, peaks };
   }

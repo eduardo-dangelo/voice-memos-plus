@@ -40,8 +40,16 @@ import { TrackEditorShell } from '@/src/components/track-editor/TrackEditorShell
 import type { EditorTool } from '@/src/components/track-editor/types';
 import { resolveTrackColor, TrackColorPicker } from '@/src/components/TrackColorPicker';
 import { WaveformView, type TrackData } from '@/src/components/WaveformView';
+import { loadMemoIntoEngine } from '@/src/audio/loadMemoIntoEngine';
 import {
-  addStackedLayer,
+  awaitSaveInFlight,
+  beginSession,
+  clearSession,
+  hydrateSessionFromStorage,
+  stopAndSave,
+  subscribeRecordingSave,
+} from '@/src/recording/activeRecordingSession';
+import {
   deactivateMemoLoop,
   deleteLayer,
   deleteMemo,
@@ -50,8 +58,6 @@ import {
   getMemo,
   getShareableFile,
   permanentlyDeleteMemo,
-  replaceLayerSegment,
-  saveRecording,
   updateLayerColor,
   updateLayerEffects,
   updateLayerLabel,
@@ -60,7 +66,7 @@ import {
   updateMetronomeSettings,
   updateTitle,
 } from '@/src/storage/memoStore';
-import { getMemoPlaybackTimeline, isMemoInTrash } from '@/src/storage/paths';
+import { isMemoInTrash } from '@/src/storage/paths';
 import type { Layer, Memo, MetronomeSettings } from '@/src/storage/types';
 import {
   applyTimelineDeltaToLayers,
@@ -72,34 +78,11 @@ import {
   getMemoMetronomeSettings,
   getMemoTimelineDuration,
   getPlayableLayers,
-  getReplaceSpliceParams,
   hasRecording,
   normalizeMetronomeSettings,
 } from '@/src/storage/types';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 import { formatDurationWithTenths } from '@/src/utils/format';
-
-async function loadMemoIntoEngine(
-  engine: ReturnType<typeof useAudioEngine>,
-  memo: Memo,
-  seekTime?: number
-): Promise<void> {
-  const { layers, duration, trimStart, trimEnd } = getMemoPlaybackTimeline(memo);
-  await engine.loadMemo(
-    memo.id,
-    layers,
-    trimStart,
-    trimEnd,
-    duration,
-    memo.loopStart ?? 0,
-    memo.loopEnd ?? 0,
-    memo.loopEnabled ?? false
-  );
-  if (seekTime !== undefined) {
-    engine.seek(seekTime);
-  }
-  engine.setMetronome(getMemoMetronomeSettings(memo));
-}
 
 function deactivateLoopForMemo(
   engine: ReturnType<typeof useAudioEngine>,
@@ -179,7 +162,6 @@ export default function MemoEditorScreen() {
   const replaceModeRef = useRef(false);
   const activeLayerIdRef = useRef<string | null>(null);
   const isSavingRecordingOnExit = useRef(false);
-  const saveRecordingInFlight = useRef<Promise<boolean> | null>(null);
   const pendingRecordingColor = useRef<string | null>(null);
   const monitorMixRef = useRef(false);
   const editDraftRef = useRef<EditDraftSnapshot | null>(null);
@@ -866,6 +848,25 @@ export default function MemoEditorScreen() {
   }, [memo]);
 
   useEffect(() => {
+    if (!id) {
+      return;
+    }
+
+    return subscribeRecordingSave((result) => {
+      if (result.memo.id !== id) {
+        return;
+      }
+
+      setMemo(result.memo);
+      setActiveLayerId(result.activeLayerId);
+      setReplaceMode(false);
+      setStackMode(false);
+      monitorMixRef.current = false;
+      pendingRecordingColor.current = null;
+    });
+  }, [id]);
+
+  useEffect(() => {
     if (autoRecordStarted.current) {
       return;
     }
@@ -875,104 +876,61 @@ export default function MemoEditorScreen() {
 
     autoRecordStarted.current = true;
     router.setParams({ record: undefined });
+    beginSession({
+      memoId: memo.id,
+      mode: 'new',
+      layerId: null,
+      startTime: 0,
+      trackColor: null,
+    });
     void engine.startRecording().catch((error: Error) => {
+      clearSession();
       Alert.alert('Recording failed', error.message);
     });
   }, [engine, memo, record]);
 
   const stopAndSaveActiveRecording = useCallback(
     async (options?: { reloadEngine?: boolean }): Promise<boolean> => {
-      if (saveRecordingInFlight.current) {
-        return saveRecordingInFlight.current;
+      const existingResult = await awaitSaveInFlight();
+      if (existingResult) {
+        return true;
       }
 
       if (!engine.getState().isRecording) {
         return true;
       }
 
-      const currentMemo = memoRef.current;
-      if (!currentMemo) {
+      if (!memoRef.current) {
         return false;
       }
 
-      const reloadEngine = options?.reloadEngine !== false;
-
-      const savePromise = (async (): Promise<boolean> => {
-        isSavingRecordingOnExit.current = true;
-        try {
-          const { path, duration, peaks } = await engine.stopRecording();
-          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-
-          const wasStackMode = stackModeRef.current;
-          const wasReplaceMode = replaceModeRef.current;
-          const capturedStartTime = recordingStartTime.current;
-          const layerId = activeLayerIdRef.current;
-
-          let updated: Memo;
-          if (wasStackMode) {
-            updated = await addStackedLayer(
-              currentMemo.id,
-              capturedStartTime,
-              path,
-              peaks,
-              pendingRecordingColor.current ?? undefined
-            );
-            setActiveLayerId(updated.layers[updated.layers.length - 1]?.id ?? layerId);
-          } else if (wasReplaceMode) {
-            if (!layerId) {
-              throw new Error('No track selected');
-            }
-            const replaceLayer = currentMemo.layers.find((layer) => layer.id === layerId);
-            if (!replaceLayer || replaceLayer.duration <= 0) {
-              throw new Error('No active layer');
-            }
-            const { trimStart: fileTrimStart, trimEnd: fileTrimEnd, leadingPadSeconds } =
-              getReplaceSpliceParams(replaceLayer, capturedStartTime, duration);
-            updated = await replaceLayerSegment(
-              currentMemo.id,
-              replaceLayer.id,
-              fileTrimStart,
-              fileTrimEnd,
-              path,
-              peaks,
-              leadingPadSeconds
-            );
-          } else {
-            updated = await saveRecording(currentMemo.id, path, duration, peaks);
-            setActiveLayerId(updated.layers[0]?.id ?? null);
-          }
-
-          setMemo(updated);
-          setReplaceMode(false);
-          setStackMode(false);
-          monitorMixRef.current = false;
-          pendingRecordingColor.current = null;
-          if (reloadEngine) {
-            await loadMemoIntoEngine(
-              engine,
-              updated,
-              wasStackMode || wasReplaceMode ? capturedStartTime : 0
-            );
-          }
-          return true;
-        } catch (error) {
+      isSavingRecordingOnExit.current = true;
+      try {
+        await hydrateSessionFromStorage();
+        const result = await stopAndSave(engine, options);
+        if (!result) {
           Alert.alert(
             'Could not save recording',
-            error instanceof Error ? error.message : 'Unknown error'
+            'The recording session could not be restored.'
           );
           return false;
-        } finally {
-          isSavingRecordingOnExit.current = false;
         }
-      })();
 
-      saveRecordingInFlight.current = savePromise;
-      try {
-        return await savePromise;
+        setMemo(result.memo);
+        setActiveLayerId(result.activeLayerId);
+        setReplaceMode(false);
+        setStackMode(false);
+        monitorMixRef.current = false;
+        pendingRecordingColor.current = null;
+        return true;
+      } catch (error) {
+        Alert.alert(
+          'Could not save recording',
+          error instanceof Error ? error.message : 'Unknown error'
+        );
+        return false;
       } finally {
-        if (saveRecordingInFlight.current === savePromise) {
-          saveRecordingInFlight.current = null;
-        }
+        isSavingRecordingOnExit.current = false;
       }
     },
     [engine]
@@ -1339,6 +1297,14 @@ export default function MemoEditorScreen() {
 
     engine.seek(startTime);
 
+    beginSession({
+      memoId: memo.id,
+      mode,
+      layerId: activeLayerId,
+      startTime,
+      trackColor: pendingRecordingColor.current,
+    });
+
     try {
       await engine.startRecording({
         monitorMix: useMonitorMix,
@@ -1350,6 +1316,7 @@ export default function MemoEditorScreen() {
       setReplaceMode(false);
       setStackMode(false);
       pendingRecordingColor.current = null;
+      clearSession();
       Alert.alert('Recording failed', error instanceof Error ? error.message : 'Unknown error');
     }
   };

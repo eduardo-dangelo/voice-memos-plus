@@ -3,6 +3,7 @@
   "main": "expo-router/entry",
   "version": "1.0.0",
   "dependencies": {
+    "@expo/ui": "~56.0.21",
     "expo": "~56.0.11",
     "expo-constants": "~56.0.18",
     "expo-file-system": "~56.0.8",
@@ -15,6 +16,7 @@
     "expo-status-bar": "~56.0.4",
     "expo-symbols": "~56.0.6",
     "expo-web-browser": "~56.0.5",
+    "expo-widgets": "~56.0.22",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.85.3",
@@ -33,7 +35,7 @@
   "scripts": {
     "start": "expo start",
     "ios": "expo run:ios",
-    "prebuild:ios": "expo prebuild --platform ios",
+    "prebuild:ios": "expo prebuild --platform ios && node scripts/strip-push-entitlement.js",
     "test": "npx tsx --test src/audio/normalizeRecordingLogic.test.ts src/audio/metronome.test.ts src/audio/timelineZoom.test.ts src/storage/replaceSpliceLogic.test.ts"
   },
   "private": true

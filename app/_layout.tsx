@@ -9,8 +9,14 @@ import { useColorScheme } from '@/components/useColorScheme';
 import type { VoiceMemosColorScheme } from '@/constants/VoiceMemosColors';
 import { AudioEngineProvider } from '@/src/audio/AudioEngineContext';
 import { memoAudioEngine } from '@/src/audio/MemoAudioEngine';
+import {
+  awaitSaveInFlight,
+  hydrateSessionFromStorage,
+} from '@/src/recording/activeRecordingSession';
 import { purgeExpiredTrash } from '@/src/storage/memoStore';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
+import { recoverRecordingLiveActivity } from '@/src/widgets/recordingLiveActivityController';
+import '@/src/widgets/RecordingLiveActivity';
 
 function buildHeaderOptions(colors: VoiceMemosColorScheme, surfaceColor = colors.background) {
   return {
@@ -96,8 +102,18 @@ function RootNavigator() {
 
 export default function RootLayout() {
   useEffect(() => {
-    void memoAudioEngine.requestPermission();
+    void (async () => {
+      await memoAudioEngine.requestPermission();
+      await memoAudioEngine.prewarmRecordingSession();
+    })();
     void purgeExpiredTrash();
+    void (async () => {
+      await hydrateSessionFromStorage();
+      await recoverRecordingLiveActivity(memoAudioEngine.getState().isRecording);
+      await awaitSaveInFlight();
+      await memoAudioEngine.finishDeferredPlaybackSetup();
+    })();
+
   }, []);
 
   return (

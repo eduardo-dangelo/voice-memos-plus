@@ -4,6 +4,7 @@ import {
   LayoutChangeEvent,
   NativeScrollEvent,
   NativeSyntheticEvent,
+  AppState,
   PanResponder,
   Pressable,
   StyleSheet,
@@ -32,6 +33,7 @@ import {
   WAVEFORM_BAR_WIDTH,
 } from '@/src/audio/waveform';
 import { LOOP_ROW_HEIGHT, LoopRegionBar, type LoopOverlayConfig } from '@/src/components/LoopRegionBar';
+import { LoopColumnOverlay } from '@/src/components/LoopColumnOverlay';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 import { formatMarkerTime } from '@/src/utils/format';
 
@@ -221,8 +223,31 @@ function getTrackBarCount(
   return Math.max(1, Math.floor(Math.min(contentWidth, targetWidth) / BAR_STEP));
 }
 
+function getRecordingBarCount(
+  trackDuration: number,
+  contentWidth: number,
+  pixelsPerSecond: number
+): number {
+  if (trackDuration <= 0) {
+    return 0;
+  }
+  const targetWidth = trackDuration * pixelsPerSecond;
+  return Math.max(1, Math.ceil(Math.min(contentWidth, targetWidth) / BAR_STEP));
+}
+
 function timeToScrollX(time: number, contentWidth: number, pixelsPerSecond: number): number {
   return Math.max(0, Math.min(contentWidth, time * pixelsPerSecond));
+}
+
+/** Recording scroll must not clamp to stale contentWidth while backgrounded. */
+function recordingTimeToScrollX(
+  time: number,
+  contentWidth: number,
+  pixelsPerSecond: number
+): number {
+  const scrollTarget = time * pixelsPerSecond;
+  const maxScroll = Math.max(contentWidth, scrollTarget);
+  return Math.max(0, Math.min(maxScroll, scrollTarget));
 }
 
 function scrollXToTime(x: number, duration: number, pixelsPerSecond: number): number {
@@ -729,7 +754,10 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
     }
   };
 
-  const barCount = getTrackBarCount(track.duration, contentWidth, pixelsPerSecond);
+  const barCount =
+    track.id === '__recording__'
+      ? getRecordingBarCount(track.duration, contentWidth, pixelsPerSecond)
+      : getTrackBarCount(track.duration, contentWidth, pixelsPerSecond);
   const trackOffset = track.startTime * pixelsPerSecond;
   const trackWidth = barCount * BAR_STEP;
 
@@ -743,7 +771,7 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
 
   const liveRecording = track.liveRecording;
   const liveBarCount = liveRecording
-    ? getTrackBarCount(liveRecording.duration, contentWidth, pixelsPerSecond)
+    ? getRecordingBarCount(liveRecording.duration, contentWidth, pixelsPerSecond)
     : 0;
   const liveTrackOffset = liveRecording ? liveRecording.startTime * pixelsPerSecond : 0;
   const liveTrackWidth = liveBarCount * BAR_STEP;
@@ -1507,9 +1535,44 @@ export function WaveformView({
       return;
     }
     const time = getRecordingTimeRef.current?.() ?? currentTimeRef.current;
-    const x = timeToScrollX(time, contentWidthRef.current, layoutPixelsPerSecond);
+    const x = recordingTimeToScrollX(
+      time,
+      contentWidthRef.current,
+      layoutPixelsPerSecond
+    );
     scrollOffsetRef.current = x;
     scrollRef.current?.scrollTo({ x, animated: false });
+  }, [followRecordingScroll, viewportWidth, layoutPixelsPerSecond, currentTime]);
+
+  useEffect(() => {
+    if (!followRecordingScroll) {
+      return;
+    }
+
+    const syncRecordingScroll = () => {
+      if (viewportWidth <= 0) {
+        return;
+      }
+      const propTime = currentTimeRef.current;
+      const liveTime = getRecordingTimeRef.current?.() ?? propTime;
+      const x = recordingTimeToScrollX(
+        liveTime,
+        contentWidthRef.current,
+        layoutPixelsPerSecond
+      );
+      scrollOffsetRef.current = x;
+      scrollRef.current?.scrollTo({ x, animated: false });
+    };
+
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        syncRecordingScroll();
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
   }, [followRecordingScroll, viewportWidth, layoutPixelsPerSecond]);
 
   useEffect(() => {
@@ -1525,7 +1588,10 @@ export function WaveformView({
       }
       const time = getRecordingTimeRef.current?.() ?? currentTimeRef.current;
       const width = contentWidthRef.current;
-      scrollRef.current?.scrollTo({ x: timeToScrollX(time, width, layoutPixelsPerSecond), animated: false });
+      scrollRef.current?.scrollTo({
+        x: recordingTimeToScrollX(time, width, layoutPixelsPerSecond),
+        animated: false,
+      });
       raf = requestAnimationFrame(tick);
     };
 
@@ -1579,7 +1645,7 @@ export function WaveformView({
             showsVerticalScrollIndicator={false}
             style={{ height: waveformAreaHeight }}
             onScroll={handleVerticalScroll}>
-            <View style={{ height: tracksContentHeight }}>
+            <View style={{ height: tracksContentHeight, position: 'relative' }}>
               {tracks.map((track, index) => (
                 <TrackWaveformRow
                   key={track.id}
@@ -1609,6 +1675,16 @@ export function WaveformView({
                   onPress={(locationX) => handleTrackPress(track.id, locationX)}
                 />
               ))}
+              {loopOverlay ? (
+                <LoopColumnOverlay
+                  height={tracksContentHeight}
+                  loopEnabled={loopOverlay.loopEnabled}
+                  loopEnd={loopOverlay.loopEnd}
+                  loopStart={loopOverlay.loopStart}
+                  pixelsPerSecond={layoutPixelsPerSecond}
+                  sidePadding={sidePadding}
+                />
+              ) : null}
             </View>
           </ScrollView>
           <View

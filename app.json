@@ -7,14 +7,18 @@
     "icon": "./assets/images/icon.png",
     "scheme": "voicememosplus",
     "userInterfaceStyle": "automatic",
-    "platforms": ["ios"],
+    "platforms": [
+      "ios"
+    ],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.voicememosplus.app",
       "userInterfaceStyle": "automatic",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Voice Memos Plus needs microphone access to record audio.",
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSSupportsLiveActivities": true,
+        "NSSupportsLiveActivitiesFrequentUpdates": true
       }
     },
     "plugins": [
@@ -33,7 +37,17 @@
           "resizeMode": "contain",
           "backgroundColor": "#ffffff"
         }
-      ]
+      ],
+      [
+        "expo-widgets",
+        {
+          "bundleIdentifier": "com.voicememosplus.app.widgets",
+          "groupIdentifier": "group.com.voicememosplus.app",
+          "enablePushNotifications": false,
+          "frequentUpdates": true
+        }
+      ],
+      "./plugins/stripWidgetsPushEntitlement.js"
     ],
     "experiments": {
       "typedRoutes": true

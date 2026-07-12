@@ -13,7 +13,7 @@ import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
 export const LOOP_ROW_HEIGHT = 16;
 const LOOP_HANDLE_TOUCH = 14;
-const LOOP_ENABLED_FILL = '#FFCC00';
+export const LOOP_ENABLED_FILL = '#FFCC00';
 const TAP_MOVE_THRESHOLD = 6;
 
 export type LoopScrollHelpers = {
@@ -50,8 +50,34 @@ function contentXToTime(
   return Math.max(0, Math.min(duration, (x - sidePadding) / pixelsPerSecond));
 }
 
-function timeToContentX(time: number, sidePadding: number, pixelsPerSecond: number): number {
+export function timeToContentX(time: number, sidePadding: number, pixelsPerSecond: number): number {
   return sidePadding + time * pixelsPerSecond;
+}
+
+export type LoopRegionLayout = {
+  left: number;
+  width: number;
+  hasRegion: boolean;
+};
+
+export function getLoopRegionLayout({
+  loopStart,
+  loopEnd,
+  sidePadding,
+  pixelsPerSecond,
+}: {
+  loopStart: number;
+  loopEnd: number;
+  sidePadding: number;
+  pixelsPerSecond: number;
+}): LoopRegionLayout {
+  const hasRegion = loopEnd > loopStart + MIN_LOOP_DURATION;
+  if (!hasRegion) {
+    return { left: 0, width: 0, hasRegion: false };
+  }
+  const left = timeToContentX(loopStart, sidePadding, pixelsPerSecond);
+  const right = timeToContentX(loopEnd, sidePadding, pixelsPerSecond);
+  return { left, width: Math.max(2, right - left), hasRegion: true };
 }
 
 function LoopRulerTicks({
@@ -371,9 +397,13 @@ export function LoopRegionBar({
     })
   ).current;
 
-  const regionLeft = displayHasRegion ? timeToContentX(displayStart, sidePadding, pixelsPerSecond) : 0;
-  const regionRight = displayHasRegion ? timeToContentX(displayEnd, sidePadding, pixelsPerSecond) : 0;
-  const regionWidth = displayHasRegion ? Math.max(2, regionRight - regionLeft) : 0;
+  const { left: regionLeft, width: regionWidth } = getLoopRegionLayout({
+    loopStart: displayStart,
+    loopEnd: displayEnd,
+    sidePadding,
+    pixelsPerSecond,
+  });
+  const regionRight = regionLeft + regionWidth;
   const regionFillColor = displayEnabled
     ? LOOP_ENABLED_FILL
     : colors.waveformInactive;
