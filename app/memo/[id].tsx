@@ -108,6 +108,12 @@ function cloneLayers(layers: Layer[]): Layer[] {
   return JSON.parse(JSON.stringify(layers)) as Layer[];
 }
 
+function suppressTrackSelection(tracks: TrackData[], isRecording: boolean): TrackData[] {
+  return isRecording
+    ? tracks.map((track) => ({ ...track, isActive: false }))
+    : tracks;
+}
+
 export default function MemoEditorScreen() {
   const colors = useVoiceMemosColors();
   const colorScheme = useColorScheme();
@@ -1563,6 +1569,8 @@ export default function MemoEditorScreen() {
       return [];
     }
 
+    let tracks: TrackData[];
+
     if (pendingRecordingLayout) {
       const recordingColor = stackMode
         ? (pendingRecordingColor.current ?? undefined)
@@ -1584,12 +1592,10 @@ export default function MemoEditorScreen() {
       };
 
       if (stackMode) {
-        return [recordingTrack, ...inactivePlayableTracks];
-      }
-
-      if (replaceMode && activeLayerId) {
+        tracks = [recordingTrack, ...inactivePlayableTracks];
+      } else if (replaceMode && activeLayerId) {
         const replaceStart = recordingStartTime.current;
-        return playableTrackRows.map((track) => {
+        tracks = playableTrackRows.map((track) => {
           if (track.id !== activeLayerId) {
             return inactivePlayableById.get(track.id) ?? { ...track, isActive: false };
           }
@@ -1623,13 +1629,11 @@ export default function MemoEditorScreen() {
             replaceTailDimFrom: replaceStart,
           };
         });
+      } else {
+        tracks = [recordingTrack];
       }
-
-      return [recordingTrack];
-    }
-
-    if (playableTrackRows.length === 0) {
-      return [
+    } else if (playableTrackRows.length === 0) {
+      tracks = [
         {
           id: memo.layers[0]?.id ?? 'empty',
           peaks: undefined,
@@ -1639,9 +1643,11 @@ export default function MemoEditorScreen() {
           color: resolveTrackColor(memo.layers[0]?.color),
         },
       ];
+    } else {
+      tracks = playableTrackRows;
     }
 
-    return playableTrackRows;
+    return suppressTrackSelection(tracks, isRecording);
   }, [
     activeLayerId,
     duration,
