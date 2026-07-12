@@ -15,7 +15,7 @@ import {
 } from '@/src/recording/activeRecordingSession';
 import { purgeExpiredTrash } from '@/src/storage/memoStore';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
-import { recoverRecordingLiveActivity } from '@/src/widgets/recordingLiveActivityController';
+import { recoverMemoLiveActivity } from '@/src/widgets/recordingLiveActivityController';
 import '@/src/widgets/RecordingLiveActivity';
 
 function buildHeaderOptions(colors: VoiceMemosColorScheme, surfaceColor = colors.background) {
@@ -109,9 +109,11 @@ export default function RootLayout() {
     void purgeExpiredTrash();
     void (async () => {
       await hydrateSessionFromStorage();
-      await recoverRecordingLiveActivity(memoAudioEngine.getState().isRecording);
+      await recoverMemoLiveActivity(memoAudioEngine);
       await awaitSaveInFlight();
-      await memoAudioEngine.finishDeferredPlaybackSetup();
+      if (!memoAudioEngine.getState().isRecording) {
+        await memoAudioEngine.finishDeferredPlaybackSetup();
+      }
     })();
 
   }, []);

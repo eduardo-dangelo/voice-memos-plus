@@ -44,7 +44,8 @@ import {
     getSession,
 } from '@/src/recording/activeRecordingSession';
 import {
-    endRecordingLiveActivity,
+    endMemoLiveActivity,
+    startPlaybackLiveActivity,
     startRecordingLiveActivity,
 } from '@/src/widgets/recordingLiveActivityController';
 import {
@@ -102,8 +103,17 @@ type LayerPlaybackPlan = {
   layerPlayLength: number;
 };
 
+export type RecordingCaptureResult = {
+  path: string;
+  duration: number;
+  peaks: number[];
+  wasMonitorMix: boolean;
+  recorderDuration: number;
+};
+
 export type EngineState = {
   memoId: string | null;
+  memoTitle: string | null;
   isRecording: boolean;
   isPlaying: boolean;
   monitorMixActive: boolean;
@@ -124,6 +134,7 @@ type Listener = (state: EngineState) => void;
 
 const initialState: EngineState = {
   memoId: null,
+  memoTitle: null,
   isRecording: false,
   isPlaying: false,
   monitorMixActive: false,
@@ -169,6 +180,7 @@ export class MemoAudioEngine {
   private pendingEngineReload: { memo: Memo; seekTime: number } | null = null;
   private deferredSetupInFlight: Promise<void> | null = null;
   private recordingSessionPrewarmed = false;
+  private stopCaptureInFlight = false;
 
   constructor() {
     AudioManager.addSystemEventListener('routeChange', () => {
@@ -178,6 +190,9 @@ export class MemoAudioEngine {
     AppState.addEventListener('change', (nextState) => {
       if (nextState === 'active') {
         void (async () => {
+          if (this.state.isRecording) {
+            return;
+          }
           await awaitSaveInFlight();
           await this.finishDeferredPlaybackSetup();
         })();
@@ -187,6 +202,10 @@ export class MemoAudioEngine {
 
   private async handleRouteChange(): Promise<void> {
     if (this.state.isRecording) {
+      if (this.stopCaptureInFlight) {
+        return;
+      }
+
       try {
         await pinBuiltInMicrophone();
         const routeSnapshot = await assertRecordingRouteOk();
@@ -984,6 +1003,9 @@ export class MemoAudioEngine {
     }
     this.invalidateAndStopSources();
     this.emit({ isPlaying: false, currentTime: endAt });
+    if (!this.state.isRecording) {
+      void endMemoLiveActivity();
+    }
   }
 
   private resyncPlaybackAtCurrentTime(): void {
@@ -1059,10 +1081,14 @@ export class MemoAudioEngine {
   private stopPlayback(): void {
     this.invalidateAndStopSources();
     this.emit({ isPlaying: false });
+    if (!this.state.isRecording) {
+      void endMemoLiveActivity();
+    }
   }
 
   async loadMemo(
     memoId: string,
+    memoTitle: string,
     layers: LoadedLayer[],
     trimStart: number,
     trimEnd: number,
@@ -1071,6 +1097,7 @@ export class MemoAudioEngine {
     loopEnd = 0,
     loopEnabled = false
   ): Promise<void> {
+    void endMemoLiveActivity();
     this.stopPlayback();
     this.disposeMixGraph();
     clearReverbIrCache();
@@ -1083,6 +1110,7 @@ export class MemoAudioEngine {
 
     this.emit({
       memoId,
+      memoTitle,
       duration: timelineDuration,
       trimStart,
       trimEnd: trimEndResolved,
@@ -1337,51 +1365,66 @@ export class MemoAudioEngine {
       monitorMixReady: false,
     });
     clearSession();
-    void endRecordingLiveActivity();
+    void endMemoLiveActivity();
   }
 
-  async stopRecording(options?: { deferPlaybackSetup?: boolean }): Promise<{
-    path: string;
-    duration: number;
-    peaks: number[];
-  }> {
+  async stopRecorderCapture(): Promise<RecordingCaptureResult> {
     if (!this.recorder) {
       throw new Error('No active recording');
     }
 
-    this.clearRecordingTimer();
-    this.emitRecordingProgress();
-    const trimmed = this.trimRawPeaksToDuration(
-      this.recordingPeaksBuffer,
-      this.recorder.getCurrentDuration()
-    );
-    const peaks = this.toAbsolutePeaks(this.downsampleRecordingPeaks(trimmed));
-    this.recorder.clearOnAudioReady();
-    const result = this.recorder.stop();
-    this.recorder = null;
-    this.recordingPeaksBuffer = [];
+    this.stopCaptureInFlight = true;
+    try {
+      this.clearRecordingTimer();
+      this.emitRecordingProgress();
+      const trimmed = this.trimRawPeaksToDuration(
+        this.recordingPeaksBuffer,
+        this.recorder.getCurrentDuration()
+      );
+      const peaks = this.toAbsolutePeaks(this.downsampleRecordingPeaks(trimmed));
+      this.recorder.clearOnAudioReady();
+      const result = this.recorder.stop();
+      this.recorder = null;
+      this.recordingPeaksBuffer = [];
 
-    const wasMonitorMix = this.state.monitorMixActive;
-    this.clearRecordingSampleRateState();
-    this.emit({
-      isRecording: false,
-      recordingDuration: 0,
-      recordingPeaks: [],
-      monitorMixActive: false,
-      monitorMixReady: false,
-    });
+      const wasMonitorMix = this.state.monitorMixActive;
+      this.clearRecordingSampleRateState();
+      this.emit({
+        isRecording: false,
+        recordingDuration: 0,
+        recordingPeaks: [],
+        monitorMixActive: false,
+        monitorMixReady: false,
+      });
 
-    if (result.status === 'error') {
-      throw new Error(result.message);
+      if (result.status === 'error') {
+        throw new Error(result.message);
+      }
+
+      const path = result.paths[0];
+      if (!path) {
+        throw new Error('Recording file missing');
+      }
+
+      return {
+        path,
+        duration: result.duration,
+        peaks,
+        wasMonitorMix,
+        recorderDuration: result.duration,
+      };
+    } finally {
+      this.stopCaptureInFlight = false;
     }
+  }
 
-    let path = result.paths[0];
-    if (!path) {
-      throw new Error('Recording file missing');
-    }
-
-    let duration = result.duration;
-    const recorderDuration = duration;
+  async finalizeRecordingAfterStop(
+    capture: RecordingCaptureResult,
+    options?: { deferPlaybackSetup?: boolean }
+  ): Promise<{ path: string; duration: number; peaks: number[] }> {
+    let path = capture.path;
+    let duration = capture.duration;
+    const recorderDuration = capture.recorderDuration;
 
     const decoded = await decodeAudioData(path);
     const needsNormalize = recordingNeedsNormalize(
@@ -1411,7 +1454,7 @@ export class MemoAudioEngine {
     const deferPlaybackSetup =
       options?.deferPlaybackSetup ?? this.isAppInBackground();
 
-    if (wasMonitorMix) {
+    if (capture.wasMonitorMix) {
       this.stopPlayback();
     }
 
@@ -1422,9 +1465,18 @@ export class MemoAudioEngine {
       await this.configureForPlayback();
     }
 
-    void endRecordingLiveActivity();
+    void endMemoLiveActivity();
 
-    return { path, duration, peaks };
+    return { path, duration, peaks: capture.peaks };
+  }
+
+  async stopRecording(options?: { deferPlaybackSetup?: boolean }): Promise<{
+    path: string;
+    duration: number;
+    peaks: number[];
+  }> {
+    const capture = await this.stopRecorderCapture();
+    return this.finalizeRecordingAfterStop(capture, options);
   }
 
   async play(): Promise<void> {
@@ -1601,9 +1653,24 @@ export class MemoAudioEngine {
 
       this.scheduleMetronome(context, startAt, endAt, when);
       this.startPlaybackTimer(sessionId, context);
+
+      if (
+        !this.state.isRecording &&
+        this.state.memoId &&
+        this.state.memoTitle
+      ) {
+        startPlaybackLiveActivity({
+          memoId: this.state.memoId,
+          memoTitle: this.state.memoTitle,
+          playbackOffset: startAt,
+        });
+      }
     } catch (error) {
       this.invalidateAndStopSources();
       this.emit({ isPlaying: false });
+      if (!this.state.isRecording) {
+        void endMemoLiveActivity();
+      }
       throw error;
     }
   }
@@ -1617,6 +1684,9 @@ export class MemoAudioEngine {
       : this.state.currentTime;
     this.invalidateAndStopSources();
     this.emit({ isPlaying: false, currentTime: pausedAt });
+    if (!this.state.isRecording) {
+      void endMemoLiveActivity();
+    }
   }
 
   togglePlayback(): Promise<void> {

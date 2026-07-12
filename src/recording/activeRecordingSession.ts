@@ -18,6 +18,7 @@ export type RecordingSessionMode = 'new' | 'stack' | 'replace';
 
 export type ActiveRecordingSession = {
   memoId: string;
+  memoTitle?: string;
   mode: RecordingSessionMode;
   layerId: string | null;
   startTime: number;
@@ -164,18 +165,20 @@ export async function stopAndSave(
   const reloadEngine = options?.reloadEngine !== false;
 
   const savePromise = (async (): Promise<RecordingSaveResult | null> => {
-    const currentSession = await ensureSessionForStop();
-
     try {
+      const isBackground = AppState.currentState !== 'active';
+
+      const capture = await engine.stopRecorderCapture();
+      const currentSession = getSession() ?? (await ensureSessionForStop());
       const currentMemo = await getMemo(currentSession.memoId);
       if (!currentMemo) {
         throw new Error('Memo not found');
       }
 
-      const isBackground = AppState.currentState !== 'active';
-      const { path, duration, peaks } = await engine.stopRecording({
+      const { path, duration, peaks } = await engine.finalizeRecordingAfterStop(capture, {
         deferPlaybackSetup: isBackground,
       });
+
       if (!isBackground) {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
@@ -255,6 +258,10 @@ export async function stopAndSave(
       saveInFlight = null;
     }
   }
+}
+
+export function isSaveInFlight(): boolean {
+  return saveInFlight !== null;
 }
 
 export async function awaitSaveInFlight(): Promise<RecordingSaveResult | null | void> {

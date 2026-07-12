@@ -75,7 +75,7 @@ export function RecordingRow({
     if (!isActive) {
       const { layers, duration: timelineDuration, trimStart, trimEnd } =
         getMemoPlaybackTimeline(memo);
-      await engine.loadMemo(memo.id, layers, trimStart, trimEnd, timelineDuration);
+      await engine.loadMemo(memo.id, memo.title, layers, trimStart, trimEnd, timelineDuration);
     } else {
       engine.setLoopEnabled(false);
     }

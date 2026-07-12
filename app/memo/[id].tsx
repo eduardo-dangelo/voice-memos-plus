@@ -45,7 +45,6 @@ import {
   awaitSaveInFlight,
   beginSession,
   clearSession,
-  hydrateSessionFromStorage,
   stopAndSave,
   subscribeRecordingSave,
 } from '@/src/recording/activeRecordingSession';
@@ -878,6 +877,7 @@ export default function MemoEditorScreen() {
     router.setParams({ record: undefined });
     beginSession({
       memoId: memo.id,
+      memoTitle: memo.title,
       mode: 'new',
       layerId: null,
       startTime: 0,
@@ -906,7 +906,6 @@ export default function MemoEditorScreen() {
 
       isSavingRecordingOnExit.current = true;
       try {
-        await hydrateSessionFromStorage();
         const result = await stopAndSave(engine, options);
         if (!result) {
           Alert.alert(
@@ -1299,6 +1298,7 @@ export default function MemoEditorScreen() {
 
     beginSession({
       memoId: memo.id,
+      memoTitle: memo.title,
       mode,
       layerId: activeLayerId,
       startTime,

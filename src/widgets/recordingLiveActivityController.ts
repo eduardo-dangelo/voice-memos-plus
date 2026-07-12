@@ -6,6 +6,7 @@ import {
   hydrateSessionFromStorage,
   type ActiveRecordingSession,
 } from '@/src/recording/activeRecordingSession';
+import type { MemoAudioEngine } from '@/src/audio/MemoAudioEngine';
 
 import RecordingActivity, { type RecordingActivityProps } from './RecordingLiveActivity';
 
@@ -13,19 +14,42 @@ const LIVE_ACTIVITY_NAME = 'RecordingActivity';
 
 let instance: LiveActivity<RecordingActivityProps> | null = null;
 
-function buildProps(session: ActiveRecordingSession): RecordingActivityProps {
+function memoDeepLink(memoId: string): string {
+  return `voicememosplus://memo/${memoId}`;
+}
+
+function buildRecordingProps(session: ActiveRecordingSession): RecordingActivityProps {
   return {
     memoId: session.memoId,
+    memoTitle: session.memoTitle ?? 'Recording',
+    activityKind: 'recording',
     recordingStartedAt: session.recordingStartedAt ?? Date.now(),
+    startTime: session.startTime,
+    playbackStartedAt: 0,
+    playbackOffset: 0,
     mode: session.mode,
     layerId: session.layerId,
-    startTime: session.startTime,
     trackColor: session.trackColor,
   };
 }
 
-function recordingDeepLink(memoId: string): string {
-  return `voicememosplus://memo/${memoId}`;
+function buildPlaybackProps(params: {
+  memoId: string;
+  memoTitle: string;
+  playbackOffset: number;
+}): RecordingActivityProps {
+  return {
+    memoId: params.memoId,
+    memoTitle: params.memoTitle,
+    activityKind: 'playback',
+    recordingStartedAt: 0,
+    startTime: 0,
+    playbackStartedAt: Date.now(),
+    playbackOffset: params.playbackOffset,
+    mode: 'new',
+    layerId: null,
+    trackColor: null,
+  };
 }
 
 function ensureSessionRecordingStartedAt(
@@ -40,15 +64,20 @@ function ensureSessionRecordingStartedAt(
   return next;
 }
 
-export function startRecordingLiveActivity(session: ActiveRecordingSession): void {
-  void endRecordingLiveActivity();
-
-  const sessionWithStart = ensureSessionRecordingStartedAt(session);
-  const props = buildProps(sessionWithStart);
-  instance = RecordingActivity.start(props, recordingDeepLink(sessionWithStart.memoId));
+async function endAllInstances(): Promise<void> {
+  const instances = RecordingActivity.getInstances();
+  await Promise.all(
+    instances.map(async (activity) => {
+      try {
+        await activity.end('immediate');
+      } catch {
+        // Stale activity cleanup is best-effort.
+      }
+    })
+  );
 }
 
-export async function endRecordingLiveActivity(): Promise<void> {
+export async function endMemoLiveActivity(): Promise<void> {
   const active = instance;
   instance = null;
 
@@ -65,46 +94,68 @@ export async function endRecordingLiveActivity(): Promise<void> {
   }
 }
 
-export async function recoverRecordingLiveActivity(isRecording: boolean): Promise<void> {
+export function startRecordingLiveActivity(session: ActiveRecordingSession): void {
+  void endMemoLiveActivity();
+
+  const sessionWithStart = ensureSessionRecordingStartedAt(session);
+  const props = buildRecordingProps(sessionWithStart);
+  instance = RecordingActivity.start(props, memoDeepLink(sessionWithStart.memoId));
+}
+
+export function startPlaybackLiveActivity(params: {
+  memoId: string;
+  memoTitle: string;
+  playbackOffset: number;
+}): void {
+  if (getSession()) {
+    return;
+  }
+
+  void endMemoLiveActivity();
+
+  const props = buildPlaybackProps(params);
+  instance = RecordingActivity.start(props, memoDeepLink(params.memoId));
+}
+
+export async function recoverMemoLiveActivity(engine: MemoAudioEngine): Promise<void> {
   await hydrateSessionFromStorage();
 
+  const state = engine.getState();
   const instances = RecordingActivity.getInstances();
 
-  if (!isRecording) {
-    await Promise.all(
-      instances.map(async (activity) => {
-        try {
-          await activity.end('immediate');
-        } catch {
-          // Stale activity cleanup is best-effort.
-        }
-      })
-    );
-    instance = null;
+  if (state.isRecording) {
+    const session = getSession();
+    if (!session) {
+      await endAllInstances();
+      instance = null;
+      return;
+    }
+
+    if (instances.length > 0) {
+      instance = instances[0] ?? null;
+      return;
+    }
+
+    startRecordingLiveActivity(session);
     return;
   }
 
-  const session = getSession();
-  if (!session) {
-    await Promise.all(
-      instances.map(async (activity) => {
-        try {
-          await activity.end('immediate');
-        } catch {
-          // Stale activity cleanup is best-effort.
-        }
-      })
-    );
-    instance = null;
+  if (state.isPlaying && state.memoId && state.memoTitle) {
+    if (instances.length > 0) {
+      instance = instances[0] ?? null;
+      return;
+    }
+
+    startPlaybackLiveActivity({
+      memoId: state.memoId,
+      memoTitle: state.memoTitle,
+      playbackOffset: state.currentTime,
+    });
     return;
   }
 
-  if (instances.length > 0) {
-    instance = instances[0] ?? null;
-    return;
-  }
-
-  startRecordingLiveActivity(session);
+  await endAllInstances();
+  instance = null;
 }
 
 export function getRecordingLiveActivityName(): string {

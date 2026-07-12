@@ -11,6 +11,7 @@ export async function loadMemoIntoEngine(
   const { layers, duration, trimStart, trimEnd } = getMemoPlaybackTimeline(memo);
   await engine.loadMemo(
     memo.id,
+    memo.title,
     layers,
     trimStart,
     trimEnd,
