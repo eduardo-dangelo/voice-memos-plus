@@ -31,6 +31,15 @@ export function getFoldersFile(): File {
   return file;
 }
 
+export function getAppSettingsFile(): File {
+  const file = new File(Paths.document, 'app-settings.json');
+  if (!file.exists) {
+    file.create();
+    file.write('{}');
+  }
+  return file;
+}
+
 export function getMemoDir(memoId: string): Directory {
   return new Directory(getMemosRoot(), memoId);
 }

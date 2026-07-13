@@ -93,9 +93,12 @@ export function getMemoMetronomeSettings(memo: Pick<Memo, 'metronome'>): Metrono
   return normalizeMetronomeSettings(memo.metronome);
 }
 
+export type MemoTitleSource = 'default' | 'location' | 'user';
+
 export type Memo = {
   id: string;
   title: string;
+  titleSource?: MemoTitleSource;
   createdAt: string;
   updatedAt: string;
   duration: number;

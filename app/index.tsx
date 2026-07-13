@@ -1,7 +1,7 @@
 import { SymbolView } from 'expo-symbols';
 import { Stack, router } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 
 import { useColorScheme } from '@/components/useColorScheme';
 import {
@@ -12,6 +12,7 @@ import {
 } from '@/src/components/GroupedList';
 import { useFolders } from '@/src/hooks/useFolders';
 import { useLibraryCounts } from '@/src/hooks/useLibraryCounts';
+import { getAppSettings, setLocationBasedNaming } from '@/src/settings/appSettings';
 import { createFolder, deleteFolder, reorderFolders } from '@/src/storage/folderStore';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
@@ -23,11 +24,18 @@ export default function FoldersHomeScreen() {
   const { folders, refresh: refreshFolders } = useFolders();
   const { counts, refresh: refreshCounts } = useLibraryCounts();
   const [editMode, setEditMode] = useState(false);
+  const [locationBasedNaming, setLocationBasedNamingEnabled] = useState(true);
 
   const refresh = () => {
     refreshFolders();
     refreshCounts();
   };
+
+  useEffect(() => {
+    void getAppSettings().then((settings) => {
+      setLocationBasedNamingEnabled(settings.locationBasedNaming);
+    });
+  }, []);
 
   const folderRows = useMemo(() => folders, [folders]);
   const hasFolders = folderRows.length > 0;
@@ -190,6 +198,25 @@ export default function FoldersHomeScreen() {
             </GroupedListSection>
           </>
         ) : null}
+
+        <GroupedListSectionHeader title="Settings" />
+        <GroupedListSection>
+          <View style={styles.settingsRow}>
+            <View style={styles.settingsCopy}>
+              <Text style={styles.settingsTitle}>Location-based Naming</Text>
+              <Text style={styles.settingsSubtitle}>
+                Name new recordings using your current location.
+              </Text>
+            </View>
+            <Switch
+              value={locationBasedNaming}
+              onValueChange={(enabled) => {
+                setLocationBasedNamingEnabled(enabled);
+                void setLocationBasedNaming(enabled);
+              }}
+            />
+          </View>
+        </GroupedListSection>
       </GroupedListScreen>
     </>
   );
@@ -252,7 +279,28 @@ function useStyles(
         disabledControl: {
           opacity: 0.3,
         },
+        settingsRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 16,
+          paddingHorizontal: 16,
+          paddingVertical: 12,
+          minHeight: 58,
+        },
+        settingsCopy: {
+          flex: 1,
+          gap: 2,
+        },
+        settingsTitle: {
+          color: colors.text,
+          fontSize: 17,
+        },
+        settingsSubtitle: {
+          color: colors.secondaryText,
+          fontSize: 13,
+        },
       }),
-    [buttonSurface, colors.accent]
+    [buttonSurface, colors.accent, colors.secondaryText, colors.text]
   );
 }

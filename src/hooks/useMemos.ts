@@ -1,6 +1,7 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useFocusEffect } from 'expo-router';
 
+import { subscribeMemoUpdate } from '@/src/recording/memoUpdateEvents';
 import { listMemos, type MemoListScope } from '@/src/storage/memoStore';
 import type { Memo } from '@/src/storage/types';
 
@@ -44,6 +45,20 @@ export function useMemos(scope: MemoListScope = { kind: 'all' }) {
       void refresh();
     }, [refresh])
   );
+
+  useEffect(() => {
+    return subscribeMemoUpdate((memo) => {
+      setMemos((current) => {
+        const index = current.findIndex((entry) => entry.id === memo.id);
+        if (index < 0) {
+          return current;
+        }
+        const next = [...current];
+        next[index] = memo;
+        return next;
+      });
+    });
+  }, []);
 
   return { memos, loading, refresh, removeMemo, removeMemos };
 }

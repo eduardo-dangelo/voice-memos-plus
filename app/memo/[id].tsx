@@ -48,6 +48,7 @@ import {
   stopAndSave,
   subscribeRecordingSave,
 } from '@/src/recording/activeRecordingSession';
+import { subscribeMemoUpdate } from '@/src/recording/memoUpdateEvents';
 import {
   deactivateMemoLoop,
   deleteLayer,
@@ -886,6 +887,19 @@ export default function MemoEditorScreen() {
       setStackMode(false);
       monitorMixRef.current = false;
       pendingRecordingColor.current = null;
+    });
+  }, [id]);
+
+  useEffect(() => {
+    if (!id) {
+      return;
+    }
+
+    return subscribeMemoUpdate((memo) => {
+      if (memo.id !== id) {
+        return;
+      }
+      setMemo(memo);
     });
   }, [id]);
 

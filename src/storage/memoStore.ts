@@ -220,6 +220,7 @@ export async function getMemo(memoId: string): Promise<Memo | null> {
 export type CreateMemoOptions = {
   title?: string;
   folderId?: string;
+  titleSource?: Memo['titleSource'];
 };
 
 export async function createMemo(options?: CreateMemoOptions | string): Promise<Memo> {
@@ -239,6 +240,9 @@ export async function createMemo(options?: CreateMemoOptions | string): Promise<
   if (normalized.folderId) {
     memo.folderId = normalized.folderId;
   }
+  if (normalized.titleSource) {
+    memo.titleSource = normalized.titleSource;
+  }
 
   const dir = getMemoDir(memo.id);
   dir.create({ intermediates: true, idempotent: true });
@@ -252,6 +256,22 @@ export async function updateTitle(memoId: string, title: string): Promise<Memo> 
     throw new Error('Memo not found');
   }
   memo.title = title.trim() || memo.title;
+  memo.titleSource = 'user';
+  memo.updatedAt = new Date().toISOString();
+  writeManifest(memo);
+  return memo;
+}
+
+export async function updateLocationTitle(memoId: string, title: string): Promise<Memo> {
+  const memo = await getMemo(memoId);
+  if (!memo) {
+    throw new Error('Memo not found');
+  }
+  if (memo.titleSource === 'user') {
+    return memo;
+  }
+  memo.title = title.trim() || memo.title;
+  memo.titleSource = 'location';
   memo.updatedAt = new Date().toISOString();
   writeManifest(memo);
   return memo;
@@ -781,6 +801,7 @@ export async function duplicateMemo(memoId: string): Promise<Memo> {
   const copy = await createMemo({
     title: `${memo.title} copy`,
     folderId: memo.folderId,
+    titleSource: 'user',
   });
   const sourceDir = resolveMemoDir(memoId);
   if (!sourceDir) {

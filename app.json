@@ -16,6 +16,7 @@
       "userInterfaceStyle": "automatic",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Voice Memos Plus needs microphone access to record audio.",
+        "NSLocationWhenInUseUsageDescription": "Voice Memos Plus uses your location to name new recordings, like Apple Voice Memos.",
         "ITSAppUsesNonExemptEncryption": false,
         "NSSupportsLiveActivities": true,
         "NSSupportsLiveActivitiesFrequentUpdates": true
@@ -28,6 +29,12 @@
         {
           "iosBackgroundMode": true,
           "iosMicrophonePermission": "Voice Memos Plus needs microphone access to record audio."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Voice Memos Plus uses your location to name new recordings, like Apple Voice Memos."
         }
       ],
       [
