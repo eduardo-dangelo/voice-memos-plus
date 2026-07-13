@@ -1,7 +1,9 @@
 import { SymbolView } from 'expo-symbols';
 import { useMemo } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
-import Animated, { LinearTransition } from 'react-native-reanimated';
+import Animated from 'react-native-reanimated';
+
+import { LIST_ITEM_EXIT, LIST_ITEM_TRANSITION } from '@/src/components/listTransitions';
 
 import { showMoveToFolderActionSheet } from '@/src/actions/showMoveToFolderActionSheet';
 import { showMemoActionSheet } from '@/src/actions/showMemoActionSheet';
@@ -33,7 +35,8 @@ type Props = {
   onToggleExpand: () => void;
   onToggleSelect: () => void;
   onOpenEditor: () => void;
-  onDeleted: () => void;
+  onDeleted: (memoId: string) => void;
+  onDeleteFailed: () => void;
   onUpdated: () => void;
 };
 
@@ -48,6 +51,7 @@ export function RecordingRow({
   onToggleSelect,
   onOpenEditor,
   onDeleted,
+  onDeleteFailed,
   onUpdated,
 }: Props) {
   const colors = useVoiceMemosColors();
@@ -142,8 +146,11 @@ export function RecordingRow({
             if (isActive) {
               engine.unload();
             }
+            onDeleted(memo.id);
             const action = isTrash ? permanentlyDeleteMemo : deleteMemo;
-            void action(memo.id).then(onDeleted);
+            void action(memo.id).catch(() => {
+              onDeleteFailed();
+            });
           },
         },
       ]
@@ -163,7 +170,10 @@ export function RecordingRow({
   };
 
   return (
-    <Animated.View layout={LinearTransition.duration(40)} style={styles.container}>
+    <Animated.View
+      exiting={LIST_ITEM_EXIT}
+      layout={LIST_ITEM_TRANSITION}
+      style={styles.container}>
       <Pressable
         onPress={selectionMode ? onToggleSelect : onToggleExpand}
         onLongPress={onOpenEditor}
@@ -226,6 +236,7 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
     () =>
       StyleSheet.create({
         container: {
+          overflow: 'hidden',
           borderBottomWidth: StyleSheet.hairlineWidth,
           borderBottomColor: colors.separator,
           backgroundColor: colors.background,

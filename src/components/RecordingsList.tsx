@@ -10,7 +10,6 @@ import {
 } from 'react';
 import {
   Alert,
-  FlatList,
   Keyboard,
   Platform,
   Pressable,
@@ -20,9 +19,11 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import Animated from 'react-native-reanimated';
 
 import { memoAudioEngine } from '@/src/audio/MemoAudioEngine';
 import { FloatingHeaderButton } from '@/src/components/FloatingHeaderButton';
+import { LIST_ITEM_TRANSITION } from '@/src/components/listTransitions';
 import { RecordButton } from '@/src/components/RecordButton';
 import { RecordingRow } from '@/src/components/RecordingRow';
 import { useMemos } from '@/src/hooks/useMemos';
@@ -58,7 +59,7 @@ export function RecordingsList({
 }: Props) {
   const colors = useVoiceMemosColors();
   const styles = useStyles(colors);
-  const { memos, refresh } = useMemos(scope);
+  const { memos, refresh, removeMemo, removeMemos } = useMemos(scope);
   const [query, setQuery] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [selectionMode, setSelectionMode] = useState(false);
@@ -91,6 +92,27 @@ export function RecordingsList({
     setSelectionMode(false);
   };
 
+  const handleDeleteFailed = useCallback(() => {
+    void refresh();
+    Alert.alert('Delete failed', 'The recording could not be deleted. Please try again.');
+  }, [refresh]);
+
+  const handleMemoDeleted = useCallback(
+    (memoId: string) => {
+      setExpandedId((current) => (current === memoId ? null : current));
+      setSelectedIds((current) => {
+        if (!current.has(memoId)) {
+          return current;
+        }
+        const next = new Set(current);
+        next.delete(memoId);
+        return next;
+      });
+      removeMemo(memoId);
+    },
+    [removeMemo]
+  );
+
   const handleDeleteSelected = () => {
     if (selectedIds.size === 0) {
       return;
@@ -107,12 +129,20 @@ export function RecordingsList({
           text: 'Delete',
           style: 'destructive',
           onPress: () => {
+            const ids = [...selectedIds];
+            memoAudioEngine.unload();
+            removeMemos(ids);
+            clearSelection();
             const action = isTrash ? permanentlyDeleteMemo : deleteMemo;
-            void Promise.all([...selectedIds].map((id) => action(id))).then(() => {
-              memoAudioEngine.unload();
-              clearSelection();
-              refresh();
-            });
+            void Promise.all(ids.map((id) => action(id)))
+              .then(() => refresh({ silent: true }))
+              .catch(() => {
+                void refresh();
+                Alert.alert(
+                  'Delete failed',
+                  'Some recordings could not be deleted. Please try again.'
+                );
+              });
           },
         },
       ]
@@ -273,9 +303,10 @@ export function RecordingsList({
           </View>
         ) : null}
 
-        <FlatList
+        <Animated.FlatList
           contentContainerStyle={styles.listContent}
           data={filteredMemos}
+          itemLayoutAnimation={LIST_ITEM_TRANSITION}
           keyExtractor={(item) => item.id}
           keyboardDismissMode="on-drag"
           keyboardShouldPersistTaps="handled"
@@ -293,7 +324,8 @@ export function RecordingsList({
               memo={item}
               selected={selectedIds.has(item.id)}
               selectionMode={selectionMode}
-              onDeleted={refresh}
+              onDeleteFailed={handleDeleteFailed}
+              onDeleted={handleMemoDeleted}
               onOpenEditor={() =>
                 router.push({
                   pathname: '/memo/[id]',
@@ -302,7 +334,7 @@ export function RecordingsList({
               }
               onToggleExpand={() => setExpandedId((current) => (current === item.id ? null : item.id))}
               onToggleSelect={() => toggleSelection(item.id)}
-              onUpdated={refresh}
+              onUpdated={() => void refresh({ silent: true })}
             />
           )}
         />
