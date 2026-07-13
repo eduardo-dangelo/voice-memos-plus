@@ -1273,6 +1273,14 @@ export default function MemoEditorScreen() {
       return;
     }
 
+    if (memo.loopEnabled) {
+      Alert.alert(
+        'Turn off loop to record',
+        'Recording isn’t available while a loop is active. Disable the loop, then try again.'
+      );
+      return;
+    }
+
     if (mode === 'replace') {
       if (!activeLayerId) {
         Alert.alert('Select a track', 'Tap a track to select it before replacing.');
@@ -1361,6 +1369,14 @@ export default function MemoEditorScreen() {
 
   const showRecordOptions = () => {
     if (!memo || !hasRecording(memo)) {
+      return;
+    }
+
+    if (memo.loopEnabled) {
+      Alert.alert(
+        'Turn off loop to record',
+        'Recording isn’t available while a loop is active. Disable the loop, then try again.'
+      );
       return;
     }
 
