@@ -13,10 +13,14 @@ import {
   awaitSaveInFlight,
   hydrateSessionFromStorage,
 } from '@/src/recording/activeRecordingSession';
+import { getThemePreferenceSync } from '@/src/settings/appSettings';
 import { purgeExpiredTrash } from '@/src/storage/memoStore';
+import { applyThemePreference } from '@/src/theme/applyThemePreference';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 import { recoverMemoLiveActivity } from '@/src/widgets/recordingLiveActivityController';
 import '@/src/widgets/RecordingLiveActivity';
+
+applyThemePreference(getThemePreferenceSync());
 
 function buildHeaderOptions(colors: VoiceMemosColorScheme, surfaceColor = colors.background) {
   return {
@@ -115,7 +119,6 @@ export default function RootLayout() {
         await memoAudioEngine.finishDeferredPlaybackSetup();
       }
     })();
-
   }, []);
 
   return (

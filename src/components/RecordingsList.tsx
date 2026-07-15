@@ -210,6 +210,7 @@ export function RecordingsList({
                 {
                   type: 'custom' as const,
                   hidesSharedBackground: true,
+                  sharesBackground: false,
                   element: (
                     <FloatingHeaderButton
                       accessibilityLabel="Search recordings"
@@ -221,6 +222,7 @@ export function RecordingsList({
                 {
                   type: 'custom' as const,
                   hidesSharedBackground: true,
+                  sharesBackground: false,
                   element: (
                     <FloatingHeaderButton
                       accessibilityLabel={
@@ -244,6 +246,7 @@ export function RecordingsList({
                 items.push({
                   type: 'custom',
                   hidesSharedBackground: true,
+                  sharesBackground: false,
                   element: headerExtraActions as ReactElement,
                 });
               }

@@ -5,7 +5,12 @@ import { Pressable, StyleSheet, Text } from 'react-native';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
-type FloatingHeaderIcon = 'magnifyingglass' | 'ellipsis.circle';
+type FloatingHeaderIcon =
+  | 'magnifyingglass'
+  | 'ellipsis.circle'
+  | 'gearshape'
+  | 'gearshape.fill'
+  | 'folder.badge.plus';
 
 type BaseProps = {
   onPress: () => void;
@@ -77,6 +82,7 @@ function useStyles(
           alignItems: 'center',
           justifyContent: 'center',
           backgroundColor: buttonSurface,
+          overflow: 'hidden',
           shadowColor: '#000000',
           shadowOffset: { width: 0, height: 2 },
           shadowOpacity: colorScheme === 'dark' ? 0.35 : 0.12,
@@ -90,6 +96,7 @@ function useStyles(
           paddingVertical: 7,
           minHeight: 36,
           justifyContent: 'center',
+          overflow: 'hidden',
           shadowColor: '#000000',
           shadowOffset: { width: 0, height: 2 },
           shadowOpacity: colorScheme === 'dark' ? 0.35 : 0.12,

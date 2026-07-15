@@ -1,7 +1,8 @@
+import { Stack, router, useFocusEffect } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
-import { Stack, router } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
-import { Alert, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Alert, Platform, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
+import Animated, { FadeIn, FadeOut, LinearTransition } from 'react-native-reanimated';
 
 import { useColorScheme } from '@/components/useColorScheme';
 import {
@@ -10,10 +11,17 @@ import {
   GroupedListSection,
   GroupedListSectionHeader,
 } from '@/src/components/GroupedList';
+import { FloatingHeaderButton } from '@/src/components/FloatingHeaderButton';
 import { useFolders } from '@/src/hooks/useFolders';
 import { useLibraryCounts } from '@/src/hooks/useLibraryCounts';
-import { getAppSettings, setLocationBasedNaming } from '@/src/settings/appSettings';
+import {
+  getAppSettings,
+  setLocationBasedNaming,
+  setThemePreference,
+  type ThemePreference,
+} from '@/src/settings/appSettings';
 import { createFolder, deleteFolder, reorderFolders } from '@/src/storage/folderStore';
+import { applyThemePreference } from '@/src/theme/applyThemePreference';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
 export default function FoldersHomeScreen() {
@@ -24,7 +32,9 @@ export default function FoldersHomeScreen() {
   const { folders, refresh: refreshFolders } = useFolders();
   const { counts, refresh: refreshCounts } = useLibraryCounts();
   const [editMode, setEditMode] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [locationBasedNaming, setLocationBasedNamingEnabled] = useState(true);
+  const [themePreference, setThemePreferenceState] = useState<ThemePreference>('system');
 
   const refresh = () => {
     refreshFolders();
@@ -34,8 +44,17 @@ export default function FoldersHomeScreen() {
   useEffect(() => {
     void getAppSettings().then((settings) => {
       setLocationBasedNamingEnabled(settings.locationBasedNaming);
+      setThemePreferenceState(settings.themePreference);
     });
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      return () => {
+        setShowSettings(false);
+      };
+    }, [])
+  );
 
   const folderRows = useMemo(() => folders, [folders]);
   const hasFolders = folderRows.length > 0;
@@ -70,57 +89,153 @@ export default function FoldersHomeScreen() {
     ]);
   };
 
+  const selectThemePreference = (pref: ThemePreference) => {
+    setThemePreferenceState(pref);
+    applyThemePreference(pref);
+    void setThemePreference(pref);
+  };
+
+  const overrideEnabled = themePreference !== 'system';
+  const darkModeEnabled = themePreference === 'dark';
+
+  const toggleOverride = (enabled: boolean) => {
+    if (!enabled) {
+      selectThemePreference('system');
+      return;
+    }
+    selectThemePreference(colorScheme === 'dark' ? 'dark' : 'light');
+  };
+
+  const toggleDarkMode = (enabled: boolean) => {
+    selectThemePreference(enabled ? 'dark' : 'light');
+  };
+
+  const handleNewFolder = useCallback(() => {
+    Alert.prompt(
+      'New Folder',
+      undefined,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Save',
+          onPress: (value?: string) => {
+            void createFolder(value?.trim() || 'New Folder').then(() => {
+              refreshFolders();
+              refreshCounts();
+            });
+          },
+        },
+      ],
+      'plain-text',
+      'New Folder'
+    );
+  }, [refreshCounts, refreshFolders]);
+
+  const toggleSettings = useCallback(() => {
+    setShowSettings((current) => !current);
+  }, []);
+
+  const toggleEditMode = useCallback(() => {
+    setEditMode((current) => !current);
+  }, []);
+
+  const headerScreenOptions = useMemo(
+    () => ({
+      title: '',
+      headerLargeTitle: false,
+      headerShadowVisible: false,
+      headerTintColor: colors.text,
+      headerStyle: { backgroundColor: headerStyles.canvasColor },
+      headerLargeStyle: { backgroundColor: headerStyles.canvasColor },
+      contentStyle: { backgroundColor: headerStyles.canvasColor },
+      ...(Platform.OS === 'ios'
+        ? {
+            unstable_headerRightItems: () => {
+              const items = [
+                {
+                  type: 'custom' as const,
+                  hidesSharedBackground: true,
+                  sharesBackground: false,
+                  element: (
+                    <FloatingHeaderButton
+                      accessibilityLabel={showSettings ? 'Hide settings' : 'Show settings'}
+                      icon={showSettings ? 'gearshape.fill' : 'gearshape'}
+                      onPress={toggleSettings}
+                    />
+                  ),
+                },
+                {
+                  type: 'custom' as const,
+                  hidesSharedBackground: true,
+                  sharesBackground: false,
+                  element: (
+                    <FloatingHeaderButton
+                      accessibilityLabel="New folder"
+                      icon="folder.badge.plus"
+                      onPress={handleNewFolder}
+                    />
+                  ),
+                },
+              ];
+              if (hasFolders) {
+                items.push({
+                  type: 'custom' as const,
+                  hidesSharedBackground: true,
+                  sharesBackground: false,
+                  element: (
+                    <FloatingHeaderButton
+                      accessibilityLabel={editMode ? 'Done editing folders' : 'Edit folders'}
+                      label={editMode ? 'Done' : 'Edit'}
+                      variant="pill"
+                      onPress={toggleEditMode}
+                    />
+                  ),
+                });
+              }
+              return items;
+            },
+          }
+        : {
+            headerRight: () => (
+              <View style={styles.headerActions}>
+                <FloatingHeaderButton
+                  accessibilityLabel={showSettings ? 'Hide settings' : 'Show settings'}
+                  icon={showSettings ? 'gearshape.fill' : 'gearshape'}
+                  onPress={toggleSettings}
+                />
+                <FloatingHeaderButton
+                  accessibilityLabel="New folder"
+                  icon="folder.badge.plus"
+                  onPress={handleNewFolder}
+                />
+                {hasFolders ? (
+                  <FloatingHeaderButton
+                    accessibilityLabel={editMode ? 'Done editing folders' : 'Edit folders'}
+                    label={editMode ? 'Done' : 'Edit'}
+                    variant="pill"
+                    onPress={toggleEditMode}
+                  />
+                ) : null}
+              </View>
+            ),
+          }),
+    }),
+    [
+      colors.text,
+      editMode,
+      handleNewFolder,
+      hasFolders,
+      headerStyles.canvasColor,
+      showSettings,
+      styles.headerActions,
+      toggleEditMode,
+      toggleSettings,
+    ]
+  );
+
   return (
     <>
-      <Stack.Screen
-        options={{
-          title: '',
-          headerLargeTitle: false,
-          headerShadowVisible: false,
-          headerTintColor: colors.text,
-          headerStyle: { backgroundColor: headerStyles.canvasColor },
-          headerLargeStyle: { backgroundColor: headerStyles.canvasColor },
-          contentStyle: { backgroundColor: headerStyles.canvasColor },
-          headerRight: () => (
-            <View style={styles.headerActions}>
-              <Pressable
-                hitSlop={8}
-                onPress={() => {
-                  Alert.prompt(
-                    'New Folder',
-                    undefined,
-                    [
-                      { text: 'Cancel', style: 'cancel' },
-                      {
-                        text: 'Save',
-                        onPress: (value?: string) => {
-                          void createFolder(value?.trim() || 'New Folder').then(refresh);
-                        },
-                      },
-                    ],
-                    'plain-text',
-                    'New Folder'
-                  );
-                }}
-                style={styles.newFolderButton}>
-                <SymbolView
-                  name={{ ios: 'folder.badge.plus' }}
-                  size={28}
-                  tintColor={colors.accent}
-                />
-              </Pressable>
-              {hasFolders ? (
-                <Pressable
-                  hitSlop={8}
-                  onPress={() => setEditMode((current) => !current)}
-                  style={styles.editButton}>
-                  <Text style={styles.editText}>{editMode ? 'Done' : 'Edit'}</Text>
-                </Pressable>
-              ) : null}
-            </View>
-          ),
-        }}
-      />
+      <Stack.Screen options={headerScreenOptions} />
       <GroupedListScreen largeTitle="Voice Memos">
         <GroupedListSection>
           <GroupedListRow
@@ -199,24 +314,59 @@ export default function FoldersHomeScreen() {
           </>
         ) : null}
 
-        <GroupedListSectionHeader title="Settings" />
-        <GroupedListSection>
-          <View style={styles.settingsRow}>
-            <View style={styles.settingsCopy}>
-              <Text style={styles.settingsTitle}>Location-based Naming</Text>
-              <Text style={styles.settingsSubtitle}>
-                Name new recordings using your current location.
-              </Text>
-            </View>
-            <Switch
-              value={locationBasedNaming}
-              onValueChange={(enabled) => {
-                setLocationBasedNamingEnabled(enabled);
-                void setLocationBasedNaming(enabled);
-              }}
-            />
-          </View>
-        </GroupedListSection>
+        {showSettings ? (
+          <Animated.View
+            entering={FadeIn.duration(220)}
+            exiting={FadeOut.duration(160)}
+            layout={LinearTransition.duration(220)}>
+            <GroupedListSectionHeader title="Settings" />
+            <GroupedListSection>
+              <View
+                style={[styles.settingsRow, !overrideEnabled && styles.settingsRowBorder]}>
+                <View style={styles.settingsCopy}>
+                  <Text style={styles.settingsTitle}>Appearance</Text>
+                  <Text style={styles.settingsSubtitle}>
+                    Off follows your system setting. Turn on to choose light or dark.
+                  </Text>
+                </View>
+                <Switch value={overrideEnabled} onValueChange={toggleOverride} />
+              </View>
+              {overrideEnabled ? (
+                <Animated.View
+                  entering={FadeIn.duration(200)}
+                  exiting={FadeOut.duration(140)}
+                  style={[styles.settingsRow, styles.settingsRowNested, styles.settingsRowBorder]}>
+                  <SymbolView
+                    name={{ ios: !darkModeEnabled ? 'moon.fill' : 'sun.max.fill' }}
+                    size={20}
+                    tintColor={colors.accent}
+                  />
+                  <View style={styles.settingsCopy}>
+                    <Text style={styles.settingsTitle}>
+                      {darkModeEnabled ? 'Light Mode' : 'Dark Mode'}
+                    </Text>
+                  </View>
+                  <Switch value={darkModeEnabled} onValueChange={toggleDarkMode} />
+                </Animated.View>
+              ) : null}
+              <View style={styles.settingsRow}>
+                <View style={styles.settingsCopy}>
+                  <Text style={styles.settingsTitle}>Location-based Naming</Text>
+                  <Text style={styles.settingsSubtitle}>
+                    Name new recordings using your current location.
+                  </Text>
+                </View>
+                <Switch
+                  value={locationBasedNaming}
+                  onValueChange={(enabled) => {
+                    setLocationBasedNamingEnabled(enabled);
+                    void setLocationBasedNaming(enabled);
+                  }}
+                />
+              </View>
+            </GroupedListSection>
+          </Animated.View>
+        ) : null}
       </GroupedListScreen>
     </>
   );
@@ -239,8 +389,8 @@ function useStyles(
   colors: ReturnType<typeof useVoiceMemosColors>,
   colorScheme: 'light' | 'dark' | null | undefined
 ) {
-  const buttonSurface =
-    colorScheme === 'dark' ? colors.sheetBackground : colors.background;
+  const nestedSurface =
+    colorScheme === 'dark' ? colors.pillBackground : colors.editorCanvasBackground;
 
   return useMemo(
     () =>
@@ -249,27 +399,6 @@ function useStyles(
           flexDirection: 'row',
           alignItems: 'center',
           gap: 10,
-        },
-        newFolderButton: {
-          width: 44,
-          height: 44,
-          borderRadius: 22,
-          alignItems: 'center',
-          justifyContent: 'center',
-          backgroundColor: buttonSurface,
-        },
-        editButton: {
-          backgroundColor: buttonSurface,
-          borderRadius: 18,
-          paddingHorizontal: 14,
-          paddingVertical: 7,
-          minHeight: 36,
-          justifyContent: 'center',
-        },
-        editText: {
-          color: colors.accent,
-          fontSize: 16,
-          fontWeight: '400',
         },
         editControls: {
           flexDirection: 'row',
@@ -288,6 +417,14 @@ function useStyles(
           paddingVertical: 12,
           minHeight: 58,
         },
+        settingsRowBorder: {
+          borderBottomWidth: StyleSheet.hairlineWidth,
+          borderBottomColor: colors.separator,
+        },
+        settingsRowNested: {
+          minHeight: 48,
+          backgroundColor: nestedSurface,
+        },
         settingsCopy: {
           flex: 1,
           gap: 2,
@@ -301,6 +438,6 @@ function useStyles(
           fontSize: 13,
         },
       }),
-    [buttonSurface, colors.accent, colors.secondaryText, colors.text]
+    [nestedSurface, colors.secondaryText, colors.separator, colors.text]
   );
 }
