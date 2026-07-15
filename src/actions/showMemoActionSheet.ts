@@ -12,11 +12,13 @@ export type MemoActionSheetHandlers = {
 export type MemoActionSheetOptions = MemoActionSheetHandlers & {
   includeEditRecording?: boolean;
   includeMoveToFolder?: boolean;
+  includeShare?: boolean;
 };
 
 export function showMemoActionSheet({
   includeEditRecording = true,
   includeMoveToFolder = false,
+  includeShare = true,
   onShare,
   onRename,
   onEditRecording,
@@ -25,7 +27,7 @@ export function showMemoActionSheet({
   onDelete,
 }: MemoActionSheetOptions): void {
   const options = [
-    'Share',
+    ...(includeShare ? (['Share'] as const) : []),
     'Rename',
     ...(includeEditRecording ? (['Edit Recording'] as const) : []),
     ...(includeMoveToFolder ? (['Move to Folder'] as const) : []),

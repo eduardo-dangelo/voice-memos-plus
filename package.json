@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "dependencies": {
     "@expo/ui": "~56.0.21",
+    "audio-encode": "file:./modules/audio-encode",
     "expo": "~56.0.11",
     "expo-constants": "~56.0.18",
     "expo-file-system": "~56.0.8",

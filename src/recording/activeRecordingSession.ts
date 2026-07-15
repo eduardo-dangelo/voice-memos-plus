@@ -5,7 +5,6 @@ import { widgetsDirectory } from 'expo-widgets';
 
 import { loadMemoIntoEngine } from '@/src/audio/loadMemoIntoEngine';
 import type { MemoAudioEngine } from '@/src/audio/MemoAudioEngine';
-import { applyLocationTitleIfEnabled } from '@/src/location/locationNaming';
 import {
   addStackedLayer,
   getMemo,
@@ -242,11 +241,6 @@ export async function stopAndSave(
       }
 
       notifyListeners(result);
-
-      if (!wasStackMode && !wasReplaceMode) {
-        void applyLocationTitleIfEnabled(updated.id);
-      }
-
       return result;
     } catch (error) {
       if (__DEV__) {

@@ -8,20 +8,21 @@ import {
   type LayerEffects,
   type LayerEffectsChange,
 } from '@/src/audio/layerEffects';
-import { mixLayersToFile, spliceRecording } from '@/src/audio/wavUtils';
+import { renderMemoForShare } from '@/src/audio/memoExport';
+import { spliceRecording, writeAudioBufferToWavFile } from '@/src/audio/wavUtils';
+import { encodeWavToM4a } from 'audio-encode';
 import {
   DEFAULT_TRACK_COLOR,
   isTrackColorAllowed,
   pickRandomTrackColor,
 } from '@/constants/VoiceMemosColors';
-import { createDefaultTitle } from '@/src/utils/format';
+import { createDefaultTitle, sanitizeExportFileName } from '@/src/utils/format';
 import { randomId } from '@/src/utils/id';
 
 import {
   getManifestFile,
   getMemoDir,
   getMemosRoot,
-  getPrimaryLayerFile,
   getTrashMemoDir,
   getTrashMemosRoot,
   moveMemoDirectory,
@@ -39,7 +40,10 @@ import {
   normalizeLoopRegion,
   normalizeMetronomeSettings,
   getEarliestTrimInTimelineDelta,
+  hasRecording,
 } from './types';
+
+export type ExportFormat = 'm4a' | 'wav';
 
 function alignLayerFileNameWithSource(layer: Layer, sourcePath: string): void {
   const sourceIsWav = sourcePath.toLowerCase().endsWith('.wav');
@@ -845,25 +849,39 @@ export async function replaceRecordingSegment(
   );
 }
 
-export async function getShareableFile(memo: Memo): Promise<File> {
-  const playableLayers = memo.layers.filter((layer) => layer.duration > 0);
-  if (playableLayers.length <= 1) {
-    return getPrimaryLayerFile(memo);
+export async function exportMemoToFile(memo: Memo, format: ExportFormat): Promise<File> {
+  if (!hasRecording(memo)) {
+    throw new Error('This memo has no recorded audio.');
   }
 
-  const output = new File(Paths.cache, `mix-${memo.id}.m4a`);
+  const rendered = await renderMemoForShare(memo);
+  const baseName = sanitizeExportFileName(memo.title);
+  const extension = format === 'm4a' ? 'm4a' : 'wav';
+  const output = new File(Paths.cache, `${baseName}.${extension}`);
+
   if (output.exists) {
     output.delete();
   }
 
-  await mixLayersToFile(
-    playableLayers.map((layer) => ({
-      path: requireLayerFile(memo.id, layer.fileName).uri,
-      startTime: layer.startTime,
-    })),
-    getMemoTimelineDuration(memo),
-    output.uri
-  );
+  if (format === 'wav') {
+    writeAudioBufferToWavFile(rendered, output.uri);
+    return output;
+  }
+
+  const wavTemp = new File(Paths.cache, `export-${memo.id}.tmp.wav`);
+  if (wavTemp.exists) {
+    wavTemp.delete();
+  }
+
+  writeAudioBufferToWavFile(rendered, wavTemp.uri);
+  await encodeWavToM4a(wavTemp.uri, output.uri);
+  if (wavTemp.exists) {
+    wavTemp.delete();
+  }
+
+  if (!output.exists) {
+    throw new Error('Failed to create M4A export file.');
+  }
 
   return output;
 }

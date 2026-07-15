@@ -1,6 +1,5 @@
 import * as Haptics from 'expo-haptics';
 import { router, useLocalSearchParams, useNavigation } from 'expo-router';
-import * as Sharing from 'expo-sharing';
 import { SymbolView } from 'expo-symbols';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import {
@@ -8,6 +7,7 @@ import {
   ActivityIndicator,
   Alert,
   type LayoutChangeEvent,
+  Modal,
   Pressable,
   StyleSheet,
   Text,
@@ -18,6 +18,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useColorScheme } from '@/components/useColorScheme';
 import { DEFAULT_TRACK_COLOR, pickRandomTrackColor } from '@/constants/VoiceMemosColors';
 import { showMemoActionSheet } from '@/src/actions/showMemoActionSheet';
+import { shareMemo } from '@/src/actions/shareMemo';
 import { useAudioEngine, useAudioEngineState } from '@/src/audio/AudioEngineContext';
 import {
   isHeadphonesConnected,
@@ -41,6 +42,7 @@ import type { EditorTool } from '@/src/components/track-editor/types';
 import { resolveTrackColor, TrackColorPicker } from '@/src/components/TrackColorPicker';
 import { WaveformView, type TrackData } from '@/src/components/WaveformView';
 import { loadMemoIntoEngine } from '@/src/audio/loadMemoIntoEngine';
+import { applyLocationTitleIfEnabled } from '@/src/location/locationNaming';
 import {
   awaitSaveInFlight,
   beginSession,
@@ -56,7 +58,6 @@ import {
   duplicateMemo,
   ensureWaveformPeaks,
   getMemo,
-  getShareableFile,
   permanentlyDeleteMemo,
   updateLayerColor,
   updateLayerEffects,
@@ -129,6 +130,7 @@ export default function MemoEditorScreen() {
   const engineState = useAudioEngineState();
   const headphonesConnected = useHeadphonesConnected();
   const autoRecordStarted = useRef(false);
+  const pendingLocationNamingRef = useRef(false);
   const recordingStartTime = useRef(0);
   const persistEffectsTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const persistStartTimeTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -161,6 +163,7 @@ export default function MemoEditorScreen() {
   const [savingTrim, setSavingTrim] = useState(false);
   const [colorPickerLayerId, setColorPickerLayerId] = useState<string | null>(null);
   const [metronomeSettingsVisible, setMetronomeSettingsVisible] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const [layoutReady, setLayoutReady] = useState(false);
   const lastLayoutHeightRef = useRef<number | null>(null);
   const settleRafRef = useRef<number | null>(null);
@@ -912,6 +915,7 @@ export default function MemoEditorScreen() {
     }
 
     autoRecordStarted.current = true;
+    pendingLocationNamingRef.current = true;
     router.setParams({ record: undefined });
     beginSession({
       memoId: memo.id,
@@ -986,6 +990,14 @@ export default function MemoEditorScreen() {
   }, [engine]);
 
   useEffect(() => {
+    const applyPendingLocationNaming = () => {
+      if (!pendingLocationNamingRef.current || !id) {
+        return;
+      }
+      pendingLocationNamingRef.current = false;
+      void applyLocationTitleIfEnabled(id);
+    };
+
     const unsubscribe = navigation.addListener('beforeRemove', (e) => {
       if (isSavingRecordingOnExit.current) {
         e.preventDefault();
@@ -993,19 +1005,21 @@ export default function MemoEditorScreen() {
       }
 
       if (!engine.getState().isRecording) {
+        applyPendingLocationNaming();
         return;
       }
 
       e.preventDefault();
       void stopAndSaveActiveRecording({ reloadEngine: false }).then((ok) => {
         if (ok) {
+          applyPendingLocationNaming();
           navigation.dispatch(e.data.action);
         }
       });
     });
 
     return unsubscribe;
-  }, [engine, navigation, stopAndSaveActiveRecording]);
+  }, [engine, id, navigation, stopAndSaveActiveRecording]);
 
   const resetLayoutReady = useCallback(() => {
     setLayoutReady(false);
@@ -1091,6 +1105,10 @@ export default function MemoEditorScreen() {
     if (current) {
       deactivateLoopForMemo(engine, current, setMemo);
     }
+    if (pendingLocationNamingRef.current) {
+      pendingLocationNamingRef.current = false;
+      void applyLocationTitleIfEnabled(memo.id);
+    }
     router.back();
   }, [
     cancelEditDraft,
@@ -1134,17 +1152,14 @@ export default function MemoEditorScreen() {
     stopAndSaveActiveRecording,
   ]);
 
-  const handleShare = useCallback(async () => {
+  const handleShare = useCallback(() => {
     if (!memo) {
       return;
     }
-    const file = await getShareableFile(memo);
-    if (!file.exists) {
-      return;
-    }
-    if (await Sharing.isAvailableAsync()) {
-      await Sharing.shareAsync(file.uri);
-    }
+    shareMemo(memo, {
+      onExportStarted: () => setIsExporting(true),
+      onExportFinished: () => setIsExporting(false),
+    });
   }, [memo]);
 
   const handleRename = useCallback(() => {
@@ -1214,12 +1229,13 @@ export default function MemoEditorScreen() {
   const showMemoMenu = useCallback(() => {
     showMemoActionSheet({
       includeEditRecording: false,
-      onShare: () => void handleShare(),
+      includeShare: memo ? hasRecording(memo) : false,
+      onShare: handleShare,
       onRename: handleRename,
       onDuplicate: () => void handleDuplicate(),
       onDelete: confirmDelete,
     });
-  }, [confirmDelete, handleDuplicate, handleRename, handleShare]);
+  }, [confirmDelete, handleDuplicate, handleRename, handleShare, memo]);
 
   const renderHeaderBar = useCallback(
     () => (
@@ -1875,6 +1891,14 @@ export default function MemoEditorScreen() {
         onChange={handleMetronomeChange}
         onClose={() => setMetronomeSettingsVisible(false)}
       />
+      <Modal animationType="fade" transparent visible={isExporting}>
+        <View style={styles.exportOverlay}>
+          <View style={styles.exportCard}>
+            <ActivityIndicator color={colors.accent} size="large" />
+            <Text style={styles.exportText}>Preparing audio…</Text>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -1965,6 +1989,24 @@ function useMemoEditorStyles(
           gap: 8,
           borderTopWidth: StyleSheet.hairlineWidth,
           borderTopColor: colors.separator,
+        },
+        exportOverlay: {
+          flex: 1,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: 'rgba(0, 0, 0, 0.35)',
+        },
+        exportCard: {
+          alignItems: 'center',
+          gap: 12,
+          paddingHorizontal: 24,
+          paddingVertical: 20,
+          borderRadius: 14,
+          backgroundColor: colors.background,
+        },
+        exportText: {
+          fontSize: 16,
+          color: colors.text,
         },
       }),
     [colors, moreButtonBackground]

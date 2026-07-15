@@ -24,7 +24,12 @@ import {
     isReverbPathActive,
     type LayerEffectPathNodes,
 } from '@/src/audio/layerEffectChain';
-import { hasAnySoloActive, mergeLayerEffects, normalizeLayerEffects, type LayerEffects, type LayerEffectsChange } from '@/src/audio/layerEffects';
+import {
+  buildLayerPlaybackPlans,
+  getLayerEffectsForPlayback,
+  PLAYBACK_END_TOLERANCE,
+} from '@/src/audio/playbackPlans';
+import { hasAnySoloActive, mergeLayerEffects, type LayerEffects, type LayerEffectsChange } from '@/src/audio/layerEffects';
 import { scheduleMetronomeClicks } from '@/src/audio/metronome';
 import { MemoMixGraph } from '@/src/audio/memoMixGraph';
 import { accumulatePeaksFromSamples } from '@/src/audio/recordingWaveformPeaks';
@@ -62,7 +67,6 @@ type SessionMode = 'recording' | 'playback' | null;
 const MAX_RECORDING_PEAKS = 150;
 const RECORDING_BAR_STEP = WAVEFORM_BAR_WIDTH + WAVEFORM_BAR_GAP;
 const RECORDING_SAMPLE_RATE = 44100;
-const PLAYBACK_END_TOLERANCE = 0.05;
 const PLAYBACK_SCHEDULE_LEAD = 0.01;
 const PLAYBACK_UI_UPDATE_MS = 50;
 
@@ -546,7 +550,7 @@ export class MemoAudioEngine {
   }
 
   private getLoadedLayerEffects(layer: LoadedLayer): LayerEffects {
-    return normalizeLayerEffects({ duration: layer.duration, effects: layer.effects });
+    return getLayerEffectsForPlayback(layer);
   }
 
   private getPlaybackEnd(timelineDuration: number): number {
@@ -961,54 +965,9 @@ export class MemoAudioEngine {
     startAt: number,
     endAt: number
   ): Omit<LayerPlaybackPlan, 'buffer'>[] {
-    const plans: Omit<LayerPlaybackPlan, 'buffer'>[] = [];
-
-    for (const layer of this.loadedLayers) {
-      if (layer.duration <= 0) {
-        continue;
-      }
-
-      const effects = this.getLoadedLayerEffects(layer);
-      const trimOut = Math.min(effects.trimOut, layer.duration);
-      const trimIn = Math.min(effects.trimIn, Math.max(0, trimOut - PLAYBACK_END_TOLERANCE));
-      const playbackEffects: LayerEffects = { ...effects, trimIn, trimOut };
-      const activeStart = layer.startTime + trimIn;
-      const activeEnd = layer.startTime + trimOut;
-
-      if (startAt >= activeEnd - PLAYBACK_END_TOLERANCE) {
-        continue;
-      }
-      if (endAt <= activeStart) {
-        continue;
-      }
-
-      const relativeStart = Math.max(0, startAt - activeStart);
-      const bufferOffset = trimIn + relativeStart;
-      const delay = Math.max(0, activeStart - startAt);
-      const layerPlayStart = Math.max(startAt, activeStart);
-      const layerPlayDuration = Math.min(activeEnd - layerPlayStart, endAt - layerPlayStart);
-
-      if (layerPlayDuration <= PLAYBACK_END_TOLERANCE) {
-        continue;
-      }
-
-      const maxBufferOffset = trimOut - PLAYBACK_END_TOLERANCE;
-      if (bufferOffset >= maxBufferOffset) {
-        continue;
-      }
-
-      const layerPlayLength = Math.min(layerPlayDuration, trimOut - bufferOffset);
-
-      plans.push({
-        layer,
-        playbackEffects,
-        bufferOffset,
-        delay,
-        layerPlayLength,
-      });
-    }
-
-    return plans;
+    return buildLayerPlaybackPlans(this.loadedLayers, startAt, endAt, (layer) =>
+      this.getLoadedLayerEffects(layer)
+    );
   }
 
   private finishPlaybackNaturally(endAt: number, sessionId: number): void {

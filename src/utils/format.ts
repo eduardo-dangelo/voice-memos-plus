@@ -55,3 +55,16 @@ export function createDefaultTitle(): string {
     minute: '2-digit',
   })}`;
 }
+
+/** Sanitizes a memo title for use as a share/export filename (no extension). */
+export function sanitizeExportFileName(title: string): string {
+  const cleaned = title
+    .trim()
+    .replace(/[/\\?%*:|"<>]/g, '-')
+    .replace(/\s+/g, ' ')
+    .replace(/\.+$/g, '')
+    .slice(0, 120)
+    .trim();
+  return cleaned.length > 0 ? cleaned : 'Recording';
+}
+

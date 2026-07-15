@@ -1,17 +1,17 @@
 import { SymbolView } from 'expo-symbols';
-import { useMemo } from 'react';
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useMemo, useState } from 'react';
+import { ActivityIndicator, Alert, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 
 import { LIST_ITEM_EXIT, LIST_ITEM_TRANSITION } from '@/src/components/listTransitions';
 
 import { showMoveToFolderActionSheet } from '@/src/actions/showMoveToFolderActionSheet';
 import { showMemoActionSheet } from '@/src/actions/showMemoActionSheet';
+import { shareMemo } from '@/src/actions/shareMemo';
 import { useAudioEngine, useAudioEngineState } from '@/src/audio/AudioEngineContext';
 import {
   deleteMemo,
   duplicateMemo,
-  getShareableFile,
   permanentlyDeleteMemo,
   updateTitle,
 } from '@/src/storage/memoStore';
@@ -20,7 +20,6 @@ import type { Memo } from '@/src/storage/types';
 import { hasRecording } from '@/src/storage/types';
 import { formatDate, formatDuration } from '@/src/utils/format';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
-import * as Sharing from 'expo-sharing';
 
 import { Collapsible } from './Collapsible';
 import { PlaybackControls } from './PlaybackControls';
@@ -58,6 +57,7 @@ export function RecordingRow({
   const styles = useStyles(colors);
   const engine = useAudioEngine();
   const engineState = useAudioEngineState();
+  const [isExporting, setIsExporting] = useState(false);
   const isActive = engineState.memoId === memo.id;
   const duration =
     isActive && engineState.duration > 0
@@ -107,14 +107,11 @@ export function RecordingRow({
     engine.skip(seconds);
   };
 
-  const handleShare = async () => {
-    const file = await getShareableFile(memo);
-    if (!file.exists) {
-      return;
-    }
-    if (await Sharing.isAvailableAsync()) {
-      await Sharing.shareAsync(file.uri);
-    }
+  const handleShare = () => {
+    shareMemo(memo, {
+      onExportStarted: () => setIsExporting(true),
+      onExportFinished: () => setIsExporting(false),
+    });
   };
 
   const handleRename = () => {
@@ -160,7 +157,8 @@ export function RecordingRow({
   const showMenu = () => {
     showMemoActionSheet({
       includeMoveToFolder: allowMoveToFolder,
-      onShare: () => void handleShare(),
+      includeShare: playable,
+      onShare: handleShare,
       onRename: handleRename,
       onEditRecording: onOpenEditor,
       onMoveToFolder: () => void showMoveToFolderActionSheet(memo.id, memo.folderId, onUpdated),
@@ -170,7 +168,8 @@ export function RecordingRow({
   };
 
   return (
-    <Animated.View
+    <>
+      <Animated.View
       exiting={LIST_ITEM_EXIT}
       layout={LIST_ITEM_TRANSITION}
       style={styles.container}>
@@ -228,6 +227,15 @@ export function RecordingRow({
         </Collapsible>
       ) : null}
     </Animated.View>
+      <Modal animationType="fade" transparent visible={isExporting}>
+        <View style={styles.exportOverlay}>
+          <View style={styles.exportCard}>
+            <ActivityIndicator color={colors.accent} size="large" />
+            <Text style={styles.exportText}>Preparing audio…</Text>
+          </View>
+        </View>
+      </Modal>
+    </>
   );
 }
 
@@ -276,6 +284,24 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
         },
         deleteButton: {
           alignSelf: 'center',
+        },
+        exportOverlay: {
+          flex: 1,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: 'rgba(0, 0, 0, 0.35)',
+        },
+        exportCard: {
+          alignItems: 'center',
+          gap: 12,
+          paddingHorizontal: 24,
+          paddingVertical: 20,
+          borderRadius: 14,
+          backgroundColor: colors.background,
+        },
+        exportText: {
+          fontSize: 16,
+          color: colors.text,
         },
       }),
     [colors]

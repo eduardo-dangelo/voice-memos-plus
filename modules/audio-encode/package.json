@@ -1,0 +1,12 @@
+{
+  "name": "audio-encode",
+  "version": "1.0.0",
+  "description": "Encode WAV audio files to AAC M4A for sharing",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "peerDependencies": {
+    "expo": "*",
+    "react": "*",
+    "react-native": "*"
+  }
+}

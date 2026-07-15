@@ -37,7 +37,7 @@ function floatToPcm16(sample: number): number {
   return sample <= -1 ? -32768 : sample >= 1 ? 32767 : (sample * 0x7fff) | 0;
 }
 
-function writeMonoPcm16Wav(
+export function writeMonoPcm16Wav(
   samples: Float32Array,
   sampleRate: number,
   outputPath: string
@@ -346,57 +346,7 @@ export async function spliceRecording(
   return exportMonoSamplesToPath(merged, targetSampleRate, outputPath);
 }
 
-export type MixLayerInput = {
-  path: string;
-  startTime: number;
-};
-
-export async function mixLayersToFile(
-  layers: MixLayerInput[],
-  timelineDuration: number,
-  outputPath: string
-): Promise<void> {
-  if (layers.length === 0) {
-    throw new Error('No layers to mix');
-  }
-
-  const sampleRate = 44100;
-  const numFrames = Math.max(1, Math.ceil(timelineDuration * sampleRate));
-  const context = new AudioContext({ sampleRate });
-  const master = context.createBuffer(1, numFrames, sampleRate);
-  const masterData = master.getChannelData(0);
-
-  for (const layer of layers) {
-    const layerBuffer = await decodeAudioData(layer.path);
-    const layerData = layerBuffer.getChannelData(0);
-    const startSample = Math.floor(layer.startTime * sampleRate);
-
-    for (let i = 0; i < layerData.length; i += 1) {
-      const targetIndex = startSample + i;
-      if (targetIndex >= numFrames) {
-        break;
-      }
-      const mixed = masterData[targetIndex] + layerData[i];
-      masterData[targetIndex] = Math.max(-1, Math.min(1, mixed));
-    }
-  }
-
-  const tempWav = `${outputPath}.mix.wav`;
-  writeMonoPcm16Wav(masterData, sampleRate, tempWav);
-  await context.close();
-
-  await decodeAudioData(tempWav);
-
-  const outputFile = new File(outputPath);
-  if (outputFile.exists) {
-    outputFile.delete();
-  }
-
-  const temp = new File(tempWav);
-  await temp.copy(outputFile);
-
-  if (temp.exists) {
-    temp.delete();
-  }
+export function writeAudioBufferToWavFile(buffer: AudioBuffer, outputPath: string): void {
+  writeMonoPcm16Wav(buffer.getChannelData(0), buffer.sampleRate, outputPath);
 }
 
