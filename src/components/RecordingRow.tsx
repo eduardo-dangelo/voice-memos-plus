@@ -6,7 +6,6 @@ import Animated from 'react-native-reanimated';
 import { LIST_ITEM_EXIT, LIST_ITEM_TRANSITION } from '@/src/components/listTransitions';
 
 import { showMoveToFolderActionSheet } from '@/src/actions/showMoveToFolderActionSheet';
-import { showMemoActionSheet } from '@/src/actions/showMemoActionSheet';
 import { shareMemo } from '@/src/actions/shareMemo';
 import { useAudioEngine, useAudioEngineState } from '@/src/audio/AudioEngineContext';
 import {
@@ -22,6 +21,7 @@ import { formatDate, formatDuration } from '@/src/utils/format';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
 import { Collapsible } from './Collapsible';
+import { MemoOptionsMenu } from './MemoOptionsMenu';
 import { PlaybackControls } from './PlaybackControls';
 
 type Props = {
@@ -160,19 +160,6 @@ export function RecordingRow({
     );
   };
 
-  const showMenu = () => {
-    showMemoActionSheet({
-      includeMoveToFolder: allowMoveToFolder,
-      includeShare: playable,
-      onShare: handleShare,
-      onRename: handleRename,
-      onEditRecording: onOpenEditor,
-      onMoveToFolder: () => void showMoveToFolderActionSheet(memo.id, memo.folderId, onUpdated),
-      onDuplicate: () => void duplicateMemo(memo.id).then(onUpdated),
-      onDelete: confirmDelete,
-    });
-  };
-
   const handlePrimaryPress = () => {
     if (selectionMode) {
       onToggleSelect();
@@ -191,31 +178,45 @@ export function RecordingRow({
       exiting={LIST_ITEM_EXIT}
       layout={LIST_ITEM_TRANSITION}
       style={[styles.container, active && styles.containerActive]}>
-      <Pressable
-        onPress={handlePrimaryPress}
-        onLongPress={selectOnPress ? undefined : onOpenEditor}
-        style={styles.row}>
-        {selectionMode ? (
-          <SymbolView
-            name={{ ios: selected ? 'checkmark.circle.fill' : 'circle' }}
-            size={22}
-            tintColor={selected ? colors.accent : colors.secondaryText}
-          />
-        ) : null}
-        <View style={styles.meta}>
-          <Text numberOfLines={1} style={styles.title}>
-            {memo.title}
-          </Text>
-          <Text style={styles.subtitle}>
-            {formatDate(memo.updatedAt)} · {formatDuration(duration)}
-          </Text>
-        </View>
+      <View style={styles.row}>
+        <Pressable
+          onPress={handlePrimaryPress}
+          onLongPress={selectOnPress ? undefined : onOpenEditor}
+          style={styles.rowMain}>
+          {selectionMode ? (
+            <SymbolView
+              name={{ ios: selected ? 'checkmark.circle.fill' : 'circle' }}
+              size={22}
+              tintColor={selected ? colors.accent : colors.secondaryText}
+            />
+          ) : null}
+          <View style={styles.meta}>
+            <Text numberOfLines={1} style={styles.title}>
+              {memo.title}
+            </Text>
+            <Text style={styles.subtitle}>
+              {formatDate(memo.updatedAt)} · {formatDuration(duration)}
+            </Text>
+          </View>
+        </Pressable>
         {!selectionMode ? (
-          <Pressable hitSlop={12} onPress={showMenu}>
-            <SymbolView name={{ ios: 'ellipsis' }} size={18} tintColor={colors.secondaryText} />
-          </Pressable>
+          <MemoOptionsMenu
+            includeMoveToFolder={allowMoveToFolder}
+            includeShare={playable}
+            onShare={handleShare}
+            onRename={handleRename}
+            onEditRecording={onOpenEditor}
+            onMoveToFolder={() =>
+              void showMoveToFolderActionSheet(memo.id, memo.folderId, onUpdated)
+            }
+            onDuplicate={() => void duplicateMemo(memo.id).then(onUpdated)}
+            onDelete={confirmDelete}>
+            <View style={styles.moreButton}>
+              <SymbolView name={{ ios: 'ellipsis' }} size={22} tintColor={colors.secondaryText} />
+            </View>
+          </MemoOptionsMenu>
         ) : null}
-      </Pressable>
+      </View>
 
       {playable ? (
         <Collapsible expanded={expanded}>
@@ -276,6 +277,21 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           gap: 12,
           paddingHorizontal: 16,
           paddingVertical: 12,
+        },
+        rowMain: {
+          flex: 1,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 12,
+          minWidth: 0,
+        },
+        moreButton: {
+          width: 44,
+          height: 44,
+          alignItems: 'center',
+          justifyContent: 'center',
+          marginVertical: -10,
+          marginHorizontal: -10,
         },
         meta: {
           flex: 1,

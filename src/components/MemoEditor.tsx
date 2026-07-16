@@ -17,7 +17,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useColorScheme } from '@/components/useColorScheme';
 import { DEFAULT_TRACK_COLOR, pickRandomTrackColor } from '@/constants/VoiceMemosColors';
-import { showMemoActionSheet } from '@/src/actions/showMemoActionSheet';
 import { shareMemo } from '@/src/actions/shareMemo';
 import { useAudioEngine, useAudioEngineState } from '@/src/audio/AudioEngineContext';
 import {
@@ -34,6 +33,8 @@ import {
   resetPerformanceWarningState,
 } from '@/src/audio/performanceWarning';
 import { slicePeaksForTrim } from '@/src/audio/waveform';
+import { IconActionSheet, type IconActionSheetItem } from '@/src/components/IconActionSheet';
+import { MemoOptionsMenu } from '@/src/components/MemoOptionsMenu';
 import { MetronomeButton } from '@/src/components/MetronomeButton';
 import { MetronomeSettingsSheet } from '@/src/components/MetronomeSettingsSheet';
 import { PlaybackControls } from '@/src/components/PlaybackControls';
@@ -184,6 +185,7 @@ export function MemoEditor({
   const [activeEditor, setActiveEditor] = useState<EditorTool | null>(null);
   const [savingTrim, setSavingTrim] = useState(false);
   const [colorPickerLayerId, setColorPickerLayerId] = useState<string | null>(null);
+  const [trackMenuLayerId, setTrackMenuLayerId] = useState<string | null>(null);
   const [metronomeSettingsVisible, setMetronomeSettingsVisible] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [layoutReady, setLayoutReady] = useState(false);
@@ -767,8 +769,91 @@ export function MemoEditor({
     [cancelEditDraft, engine, flushEffectsPersist, flushStartTimePersist, memo]
   );
 
-  const showTrackOptions = useCallback(
+  const getTrackMenuActions = useCallback(
+    (layerId: string): IconActionSheetItem[] | undefined => {
+      if (!memo || layerId === '__recording__' || layerId === 'empty') {
+        return undefined;
+      }
+
+      const layer = memo.layers.find((entry) => entry.id === layerId);
+      if (!layer || layer.duration <= 0) {
+        return undefined;
+      }
+
+      const effects = getLayerEffects(layer);
+      const canDelete = getPlayableLayers(memo).length > 1;
+      const actions: IconActionSheetItem[] = [
+        { id: 'rename', title: 'Rename Track', systemImage: 'pencil' },
+        { id: 'changeColor', title: 'Change Color', systemImage: 'paintpalette' },
+        {
+          id: 'mute',
+          title: effects.muted ? 'Unmute' : 'Mute',
+          systemImage: effects.muted ? 'speaker.slash' : 'speaker.wave.2',
+        },
+        {
+          id: 'solo',
+          title: effects.solo ? 'Unsolo' : 'Solo',
+          systemImage: 'headphones',
+        },
+      ];
+      if (canDelete) {
+        actions.push({
+          id: 'delete',
+          title: 'Delete Track',
+          systemImage: 'trash',
+          destructive: true,
+        });
+      }
+      return actions;
+    },
+    [memo]
+  );
+
+  const handleTrackLongPress = useCallback(
     (layerId: string) => {
+      if (!getTrackMenuActions(layerId)) {
+        return;
+      }
+
+      const layer = memo?.layers.find((entry) => entry.id === layerId);
+      const anySoloActive = memo
+        ? hasAnySoloActive(memo.layers.map((entry) => getLayerEffects(entry)))
+        : false;
+      const canSelect =
+        layer &&
+        layerId !== activeLayerId &&
+        !savingTrim &&
+        isLayerSelectable(getLayerEffects(layer), anySoloActive);
+
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+      if (canSelect) {
+        void (async () => {
+          await cancelEditDraft();
+          flushEffectsPersist();
+          flushStartTimePersist();
+          setActiveLayerId(layerId);
+          setActiveEditor(null);
+          setTrackMenuLayerId(layerId);
+        })();
+        return;
+      }
+
+      setTrackMenuLayerId(layerId);
+    },
+    [
+      activeLayerId,
+      cancelEditDraft,
+      flushEffectsPersist,
+      flushStartTimePersist,
+      getTrackMenuActions,
+      memo,
+      savingTrim,
+    ]
+  );
+
+  const onTrackMenuAction = useCallback(
+    (layerId: string, actionId: string) => {
       if (!memo || layerId === '__recording__' || layerId === 'empty') {
         return;
       }
@@ -778,33 +863,24 @@ export function MemoEditor({
         return;
       }
 
-      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-
       const effects = getLayerEffects(layer);
       const anySoloActive = hasAnySoloActive(
         memo.layers.map((entry) => getLayerEffects(entry))
       );
-      const muteLabel = effects.muted ? 'Unmute' : 'Mute';
-      const soloLabel = effects.solo ? 'Unsolo' : 'Solo';
-      const canDelete = getPlayableLayers(memo).length > 1;
-      const options = canDelete
-        ? ['Rename Track', 'Change Color', muteLabel, soloLabel, 'Delete Track', 'Cancel']
-        : ['Rename Track', 'Change Color', muteLabel, soloLabel, 'Cancel'];
-      const destructiveButtonIndex = canDelete ? 4 : undefined;
-      const cancelButtonIndex = canDelete ? 5 : 4;
 
-      ActionSheetIOS.showActionSheetWithOptions(
-        {
-          options,
-          destructiveButtonIndex,
-          cancelButtonIndex,
-        },
-        (index) => {
-          if (index === 0) {
-            if (layerId !== activeLayerId && isLayerSelectable(effects, anySoloActive)) {
-              setActiveLayerId(layerId);
-            }
-            Alert.prompt('Rename Track', undefined, [
+      const selectLayerIfNeeded = () => {
+        if (layerId !== activeLayerId && isLayerSelectable(effects, anySoloActive)) {
+          setActiveLayerId(layerId);
+        }
+      };
+
+      switch (actionId) {
+        case 'rename':
+          selectLayerIfNeeded();
+          Alert.prompt(
+            'Rename Track',
+            undefined,
+            [
               { text: 'Cancel', style: 'cancel' },
               {
                 text: 'Save',
@@ -814,25 +890,23 @@ export function MemoEditor({
                   }
                 },
               },
-            ], 'plain-text', layer.label);
-            return;
-          }
-          if (index === 1) {
-            if (layerId !== activeLayerId && isLayerSelectable(effects, anySoloActive)) {
-              setActiveLayerId(layerId);
-            }
-            setColorPickerLayerId(layerId);
-            return;
-          }
-          if (index === 2) {
-            applyLayerEffectsChange(layerId, { muted: !effects.muted });
-            return;
-          }
-          if (index === 3) {
-            applyLayerEffectsChange(layerId, { solo: !effects.solo });
-            return;
-          }
-          if (canDelete && index === 4) {
+            ],
+            'plain-text',
+            layer.label
+          );
+          break;
+        case 'changeColor':
+          selectLayerIfNeeded();
+          setColorPickerLayerId(layerId);
+          break;
+        case 'mute':
+          applyLayerEffectsChange(layerId, { muted: !effects.muted });
+          break;
+        case 'solo':
+          applyLayerEffectsChange(layerId, { solo: !effects.solo });
+          break;
+        case 'delete':
+          if (getPlayableLayers(memo).length > 1) {
             Alert.alert('Delete Track', 'Delete this track? This cannot be undone.', [
               { text: 'Cancel', style: 'cancel' },
               {
@@ -844,8 +918,8 @@ export function MemoEditor({
               },
             ]);
           }
-        }
-      );
+          break;
+      }
     },
     [activeLayerId, applyLayerEffectsChange, handleDeleteTrack, memo]
   );
@@ -1269,27 +1343,20 @@ export function MemoEditor({
     );
   }, [engine, flushEditorState, memo, onDismiss]);
 
-  const showMemoMenu = useCallback(() => {
-    showMemoActionSheet({
-      includeEditRecording: false,
-      includeShare: memo ? hasRecording(memo) : false,
-      onShare: handleShare,
-      onRename: handleRename,
-      onDuplicate: () => void handleDuplicate(),
-      onDelete: confirmDelete,
-    });
-  }, [confirmDelete, handleDuplicate, handleRename, handleShare, memo]);
-
   const renderHeaderBar = useCallback(
     () => (
       <View style={styles.headerBar}>
-        <Pressable
-          accessibilityLabel="More options"
-          hitSlop={8}
-          onPress={showMemoMenu}
-          style={styles.moreButton}>
-          <SymbolView name={{ ios: 'ellipsis' }} size={18} tintColor={colors.secondaryText} />
-        </Pressable>
+        <MemoOptionsMenu
+          includeEditRecording={false}
+          includeShare={memo ? hasRecording(memo) : false}
+          onShare={handleShare}
+          onRename={handleRename}
+          onDuplicate={() => void handleDuplicate()}
+          onDelete={confirmDelete}>
+          <View accessibilityLabel="More options" style={styles.moreButton}>
+            <SymbolView name={{ ios: 'ellipsis' }} size={22} tintColor={colors.secondaryText} />
+          </View>
+        </MemoOptionsMenu>
         <Text numberOfLines={1} style={styles.headerTitle}>
           {memo?.title ?? ''}
         </Text>
@@ -1305,10 +1372,13 @@ export function MemoEditor({
     ),
     [
       colors.secondaryText,
+      confirmDelete,
       engineState.isRecording,
       handleDone,
-      memo?.title,
-      showMemoMenu,
+      handleDuplicate,
+      handleRename,
+      handleShare,
+      memo,
       styles.doneButton,
       styles.doneButtonDisabled,
       styles.headerBar,
@@ -1818,6 +1888,9 @@ export function MemoEditor({
   const colorPickerLayer = colorPickerLayerId
     ? memo?.layers.find((entry) => entry.id === colorPickerLayerId)
     : null;
+  const trackMenuActions = trackMenuLayerId
+    ? getTrackMenuActions(trackMenuLayerId) ?? []
+    : [];
   const showEditorContent = Boolean(memo && !loading);
 
   return (
@@ -1880,7 +1953,7 @@ export function MemoEditor({
               }}
               onTrackPress={handleTrackPress}
               onTrackDeselect={handleTrackDeselect}
-              onTrackLongPress={showTrackOptions}
+              onTrackLongPress={handleTrackLongPress}
             />
           ) : (
             <View style={styles.tracksLoading}>
@@ -1947,6 +2020,16 @@ export function MemoEditor({
         visible={colorPickerLayerId !== null}
         onClose={() => setColorPickerLayerId(null)}
         onSelect={handleTrackColorSelect}
+      />
+      <IconActionSheet
+        actions={trackMenuActions}
+        visible={trackMenuLayerId !== null}
+        onDismiss={() => setTrackMenuLayerId(null)}
+        onSelect={(actionId) => {
+          if (trackMenuLayerId) {
+            onTrackMenuAction(trackMenuLayerId, actionId);
+          }
+        }}
       />
       <MetronomeSettingsSheet
         settings={metronomeSettings}

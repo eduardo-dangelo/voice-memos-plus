@@ -1,10 +1,10 @@
 import * as Haptics from 'expo-haptics';
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
+  AppState,
   LayoutChangeEvent,
   NativeScrollEvent,
   NativeSyntheticEvent,
-  AppState,
   PanResponder,
   Pressable,
   StyleSheet,
@@ -32,8 +32,8 @@ import {
   WAVEFORM_BAR_GAP,
   WAVEFORM_BAR_WIDTH,
 } from '@/src/audio/waveform';
-import { LOOP_ROW_HEIGHT, LoopRegionBar, type LoopOverlayConfig } from '@/src/components/LoopRegionBar';
 import { LoopColumnOverlay } from '@/src/components/LoopColumnOverlay';
+import { LOOP_ROW_HEIGHT, LoopRegionBar, type LoopOverlayConfig } from '@/src/components/LoopRegionBar';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 import { formatMarkerTime } from '@/src/utils/format';
 
@@ -1024,10 +1024,12 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
     <View pointerEvents="none" style={[styles.trackDivider, { width: bandWidth }]} />
   ) : null;
 
+  const rowSizeStyle = { width: bandWidth, height: trackHeight };
+
   if (scrollPriority) {
     return (
       <View
-        style={[styles.trackRow, { height: trackHeight }]}
+        style={[styles.trackRow, rowSizeStyle]}
         onTouchStart={(event) => {
           touchDraggedRef.current = false;
           longPressTriggeredRef.current = false;
@@ -1068,7 +1070,7 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
       delayLongPress={LONG_PRESS_DELAY_MS}
       onLongPress={onLongPress}
       onPress={(event) => onPress(event.nativeEvent.locationX)}
-      style={[styles.trackRow, { height: trackHeight }]}>
+      style={[styles.trackRow, rowSizeStyle]}>
       {rowContent}
       {bottomDivider}
     </Pressable>
