@@ -15,7 +15,7 @@ import { useIsRegularWidth } from '@/src/hooks/useIsRegularWidth';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
 const SIDEBAR_WIDTH = 340;
-const SIDEBAR_ANIMATION_MS = 280;
+const SIDEBAR_ANIMATION_MS = 220;
 
 type SelectedMemo = {
   id: string;
@@ -65,6 +65,10 @@ export function RecordingsSplitView(props: Props) {
         }
         setSelected(null);
         setSidebarCollapsed(false);
+        return;
+      }
+      if (memoId === selected?.id) {
+        setSidebarCollapsed(true);
         return;
       }
       setSelected({ id: memoId, autoRecord: options?.autoRecord ?? false });
