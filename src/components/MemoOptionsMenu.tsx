@@ -1,6 +1,10 @@
-import { MenuView, type MenuAction } from '@expo/ui/community/menu';
 import { useMemo, type ReactNode } from 'react';
 import type { StyleProp, ViewStyle } from 'react-native';
+
+import {
+  ThemedMenuView,
+  type MenuAction,
+} from '@/src/components/ThemedMenuView';
 
 export type MemoOptionsMenuHandlers = {
   onShare: () => void;
@@ -55,7 +59,7 @@ export function MemoOptionsMenu({
   }, [includeEditRecording, includeMoveToFolder, includeShare]);
 
   return (
-    <MenuView
+    <ThemedMenuView
       actions={actions}
       style={style}
       onPressAction={({ nativeEvent }) => {
@@ -81,6 +85,6 @@ export function MemoOptionsMenu({
         }
       }}>
       {children}
-    </MenuView>
+    </ThemedMenuView>
   );
 }

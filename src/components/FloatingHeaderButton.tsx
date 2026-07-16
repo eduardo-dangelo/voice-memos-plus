@@ -8,6 +8,7 @@ import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
 export type FloatingHeaderIcon =
   | 'magnifyingglass'
+  | 'ellipsis'
   | 'ellipsis.circle'
   | 'gearshape'
   | 'gearshape.fill'
@@ -20,6 +21,8 @@ export type FloatingHeaderIcon =
   | 'sidebar.left'
   | 'arrow.up.left.and.arrow.down.right';
 
+export type FloatingHeaderIconSize = 'regular' | 'small';
+
 type BaseProps = {
   onPress: () => void;
   accessibilityLabel: string;
@@ -30,7 +33,7 @@ type IconProps = BaseProps & {
   icon: FloatingHeaderIcon;
   label?: never;
   tintColor?: ColorValue;
-  size?: 'regular' | 'small';
+  size?: FloatingHeaderIconSize;
 };
 
 type PillProps = BaseProps & {
@@ -43,12 +46,46 @@ type PillProps = BaseProps & {
 
 type Props = IconProps | PillProps;
 
+type IconFaceProps = {
+  icon: FloatingHeaderIcon;
+  accessibilityLabel?: string;
+  tintColor?: ColorValue;
+  size?: FloatingHeaderIconSize;
+};
+
 const useGlass = isGlassEffectAPIAvailable();
 
 const ICON_SIZE = {
   regular: { button: 44, symbol: 22 },
   small: { button: 32, symbol: 16 },
 } as const;
+
+/** Glass icon chrome without a Pressable — for MenuView / other native triggers. */
+export function FloatingHeaderIconFace({
+  icon,
+  accessibilityLabel,
+  tintColor,
+  size = 'regular',
+}: IconFaceProps) {
+  const colors = useVoiceMemosColors();
+  const colorScheme = useColorScheme();
+  const styles = useStyles(colors, colorScheme, useGlass, size);
+  const iconTint = tintColor ?? colors.accent;
+  const symbolSize = ICON_SIZE[size].symbol;
+  const content = <SymbolView name={{ ios: icon }} size={symbolSize} tintColor={iconTint} />;
+
+  return (
+    <View accessibilityLabel={accessibilityLabel} style={styles.iconPressable}>
+      {useGlass ? (
+        <GlassView isInteractive glassEffectStyle="regular" style={styles.iconGlass}>
+          {content}
+        </GlassView>
+      ) : (
+        <View style={styles.iconFallback}>{content}</View>
+      )}
+    </View>
+  );
+}
 
 export function FloatingHeaderButton({
   onPress,
@@ -62,10 +99,8 @@ export function FloatingHeaderButton({
   const colors = useVoiceMemosColors();
   const colorScheme = useColorScheme();
   const styles = useStyles(colors, colorScheme, useGlass, size);
-  const iconTint = tintColor ?? colors.accent;
-  const symbolSize = ICON_SIZE[size].symbol;
 
-  if (variant === 'pill') {
+  if (variant === 'pill' || !icon) {
     const content = <Text style={styles.pillText}>{label}</Text>;
     return (
       <Pressable
@@ -84,20 +119,9 @@ export function FloatingHeaderButton({
     );
   }
 
-  const content = <SymbolView name={{ ios: icon }} size={symbolSize} tintColor={iconTint} />;
   return (
-    <Pressable
-      accessibilityLabel={accessibilityLabel}
-      hitSlop={8}
-      onPress={onPress}
-      style={styles.iconPressable}>
-      {useGlass ? (
-        <GlassView isInteractive glassEffectStyle="regular" style={styles.iconGlass}>
-          {content}
-        </GlassView>
-      ) : (
-        <View style={styles.iconFallback}>{content}</View>
-      )}
+    <Pressable accessibilityLabel={accessibilityLabel} hitSlop={8} onPress={onPress}>
+      <FloatingHeaderIconFace icon={icon} size={size} tintColor={tintColor} />
     </Pressable>
   );
 }
@@ -106,7 +130,7 @@ function useStyles(
   colors: ReturnType<typeof useVoiceMemosColors>,
   colorScheme: 'light' | 'dark' | null | undefined,
   glass: boolean,
-  size: 'regular' | 'small'
+  size: FloatingHeaderIconSize
 ) {
   const buttonSurface =
     colorScheme === 'dark' ? colors.sheetBackground : colors.background;

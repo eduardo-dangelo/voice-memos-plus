@@ -15,7 +15,6 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { useColorScheme } from '@/components/useColorScheme';
 import { DEFAULT_TRACK_COLOR, pickRandomTrackColor } from '@/constants/VoiceMemosColors';
 import { shareMemo } from '@/src/actions/shareMemo';
 import { useAudioEngine, useAudioEngineState } from '@/src/audio/AudioEngineContext';
@@ -34,7 +33,7 @@ import {
   resetPerformanceWarningState,
 } from '@/src/audio/performanceWarning';
 import { slicePeaksForTrim } from '@/src/audio/waveform';
-import { FloatingHeaderButton } from '@/src/components/FloatingHeaderButton';
+import { FloatingHeaderButton, FloatingHeaderIconFace } from '@/src/components/FloatingHeaderButton';
 import { IconActionSheet, type IconActionSheetItem } from '@/src/components/IconActionSheet';
 import { MemoOptionsMenu } from '@/src/components/MemoOptionsMenu';
 import { MetronomeButton } from '@/src/components/MetronomeButton';
@@ -150,8 +149,7 @@ export function MemoEditor({
   onToggleSidebar,
 }: MemoEditorProps) {
   const colors = useVoiceMemosColors();
-  const colorScheme = useColorScheme();
-  const styles = useMemoEditorStyles(colors, colorScheme);
+  const styles = useMemoEditorStyles(colors);
   const isPane = presentation === 'pane';
   const record = autoRecord ? '1' : undefined;
   const navigation = useNavigation();
@@ -1400,9 +1398,11 @@ export function MemoEditor({
               onRename={handleRename}
               onDuplicate={() => void handleDuplicate()}
               onDelete={confirmDelete}>
-              <View accessibilityLabel="More options" style={styles.moreButton}>
-                <SymbolView name={{ ios: 'ellipsis' }} size={22} tintColor={colors.secondaryText} />
-              </View>
+              <FloatingHeaderIconFace
+                accessibilityLabel="More options"
+                icon="ellipsis"
+                size="small"
+              />
             </MemoOptionsMenu>
           </View>
         )}
@@ -1424,7 +1424,6 @@ export function MemoEditor({
     ),
     [
       colors.recordRed,
-      colors.secondaryText,
       confirmDelete,
       engineState.isRecording,
       handleDone,
@@ -1442,7 +1441,6 @@ export function MemoEditor({
       styles.headerLeading,
       styles.headerTitle,
       styles.headerTitlePane,
-      styles.moreButton,
     ],
   );
 
@@ -2108,13 +2106,7 @@ export function MemoEditor({
   );
 }
 
-function useMemoEditorStyles(
-  colors: ReturnType<typeof useVoiceMemosColors>,
-  colorScheme: 'light' | 'dark' | null | undefined
-) {
-  const moreButtonBackground =
-    colorScheme === 'dark' ? colors.pillBackground : colors.searchFieldBackground;
-
+function useMemoEditorStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
   return useMemo(
     () =>
       StyleSheet.create({
@@ -2159,16 +2151,6 @@ function useMemoEditorStyles(
         },
         headerLeading: {
           zIndex: 1,
-        },
-        moreButton: {
-          width: 32,
-          height: 32,
-          borderRadius: 16,
-          borderWidth: StyleSheet.hairlineWidth,
-          borderColor: colors.separator,
-          backgroundColor: moreButtonBackground,
-          alignItems: 'center',
-          justifyContent: 'center',
         },
         headerTitle: {
           position: 'absolute',
@@ -2240,6 +2222,6 @@ function useMemoEditorStyles(
           color: colors.text,
         },
       }),
-    [colors, moreButtonBackground]
+    [colors]
   );
 }
