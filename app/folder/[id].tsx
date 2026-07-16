@@ -3,7 +3,7 @@ import { useCallback, useLayoutEffect, useMemo, useState } from 'react';
 import { Alert } from 'react-native';
 
 import { FloatingHeaderButton } from '@/src/components/FloatingHeaderButton';
-import { RecordingsList } from '@/src/components/RecordingsList';
+import { RecordingsSplitView } from '@/src/components/RecordingsSplitView';
 import { getFolder, renameFolder } from '@/src/storage/folderStore';
 
 export default function FolderRecordingsScreen() {
@@ -60,7 +60,7 @@ export default function FolderRecordingsScreen() {
   }
 
   return (
-    <RecordingsList
+    <RecordingsSplitView
       backTitle={folderName}
       emptySubtitle="Tap the red button to record into this folder."
       folderId={folderId}
@@ -72,6 +72,7 @@ export default function FolderRecordingsScreen() {
         />
       }
       scope={{ kind: 'folder', folderId }}
+      title={folderName}
     />
   );
 }

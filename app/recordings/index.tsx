@@ -1,5 +1,11 @@
-import { RecordingsList } from '@/src/components/RecordingsList';
+import { RecordingsSplitView } from '@/src/components/RecordingsSplitView';
 
 export default function AllRecordingsScreen() {
-  return <RecordingsList backTitle="All Recordings" scope={{ kind: 'all' }} />;
+  return (
+    <RecordingsSplitView
+      backTitle="All Recordings"
+      scope={{ kind: 'all' }}
+      title="All Recordings"
+    />
+  );
 }

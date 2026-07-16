@@ -9,6 +9,7 @@ import { useColorScheme } from '@/components/useColorScheme';
 import type { VoiceMemosColorScheme } from '@/constants/VoiceMemosColors';
 import { AudioEngineProvider } from '@/src/audio/AudioEngineContext';
 import { memoAudioEngine } from '@/src/audio/MemoAudioEngine';
+import { useIsRegularWidth } from '@/src/hooks/useIsRegularWidth';
 import {
   awaitSaveInFlight,
   hydrateSessionFromStorage,
@@ -47,14 +48,25 @@ function buildGroupedHeaderOptions(
 function RootNavigator() {
   const colors = useVoiceMemosColors();
   const colorScheme = useColorScheme();
+  const isRegularWidth = useIsRegularWidth();
   const groupedScreenOptions = useMemo(
     () => buildGroupedHeaderOptions(colors, colorScheme),
     [colorScheme, colors]
   );
   const screenOptions = useMemo(() => buildHeaderOptions(colors), [colors]);
 
-  const memoScreenOptions = useMemo(
-    () => ({
+  const memoScreenOptions = useMemo(() => {
+    if (isRegularWidth) {
+      // Deep links / unexpected pushes on tablet: full-screen card, not form sheet.
+      return {
+        title: '',
+        presentation: 'card' as const,
+        headerBackTitle: 'Back',
+        headerTransparent: false,
+        ...buildHeaderOptions(colors, colors.sheetBackground),
+      };
+    }
+    return {
       title: '',
       presentation: 'formSheet' as const,
       sheetGrabberVisible: true,
@@ -63,9 +75,8 @@ function RootNavigator() {
       headerBackTitle: 'Back',
       headerTransparent: false,
       ...buildHeaderOptions(colors, colors.sheetBackground),
-    }),
-    [colors]
-  );
+    };
+  }, [colors, isRegularWidth]);
 
   return (
     <>

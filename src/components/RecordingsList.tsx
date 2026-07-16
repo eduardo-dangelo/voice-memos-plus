@@ -1,9 +1,11 @@
 import { SymbolView } from 'expo-symbols';
-import { Stack, router } from 'expo-router';
+import { Stack, router, useFocusEffect } from 'expo-router';
 import {
   isValidElement,
   useCallback,
+  useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactElement,
   type ReactNode,
@@ -13,20 +15,22 @@ import {
   Keyboard,
   Platform,
   Pressable,
-  SafeAreaView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
 import Animated from 'react-native-reanimated';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { useAudioEngineState } from '@/src/audio/AudioEngineContext';
 import { memoAudioEngine } from '@/src/audio/MemoAudioEngine';
 import { FloatingHeaderButton } from '@/src/components/FloatingHeaderButton';
 import { LIST_ITEM_TRANSITION } from '@/src/components/listTransitions';
 import { RecordButton } from '@/src/components/RecordButton';
 import { RecordingRow } from '@/src/components/RecordingRow';
 import { useMemos } from '@/src/hooks/useMemos';
+import { getSession } from '@/src/recording/activeRecordingSession';
 import {
   createMemo,
   deleteMemo,
@@ -36,36 +40,74 @@ import {
 } from '@/src/storage/memoStore';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
-type Props = {
+export type RecordingsListLayoutMode = 'stack' | 'sidebar';
+
+export type RecordingsListProps = {
   scope: MemoListScope;
   folderId?: string;
+  /** List screen title (sidebar header / navigation). */
+  title?: string;
   backTitle?: string;
   showRecordButton?: boolean;
   allowMoveToFolder?: boolean;
   emptyTitle?: string;
   emptySubtitle?: string;
   headerExtraActions?: ReactNode;
+  layoutMode?: RecordingsListLayoutMode;
+  selectedMemoId?: string | null;
+  onSelectMemo?: (memoId: string | null, options?: { autoRecord?: boolean }) => void;
 };
 
 export function RecordingsList({
   scope,
   folderId,
+  title,
   backTitle = 'Back',
   showRecordButton = true,
   allowMoveToFolder = true,
   emptyTitle = 'No Recordings',
   emptySubtitle = 'Tap the red button to record your first memo.',
   headerExtraActions,
-}: Props) {
+  layoutMode = 'stack',
+  selectedMemoId = null,
+  onSelectMemo,
+}: RecordingsListProps) {
   const colors = useVoiceMemosColors();
+  const insets = useSafeAreaInsets();
   const styles = useStyles(colors);
+  const engineState = useAudioEngineState();
   const { memos, refresh, removeMemo, removeMemos } = useMemos(scope);
   const [query, setQuery] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isSearchActive, setIsSearchActive] = useState(false);
+  const [isStartingRecord, setIsStartingRecord] = useState(false);
+  const startingRecordRef = useRef(false);
   const isTrash = scope.kind === 'trash';
+  const isSidebar = layoutMode === 'sidebar';
+  const listTitle = title ?? backTitle;
+
+  const clearStartingRecord = useCallback(() => {
+    startingRecordRef.current = false;
+    setIsStartingRecord(false);
+  }, []);
+
+  // Once recording is active, the isRecording flag keeps the button disabled.
+  useEffect(() => {
+    if (engineState.isRecording && isStartingRecord) {
+      clearStartingRecord();
+    }
+  }, [clearStartingRecord, engineState.isRecording, isStartingRecord]);
+
+  // After the sheet closes (list refocuses), re-enable if nothing is recording.
+  useFocusEffect(
+    useCallback(() => {
+      if (!engineState.isRecording && !getSession()) {
+        clearStartingRecord();
+      }
+    }, [clearStartingRecord, engineState.isRecording])
+  );
 
   const filteredMemos = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -87,10 +129,18 @@ export function RecordingsList({
     });
   };
 
-  const clearSelection = () => {
+  const clearSelection = useCallback(() => {
     setSelectedIds(new Set());
     setSelectionMode(false);
-  };
+  }, []);
+
+  const toggleSelectionMode = useCallback(() => {
+    if (selectionMode) {
+      clearSelection();
+      return;
+    }
+    setSelectionMode(true);
+  }, [clearSelection, selectionMode]);
 
   const handleDeleteFailed = useCallback(() => {
     void refresh();
@@ -109,8 +159,11 @@ export function RecordingsList({
         return next;
       });
       removeMemo(memoId);
+      if (selectedMemoId === memoId) {
+        onSelectMemo?.(null);
+      }
     },
-    [removeMemo]
+    [onSelectMemo, removeMemo, selectedMemoId]
   );
 
   const handleDeleteSelected = () => {
@@ -133,6 +186,9 @@ export function RecordingsList({
             memoAudioEngine.unload();
             removeMemos(ids);
             clearSelection();
+            if (selectedMemoId && ids.includes(selectedMemoId)) {
+              onSelectMemo?.(null);
+            }
             const action = isTrash ? permanentlyDeleteMemo : deleteMemo;
             void Promise.all(ids.map((id) => action(id)))
               .then(() => refresh({ silent: true }))
@@ -161,12 +217,42 @@ export function RecordingsList({
   };
 
   const handleRecord = async () => {
-    const memo = await createMemo(folderId ? { folderId } : undefined);
-    router.push({
-      pathname: '/memo/[id]',
-      params: { id: memo.id, record: '1', backTitle },
-    });
+    if (startingRecordRef.current || isStartingRecord || engineState.isRecording) {
+      return;
+    }
+
+    startingRecordRef.current = true;
+    setIsStartingRecord(true);
+    try {
+      const memo = await createMemo(folderId ? { folderId } : undefined);
+      if (layoutMode === 'sidebar' && onSelectMemo) {
+        await refresh({ silent: true });
+        onSelectMemo(memo.id, { autoRecord: true });
+        clearStartingRecord();
+        return;
+      }
+      router.push({
+        pathname: '/memo/[id]',
+        params: { id: memo.id, record: '1', backTitle },
+      });
+    } catch {
+      clearStartingRecord();
+    }
   };
+
+  const openEditor = useCallback(
+    (memoId: string) => {
+      if (layoutMode === 'sidebar' && onSelectMemo) {
+        onSelectMemo(memoId);
+        return;
+      }
+      router.push({
+        pathname: '/memo/[id]',
+        params: { id: memoId, backTitle },
+      });
+    },
+    [backTitle, layoutMode, onSelectMemo]
+  );
 
   const dismissSearch = useCallback(() => {
     Keyboard.dismiss();
@@ -189,20 +275,21 @@ export function RecordingsList({
         accessibilityLabel={selectionMode ? 'Done selecting' : 'Select recordings'}
         label={selectionMode ? 'Done' : 'Select'}
         variant="pill"
-        onPress={() => {
-          if (selectionMode) {
-            clearSelection();
-            return;
-          }
-          setSelectionMode(true);
-        }}
+        onPress={toggleSelectionMode}
       />
       {headerExtraActions}
     </>
   );
 
-  const headerScreenOptions = useMemo(
-    () => ({
+  const headerScreenOptions = useMemo(() => {
+    if (isSidebar) {
+      return { headerShown: false as const };
+    }
+
+    return {
+      title: listTitle,
+      headerLargeTitle: true as const,
+      headerShown: true as const,
       ...(Platform.OS === 'ios'
         ? {
             unstable_headerRightItems: () => {
@@ -230,13 +317,7 @@ export function RecordingsList({
                       }
                       label={selectionMode ? 'Done' : 'Select'}
                       variant="pill"
-                      onPress={() => {
-                        if (selectionMode) {
-                          clearSelection();
-                          return;
-                        }
-                        setSelectionMode(true);
-                      }}
+                      onPress={toggleSelectionMode}
                     />
                   ),
                 },
@@ -259,95 +340,136 @@ export function RecordingsList({
               <View style={styles.headerActions}>{headerRightActions}</View>
             ),
           }),
-    }),
-    [handleSearchPress, headerExtraActions, selectionMode, styles.headerActions]
+    };
+  }, [
+    handleSearchPress,
+    headerExtraActions,
+    isSidebar,
+    listTitle,
+    selectionMode,
+    styles.headerActions,
+    toggleSelectionMode,
+  ]);
+
+  const listBody = (
+    <>
+      {isSidebar ? (
+        <View style={styles.sidebarHeader}>
+          <View style={styles.sidebarToolbar}>
+            <FloatingHeaderButton
+              accessibilityLabel="Go back"
+              icon="chevron.left"
+              onPress={() => router.back()}
+            />
+            <View style={styles.sidebarActions}>{headerRightActions}</View>
+          </View>
+          <Text numberOfLines={1} style={styles.sidebarTitle}>
+            {listTitle}
+          </Text>
+        </View>
+      ) : null}
+
+      {isSearchActive ? (
+        <View style={styles.searchRow}>
+          <TextInput
+            autoFocus
+            clearButtonMode="while-editing"
+            placeholder="Search"
+            placeholderTextColor={colors.secondaryText}
+            style={styles.searchInput}
+            value={query}
+            onChangeText={setQuery}
+          />
+          <Pressable
+            accessibilityLabel="Close search"
+            hitSlop={8}
+            onPress={dismissSearch}>
+            <SymbolView
+              name={{ ios: 'xmark.circle.fill' }}
+              size={22}
+              tintColor={colors.secondaryText}
+            />
+          </Pressable>
+        </View>
+      ) : null}
+
+      {selectionMode && selectedIds.size > 0 ? (
+        <View style={styles.selectionBar}>
+          {isTrash ? (
+            <Pressable onPress={handleRecoverSelected} style={styles.selectionAction}>
+              <SymbolView name={{ ios: 'arrow.uturn.backward' }} size={18} tintColor={colors.accent} />
+              <Text style={styles.recoverText}>Recover ({selectedIds.size})</Text>
+            </Pressable>
+          ) : null}
+          <Pressable onPress={handleDeleteSelected} style={styles.selectionAction}>
+            <SymbolView name={{ ios: 'trash' }} size={18} tintColor={colors.recordRed} />
+            <Text style={styles.deleteText}>Delete ({selectedIds.size})</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
+      <Animated.FlatList
+        contentContainerStyle={styles.listContent}
+        contentInsetAdjustmentBehavior="automatic"
+        data={filteredMemos}
+        itemLayoutAnimation={LIST_ITEM_TRANSITION}
+        keyExtractor={(item) => item.id}
+        keyboardDismissMode="on-drag"
+        keyboardShouldPersistTaps="handled"
+        style={styles.list}
+        ListEmptyComponent={
+          <View style={styles.empty}>
+            <Text style={styles.emptyTitle}>{emptyTitle}</Text>
+            <Text style={styles.emptySubtitle}>{emptySubtitle}</Text>
+          </View>
+        }
+        renderItem={({ item }) => (
+          <RecordingRow
+            active={selectedMemoId === item.id}
+            allowMoveToFolder={allowMoveToFolder && !isTrash}
+            expanded={layoutMode === 'stack' && expandedId === item.id}
+            isTrash={isTrash}
+            memo={item}
+            selectOnPress={layoutMode === 'sidebar'}
+            selected={selectedIds.has(item.id)}
+            selectionMode={selectionMode}
+            onDeleteFailed={handleDeleteFailed}
+            onDeleted={handleMemoDeleted}
+            onOpenEditor={() => openEditor(item.id)}
+            onToggleExpand={() => setExpandedId((current) => (current === item.id ? null : item.id))}
+            onToggleSelect={() => toggleSelection(item.id)}
+            onUpdated={() => void refresh({ silent: true })}
+          />
+        )}
+      />
+
+      {showRecordButton && !selectionMode ? (
+        <View
+          pointerEvents="box-none"
+          style={[
+            styles.fabContainer,
+            { bottom: 32 + (isSidebar ? 0 : insets.bottom) },
+          ]}>
+          <RecordButton
+            disabled={isStartingRecord || engineState.isRecording}
+            onPress={() => void handleRecord()}
+          />
+        </View>
+      ) : null}
+    </>
   );
 
   return (
     <>
       <Stack.Screen options={headerScreenOptions} />
-      <SafeAreaView style={styles.screen}>
-        {isSearchActive ? (
-          <View style={styles.searchRow}>
-            <TextInput
-              autoFocus
-              clearButtonMode="while-editing"
-              placeholder="Search"
-              placeholderTextColor={colors.secondaryText}
-              style={styles.searchInput}
-              value={query}
-              onChangeText={setQuery}
-            />
-            <Pressable
-              accessibilityLabel="Close search"
-              hitSlop={8}
-              onPress={dismissSearch}>
-              <SymbolView
-                name={{ ios: 'xmark.circle.fill' }}
-                size={22}
-                tintColor={colors.secondaryText}
-              />
-            </Pressable>
-          </View>
-        ) : null}
-
-        {selectionMode && selectedIds.size > 0 ? (
-          <View style={styles.selectionBar}>
-            {isTrash ? (
-              <Pressable onPress={handleRecoverSelected} style={styles.selectionAction}>
-                <SymbolView name={{ ios: 'arrow.uturn.backward' }} size={18} tintColor={colors.accent} />
-                <Text style={styles.recoverText}>Recover ({selectedIds.size})</Text>
-              </Pressable>
-            ) : null}
-            <Pressable onPress={handleDeleteSelected} style={styles.selectionAction}>
-              <SymbolView name={{ ios: 'trash' }} size={18} tintColor={colors.recordRed} />
-              <Text style={styles.deleteText}>Delete ({selectedIds.size})</Text>
-            </Pressable>
-          </View>
-        ) : null}
-
-        <Animated.FlatList
-          contentContainerStyle={styles.listContent}
-          data={filteredMemos}
-          itemLayoutAnimation={LIST_ITEM_TRANSITION}
-          keyExtractor={(item) => item.id}
-          keyboardDismissMode="on-drag"
-          keyboardShouldPersistTaps="handled"
-          ListEmptyComponent={
-            <View style={styles.empty}>
-              <Text style={styles.emptyTitle}>{emptyTitle}</Text>
-              <Text style={styles.emptySubtitle}>{emptySubtitle}</Text>
-            </View>
-          }
-          renderItem={({ item }) => (
-            <RecordingRow
-              allowMoveToFolder={allowMoveToFolder && !isTrash}
-              expanded={expandedId === item.id}
-              isTrash={isTrash}
-              memo={item}
-              selected={selectedIds.has(item.id)}
-              selectionMode={selectionMode}
-              onDeleteFailed={handleDeleteFailed}
-              onDeleted={handleMemoDeleted}
-              onOpenEditor={() =>
-                router.push({
-                  pathname: '/memo/[id]',
-                  params: { id: item.id, backTitle },
-                })
-              }
-              onToggleExpand={() => setExpandedId((current) => (current === item.id ? null : item.id))}
-              onToggleSelect={() => toggleSelection(item.id)}
-              onUpdated={() => void refresh({ silent: true })}
-            />
-          )}
-        />
-
-        {showRecordButton && !selectionMode ? (
-          <View pointerEvents="box-none" style={styles.fabContainer}>
-            <RecordButton onPress={() => void handleRecord()} />
-          </View>
-        ) : null}
-      </SafeAreaView>
+      {isSidebar ? (
+        <SafeAreaView edges={['top', 'bottom']} style={styles.screen}>
+          {listBody}
+        </SafeAreaView>
+      ) : (
+        // Plain View: SafeAreaView (RN or context) fights headerLargeTitle and causes a vertical title jump.
+        <View style={styles.screen}>{listBody}</View>
+      )}
     </>
   );
 }
@@ -359,6 +481,31 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
         screen: {
           flex: 1,
           backgroundColor: colors.background,
+        },
+        sidebarHeader: {
+          paddingHorizontal: 12,
+          paddingTop: 4,
+          paddingBottom: 8,
+          gap: 4,
+        },
+        sidebarToolbar: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          minHeight: 44,
+        },
+        sidebarActions: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 8,
+          flexShrink: 1,
+        },
+        sidebarTitle: {
+          fontSize: 28,
+          fontWeight: '700',
+          color: colors.text,
+          paddingHorizontal: 4,
+          paddingBottom: 4,
         },
         headerActions: {
           flexDirection: 'row',
@@ -403,6 +550,9 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
         },
         listContent: {
           paddingBottom: 120,
+        },
+        list: {
+          flex: 1,
         },
         empty: {
           padding: 32,

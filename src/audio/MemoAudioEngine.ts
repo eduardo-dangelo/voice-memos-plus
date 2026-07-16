@@ -186,6 +186,7 @@ export class MemoAudioEngine {
   private deferredSetupInFlight: Promise<void> | null = null;
   private recordingSessionPrewarmed = false;
   private stopCaptureInFlight = false;
+  private recordingStartInFlight: Promise<void> | null = null;
 
   constructor() {
     AudioManager.addSystemEventListener('routeChange', () => {
@@ -1220,12 +1221,42 @@ export class MemoAudioEngine {
     monitorMix?: boolean;
     monitorStartTime?: number;
   }): Promise<void> {
+    if (this.state.isRecording) {
+      return;
+    }
+    if (this.recordingStartInFlight) {
+      return this.recordingStartInFlight;
+    }
+
+    const startPromise = this.performStartRecording(options);
+    this.recordingStartInFlight = startPromise;
+    try {
+      await startPromise;
+    } finally {
+      if (this.recordingStartInFlight === startPromise) {
+        this.recordingStartInFlight = null;
+      }
+    }
+  }
+
+  private async performStartRecording(options?: {
+    monitorMix?: boolean;
+    monitorStartTime?: number;
+  }): Promise<void> {
+    if (this.state.isRecording) {
+      return;
+    }
+
     const monitorMix = options?.monitorMix ?? false;
     const monitorStartTime = options?.monitorStartTime ?? 0;
 
     const granted = await this.requestPermission();
     if (!granted) {
       throw new Error('Microphone permission denied');
+    }
+
+    if (this.state.isRecording) {
+      return;
     }
 
     if (this.deferredPlaybackSetup || this.pendingEngineReload) {

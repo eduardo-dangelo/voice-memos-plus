@@ -29,6 +29,10 @@ type Props = {
   expanded: boolean;
   selected: boolean;
   selectionMode: boolean;
+  /** Highlighted as the detail-pane selection (sidebar layout). */
+  active?: boolean;
+  /** When true, primary tap selects into the detail pane instead of expanding. */
+  selectOnPress?: boolean;
   allowMoveToFolder?: boolean;
   isTrash?: boolean;
   onToggleExpand: () => void;
@@ -44,6 +48,8 @@ export function RecordingRow({
   expanded,
   selected,
   selectionMode,
+  active = false,
+  selectOnPress = false,
   allowMoveToFolder = false,
   isTrash = false,
   onToggleExpand,
@@ -167,15 +173,27 @@ export function RecordingRow({
     });
   };
 
+  const handlePrimaryPress = () => {
+    if (selectionMode) {
+      onToggleSelect();
+      return;
+    }
+    if (selectOnPress) {
+      onOpenEditor();
+      return;
+    }
+    onToggleExpand();
+  };
+
   return (
     <>
       <Animated.View
       exiting={LIST_ITEM_EXIT}
       layout={LIST_ITEM_TRANSITION}
-      style={styles.container}>
+      style={[styles.container, active && styles.containerActive]}>
       <Pressable
-        onPress={selectionMode ? onToggleSelect : onToggleExpand}
-        onLongPress={onOpenEditor}
+        onPress={handlePrimaryPress}
+        onLongPress={selectOnPress ? undefined : onOpenEditor}
         style={styles.row}>
         {selectionMode ? (
           <SymbolView
@@ -248,6 +266,9 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           borderBottomWidth: StyleSheet.hairlineWidth,
           borderBottomColor: colors.separator,
           backgroundColor: colors.background,
+        },
+        containerActive: {
+          backgroundColor: colors.searchFieldBackground,
         },
         row: {
           flexDirection: 'row',
