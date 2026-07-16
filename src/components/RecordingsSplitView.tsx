@@ -1,5 +1,11 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, StyleSheet, Text, View } from 'react-native';
+import Animated, {
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAudioEngineState } from '@/src/audio/AudioEngineContext';
@@ -9,6 +15,7 @@ import { useIsRegularWidth } from '@/src/hooks/useIsRegularWidth';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
 const SIDEBAR_WIDTH = 340;
+const SIDEBAR_ANIMATION_MS = 280;
 
 type SelectedMemo = {
   id: string;
@@ -24,6 +31,21 @@ export function RecordingsSplitView(props: Props) {
   const styles = useStyles(colors);
   const engineState = useAudioEngineState();
   const [selected, setSelected] = useState<SelectedMemo | null>(null);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const sidebarWidth = useSharedValue(SIDEBAR_WIDTH);
+
+  useEffect(() => {
+    sidebarWidth.value = withTiming(sidebarCollapsed ? 0 : SIDEBAR_WIDTH, {
+      duration: SIDEBAR_ANIMATION_MS,
+      easing: Easing.out(Easing.cubic),
+    });
+  }, [sidebarCollapsed, sidebarWidth]);
+
+  const sidebarAnimatedStyle = useAnimatedStyle(() => ({
+    width: sidebarWidth.value,
+    opacity: sidebarWidth.value / SIDEBAR_WIDTH,
+    borderRightWidth: sidebarWidth.value > 1 ? StyleSheet.hairlineWidth : 0,
+  }));
 
   const handleSelectMemo = useCallback(
     (memoId: string | null, options?: { autoRecord?: boolean }) => {
@@ -42,6 +64,7 @@ export function RecordingsSplitView(props: Props) {
           return;
         }
         setSelected(null);
+        setSidebarCollapsed(false);
         return;
       }
       setSelected({ id: memoId, autoRecord: options?.autoRecord ?? false });
@@ -51,6 +74,11 @@ export function RecordingsSplitView(props: Props) {
 
   const handleDismiss = useCallback(() => {
     setSelected(null);
+    setSidebarCollapsed(false);
+  }, []);
+
+  const handleToggleSidebar = useCallback(() => {
+    setSidebarCollapsed((current) => !current);
   }, []);
 
   const handleAutoRecordConsumed = useCallback(() => {
@@ -67,14 +95,18 @@ export function RecordingsSplitView(props: Props) {
 
   return (
     <View style={styles.split}>
-      <View style={styles.sidebar}>
-        <RecordingsList
-          {...props}
-          layoutMode="sidebar"
-          selectedMemoId={selected?.id ?? null}
-          onSelectMemo={handleSelectMemo}
-        />
-      </View>
+      <Animated.View
+        pointerEvents={sidebarCollapsed ? 'none' : 'auto'}
+        style={[styles.sidebar, sidebarAnimatedStyle]}>
+        <View style={styles.sidebarInner}>
+          <RecordingsList
+            {...props}
+            layoutMode="sidebar"
+            selectedMemoId={selected?.id ?? null}
+            onSelectMemo={handleSelectMemo}
+          />
+        </View>
+      </Animated.View>
       <View style={[styles.detail, { paddingTop: insets.top }]}>
         {selected ? (
           <MemoEditor
@@ -82,9 +114,11 @@ export function RecordingsSplitView(props: Props) {
             autoRecord={selected.autoRecord}
             memoId={selected.id}
             presentation="pane"
+            sidebarCollapsed={sidebarCollapsed}
             onAutoRecordConsumed={handleAutoRecordConsumed}
             onDismiss={handleDismiss}
             onMemoIdChange={handleMemoIdChange}
+            onToggleSidebar={handleToggleSidebar}
           />
         ) : (
           <View style={styles.emptyDetail}>
@@ -106,10 +140,13 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           backgroundColor: colors.background,
         },
         sidebar: {
-          width: SIDEBAR_WIDTH,
-          borderRightWidth: StyleSheet.hairlineWidth,
+          overflow: 'hidden',
           borderRightColor: colors.separator,
           backgroundColor: colors.background,
+        },
+        sidebarInner: {
+          width: SIDEBAR_WIDTH,
+          flex: 1,
         },
         detail: {
           flex: 1,

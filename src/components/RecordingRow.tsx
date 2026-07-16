@@ -269,7 +269,7 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           backgroundColor: colors.background,
         },
         containerActive: {
-          backgroundColor: colors.searchFieldBackground,
+          backgroundColor: colors.pillBackground,
         },
         row: {
           flexDirection: 'row',

@@ -117,6 +117,8 @@ export function RecordingsList({
     return memos.filter((memo) => memo.title.toLowerCase().includes(normalized));
   }, [memos, query]);
 
+  const countLabel = `${memos.length} Recording${memos.length === 1 ? '' : 's'}`;
+
   const toggleSelection = (memoId: string) => {
     setSelectedIds((current) => {
       const next = new Set(current);
@@ -290,6 +292,7 @@ export function RecordingsList({
       title: listTitle,
       headerLargeTitle: true as const,
       headerShown: true as const,
+      subtitle: countLabel,
       ...(Platform.OS === 'ios'
         ? {
             unstable_headerRightItems: () => {
@@ -342,6 +345,7 @@ export function RecordingsList({
           }),
     };
   }, [
+    countLabel,
     handleSearchPress,
     headerExtraActions,
     isSidebar,
@@ -366,6 +370,7 @@ export function RecordingsList({
           <Text numberOfLines={1} style={styles.sidebarTitle}>
             {listTitle}
           </Text>
+          <Text style={styles.sidebarCaption}>{countLabel}</Text>
         </View>
       ) : null}
 
@@ -504,6 +509,11 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           fontSize: 28,
           fontWeight: '700',
           color: colors.text,
+          paddingHorizontal: 4,
+        },
+        sidebarCaption: {
+          fontSize: 15,
+          color: colors.secondaryText,
           paddingHorizontal: 4,
           paddingBottom: 4,
         },

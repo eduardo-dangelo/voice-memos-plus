@@ -6,12 +6,12 @@ import {
   ActionSheetIOS,
   ActivityIndicator,
   Alert,
-  type LayoutChangeEvent,
   Modal,
   Pressable,
   StyleSheet,
   Text,
   View,
+  type LayoutChangeEvent,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -28,11 +28,13 @@ import {
 } from '@/src/audio/headphoneDetection';
 import type { LayerEffects, LayerEffectsChange } from '@/src/audio/layerEffects';
 import { hasAnySoloActive, isLayerSelectable, mergeLayerEffects } from '@/src/audio/layerEffects';
+import { loadMemoIntoEngine } from '@/src/audio/loadMemoIntoEngine';
 import {
   maybeShowPerformanceWarning,
   resetPerformanceWarningState,
 } from '@/src/audio/performanceWarning';
 import { slicePeaksForTrim } from '@/src/audio/waveform';
+import { FloatingHeaderButton } from '@/src/components/FloatingHeaderButton';
 import { IconActionSheet, type IconActionSheetItem } from '@/src/components/IconActionSheet';
 import { MemoOptionsMenu } from '@/src/components/MemoOptionsMenu';
 import { MetronomeButton } from '@/src/components/MetronomeButton';
@@ -42,7 +44,6 @@ import { TrackEditorShell } from '@/src/components/track-editor/TrackEditorShell
 import type { EditorTool } from '@/src/components/track-editor/types';
 import { resolveTrackColor, TrackColorPicker } from '@/src/components/TrackColorPicker';
 import { WaveformView, type TrackData } from '@/src/components/WaveformView';
-import { loadMemoIntoEngine } from '@/src/audio/loadMemoIntoEngine';
 import { applyLocationTitleIfEnabled } from '@/src/location/locationNaming';
 import {
   awaitSaveInFlight,
@@ -131,6 +132,10 @@ export type MemoEditorProps = {
   onMemoIdChange?: (memoId: string) => void;
   /** Called after autoRecord has been consumed (started or aborted). */
   onAutoRecordConsumed?: () => void;
+  /** iPad split view: whether the recordings sidebar is hidden. */
+  sidebarCollapsed?: boolean;
+  /** iPad split view: toggle sidebar visibility. */
+  onToggleSidebar?: () => void;
 };
 
 export function MemoEditor({
@@ -141,6 +146,8 @@ export function MemoEditor({
   onDismiss,
   onMemoIdChange,
   onAutoRecordConsumed,
+  sidebarCollapsed = false,
+  onToggleSidebar,
 }: MemoEditorProps) {
   const colors = useVoiceMemosColors();
   const colorScheme = useColorScheme();
@@ -1346,18 +1353,63 @@ export function MemoEditor({
   const renderHeaderBar = useCallback(
     () => (
       <View style={styles.headerBar}>
-        <MemoOptionsMenu
-          includeEditRecording={false}
-          includeShare={memo ? hasRecording(memo) : false}
-          onShare={handleShare}
-          onRename={handleRename}
-          onDuplicate={() => void handleDuplicate()}
-          onDelete={confirmDelete}>
-          <View accessibilityLabel="More options" style={styles.moreButton}>
-            <SymbolView name={{ ios: 'ellipsis' }} size={22} tintColor={colors.secondaryText} />
+        {isPane ? (
+          <View style={styles.headerActions}>
+            {onToggleSidebar ? (
+              <FloatingHeaderButton
+                accessibilityLabel={
+                  sidebarCollapsed ? 'Show sidebar' : 'Expand to full screen'
+                }
+                icon={
+                  sidebarCollapsed
+                    ? 'sidebar.left'
+                    : 'arrow.up.left.and.arrow.down.right'
+                }
+                size="small"
+                onPress={onToggleSidebar}
+              />
+            ) : null}
+            {memo && hasRecording(memo) ? (
+              <FloatingHeaderButton
+                accessibilityLabel="Share"
+                icon="square.and.arrow.up"
+                size="small"
+                onPress={handleShare}
+              />
+            ) : null}
+            <FloatingHeaderButton
+              accessibilityLabel="Rename"
+              icon="pencil"
+              size="small"
+              onPress={handleRename}
+            />
+            <FloatingHeaderButton
+              accessibilityLabel="Delete"
+              icon="trash"
+              size="small"
+              tintColor={colors.recordRed}
+              onPress={confirmDelete}
+            />
           </View>
-        </MemoOptionsMenu>
-        <Text numberOfLines={1} style={styles.headerTitle}>
+        ) : (
+          <View style={styles.headerLeading}>
+            <MemoOptionsMenu
+              includeEditRecording={false}
+              includeShare={memo ? hasRecording(memo) : false}
+              onShare={handleShare}
+              onRename={handleRename}
+              onDuplicate={() => void handleDuplicate()}
+              onDelete={confirmDelete}>
+              <View accessibilityLabel="More options" style={styles.moreButton}>
+                <SymbolView name={{ ios: 'ellipsis' }} size={22} tintColor={colors.secondaryText} />
+              </View>
+            </MemoOptionsMenu>
+          </View>
+        )}
+        <Text
+          numberOfLines={1}
+          pointerEvents="none"
+          style={[styles.headerTitle, isPane && styles.headerTitlePane]}>
           {memo?.title ?? ''}
         </Text>
         <Pressable
@@ -1371,6 +1423,7 @@ export function MemoEditor({
       </View>
     ),
     [
+      colors.recordRed,
       colors.secondaryText,
       confirmDelete,
       engineState.isRecording,
@@ -1378,11 +1431,17 @@ export function MemoEditor({
       handleDuplicate,
       handleRename,
       handleShare,
+      isPane,
       memo,
+      onToggleSidebar,
+      sidebarCollapsed,
       styles.doneButton,
       styles.doneButtonDisabled,
+      styles.headerActions,
       styles.headerBar,
+      styles.headerLeading,
       styles.headerTitle,
+      styles.headerTitlePane,
       styles.moreButton,
     ],
   );
@@ -2078,6 +2137,7 @@ function useMemoEditorStyles(
           backgroundColor: colors.accent,
           alignItems: 'center',
           justifyContent: 'center',
+          zIndex: 1,
         },
         doneButtonDisabled: {
           opacity: 0.4,
@@ -2085,9 +2145,20 @@ function useMemoEditorStyles(
         headerBar: {
           flexDirection: 'row',
           alignItems: 'center',
+          justifyContent: 'space-between',
           width: '100%',
           paddingHorizontal: 8,
+          position: 'relative',
+        },
+        headerActions: {
+          flexDirection: 'row',
+          alignItems: 'center',
           gap: 8,
+          flexShrink: 0,
+          zIndex: 1,
+        },
+        headerLeading: {
+          zIndex: 1,
         },
         moreButton: {
           width: 32,
@@ -2100,12 +2171,20 @@ function useMemoEditorStyles(
           justifyContent: 'center',
         },
         headerTitle: {
-          flex: 1,
+          position: 'absolute',
+          left: 0,
+          right: 0,
           fontSize: 17,
           fontWeight: '500',
           color: colors.text,
-          padding: 0,
           textAlign: 'center',
+          // Clears ellipsis (32) + Done (32) + bar padding on iPhone.
+          paddingHorizontal: 58,
+          zIndex: 0,
+        },
+        headerTitlePane: {
+          // Clears up to 4 small pane actions (32×4 + gaps) on the leading side.
+          paddingHorizontal: 152,
         },
         tracksArea: {
           flex: 1,

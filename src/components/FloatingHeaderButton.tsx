@@ -1,18 +1,24 @@
 import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
 import { SymbolView } from 'expo-symbols';
 import { useMemo } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View, type ColorValue } from 'react-native';
 
 import { useColorScheme } from '@/components/useColorScheme';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
-type FloatingHeaderIcon =
+export type FloatingHeaderIcon =
   | 'magnifyingglass'
   | 'ellipsis.circle'
   | 'gearshape'
   | 'gearshape.fill'
   | 'folder.badge.plus'
-  | 'chevron.left';
+  | 'chevron.left'
+  | 'square.and.arrow.up'
+  | 'pencil'
+  | 'plus.square.on.square'
+  | 'trash'
+  | 'sidebar.left'
+  | 'arrow.up.left.and.arrow.down.right';
 
 type BaseProps = {
   onPress: () => void;
@@ -23,17 +29,26 @@ type IconProps = BaseProps & {
   variant?: 'icon';
   icon: FloatingHeaderIcon;
   label?: never;
+  tintColor?: ColorValue;
+  size?: 'regular' | 'small';
 };
 
 type PillProps = BaseProps & {
   variant: 'pill';
   label: string;
   icon?: never;
+  tintColor?: never;
+  size?: never;
 };
 
 type Props = IconProps | PillProps;
 
 const useGlass = isGlassEffectAPIAvailable();
+
+const ICON_SIZE = {
+  regular: { button: 44, symbol: 22 },
+  small: { button: 32, symbol: 16 },
+} as const;
 
 export function FloatingHeaderButton({
   onPress,
@@ -41,10 +56,14 @@ export function FloatingHeaderButton({
   variant = 'icon',
   icon,
   label,
+  tintColor,
+  size = 'regular',
 }: Props) {
   const colors = useVoiceMemosColors();
   const colorScheme = useColorScheme();
-  const styles = useStyles(colors, colorScheme, useGlass);
+  const styles = useStyles(colors, colorScheme, useGlass, size);
+  const iconTint = tintColor ?? colors.accent;
+  const symbolSize = ICON_SIZE[size].symbol;
 
   if (variant === 'pill') {
     const content = <Text style={styles.pillText}>{label}</Text>;
@@ -65,7 +84,7 @@ export function FloatingHeaderButton({
     );
   }
 
-  const content = <SymbolView name={{ ios: icon }} size={22} tintColor={colors.accent} />;
+  const content = <SymbolView name={{ ios: icon }} size={symbolSize} tintColor={iconTint} />;
   return (
     <Pressable
       accessibilityLabel={accessibilityLabel}
@@ -86,30 +105,33 @@ export function FloatingHeaderButton({
 function useStyles(
   colors: ReturnType<typeof useVoiceMemosColors>,
   colorScheme: 'light' | 'dark' | null | undefined,
-  glass: boolean
+  glass: boolean,
+  size: 'regular' | 'small'
 ) {
   const buttonSurface =
     colorScheme === 'dark' ? colors.sheetBackground : colors.background;
+  const buttonSize = ICON_SIZE[size].button;
+  const radius = buttonSize / 2;
 
   return useMemo(
     () =>
       StyleSheet.create({
         iconPressable: {
-          width: 44,
-          height: 44,
-          borderRadius: 22,
+          width: buttonSize,
+          height: buttonSize,
+          borderRadius: radius,
         },
         iconGlass: {
-          width: 44,
-          height: 44,
-          borderRadius: 22,
+          width: buttonSize,
+          height: buttonSize,
+          borderRadius: radius,
           alignItems: 'center',
           justifyContent: 'center',
         },
         iconFallback: {
-          width: 44,
-          height: 44,
-          borderRadius: 22,
+          width: buttonSize,
+          height: buttonSize,
+          borderRadius: radius,
           alignItems: 'center',
           justifyContent: 'center',
           backgroundColor: buttonSurface,
@@ -151,6 +173,6 @@ function useStyles(
           fontWeight: '400',
         },
       }),
-    [buttonSurface, colorScheme, colors.accent, glass]
+    [buttonSize, buttonSurface, colorScheme, colors.accent, glass, radius]
   );
 }
