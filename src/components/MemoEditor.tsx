@@ -28,6 +28,7 @@ import {
   subscribeHeadphoneDisconnect,
   useHeadphonesConnected,
 } from '@/src/audio/headphoneDetection';
+import { getQuarterIntervalSec } from '@/src/audio/metronome';
 import type { LayerEffects, LayerEffectsChange } from '@/src/audio/layerEffects';
 import { hasAnySoloActive, isLayerSelectable, mergeLayerEffects } from '@/src/audio/layerEffects';
 import { loadMemoIntoEngine } from '@/src/audio/loadMemoIntoEngine';
@@ -42,6 +43,8 @@ import { MemoOptionsMenu } from '@/src/components/MemoOptionsMenu';
 import { MetronomeButton } from '@/src/components/MetronomeButton';
 import { MetronomeSettingsSheet } from '@/src/components/MetronomeSettingsSheet';
 import { PlaybackControls } from '@/src/components/PlaybackControls';
+import { PrecountButton } from '@/src/components/PrecountButton';
+import { PrecountOverlay } from '@/src/components/PrecountOverlay';
 import { TrackEditorShell } from '@/src/components/track-editor/TrackEditorShell';
 import type { EditorTool } from '@/src/components/track-editor/types';
 import { resolveTrackColor, TrackColorPicker } from '@/src/components/TrackColorPicker';
@@ -70,10 +73,11 @@ import {
   updateLayerStartTimes,
   updateLoopRegion,
   updateMetronomeSettings,
+  updatePrecountMode,
   updateTitle,
 } from '@/src/storage/memoStore';
 import { isMemoInTrash } from '@/src/storage/paths';
-import type { Layer, Memo, MetronomeSettings } from '@/src/storage/types';
+import type { Layer, Memo, MetronomeSettings, PrecountMode } from '@/src/storage/types';
 import {
   applyTimelineDeltaToLayers,
   clampLayerStartTime,
@@ -82,9 +86,11 @@ import {
   getLayerActiveStartTime,
   getLayerEffects,
   getMemoMetronomeSettings,
+  getMemoPrecountMode,
   getMemoTimelineDuration,
   getPlayableLayers,
   hasRecording,
+  nextPrecountMode,
   normalizeMetronomeSettings,
 } from '@/src/storage/types';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
@@ -282,6 +288,8 @@ export function MemoEditor({
   const [metronomeSettingsVisible, setMetronomeSettingsVisible] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [layoutReady, setLayoutReady] = useState(false);
+  const [precountVisible, setPrecountVisible] = useState(false);
+  const [precountNumber, setPrecountNumber] = useState<number | null>(null);
   const lastLayoutHeightRef = useRef<number | null>(null);
   const settleRafRef = useRef<number | null>(null);
   const stackModeRef = useRef(false);
@@ -292,6 +300,7 @@ export function MemoEditor({
   const monitorMixRef = useRef(false);
   const editDraftRef = useRef<EditDraftSnapshot | null>(null);
   const draftGenerationRef = useRef(0);
+  const precountCancelledRef = useRef(false);
   stackModeRef.current = stackMode;
   replaceModeRef.current = replaceMode;
   activeLayerIdRef.current = activeLayerId;
@@ -777,6 +786,81 @@ export function MemoEditor({
     handleMetronomeChange({ enabled: !getMemoMetronomeSettings(memo).enabled });
   }, [handleMetronomeChange, memo]);
 
+  const handlePrecountCycle = useCallback(() => {
+    if (!memo) {
+      return;
+    }
+    const next = nextPrecountMode(getMemoPrecountMode(memo));
+    setMemo({ ...memo, precount: next });
+    void updatePrecountMode(memo.id, next);
+  }, [memo]);
+
+  const handlePrecountCancel = useCallback(() => {
+    precountCancelledRef.current = true;
+  }, []);
+
+  const runPrecount = useCallback(
+    async (mode: Exclude<PrecountMode, 'off'>, bpm: number): Promise<boolean> => {
+      precountCancelledRef.current = false;
+      setPrecountNumber(null);
+      setPrecountVisible(true);
+      const intervalMs = getQuarterIntervalSec(bpm) * 1000;
+
+      const waitUntil = async (deadlineMs: number): Promise<boolean> => {
+        while (Date.now() < deadlineMs) {
+          if (precountCancelledRef.current) {
+            return false;
+          }
+          const remaining = deadlineMs - Date.now();
+          await new Promise<void>((resolve) =>
+            setTimeout(resolve, Math.min(40, Math.max(0, remaining)))
+          );
+        }
+        return !precountCancelledRef.current;
+      };
+
+      try {
+        if (mode === 'sound') {
+          try {
+            await engine.primeMetronomeOutput();
+          } catch {
+            // Best-effort; clicks may still fail later.
+          }
+        }
+
+        // Let the modal mount before the first numeral so mount cost is outside beat 1.
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        if (precountCancelledRef.current) {
+          return false;
+        }
+
+        const startMs = Date.now();
+        for (let i = 0; i < 4; i++) {
+          if (precountCancelledRef.current) {
+            return false;
+          }
+          const n = 4 - i;
+          setPrecountNumber(n);
+          void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          if (mode === 'sound') {
+            void engine.playMetronomeClick({ accent: n === 4 }).catch(() => {
+              // Click is best-effort during precount.
+            });
+          }
+          const ok = await waitUntil(startMs + (i + 1) * intervalMs);
+          if (!ok) {
+            return false;
+          }
+        }
+        return true;
+      } finally {
+        setPrecountVisible(false);
+        setPrecountNumber(null);
+      }
+    },
+    [engine]
+  );
+
   const handleTrackPress = useCallback(
     (trackId: string) => {
       if (trackId === activeLayerId || savingTrim) {
@@ -1097,6 +1181,7 @@ export function MemoEditor({
 
   useEffect(() => {
     autoRecordStarted.current = false;
+    precountCancelledRef.current = true;
   }, [id]);
 
   useEffect(() => {
@@ -1122,19 +1207,40 @@ export function MemoEditor({
     autoRecordStarted.current = true;
     pendingLocationNamingRef.current = true;
     onAutoRecordConsumed?.();
-    beginSession({
-      memoId: memo.id,
-      memoTitle: memo.title,
-      mode: 'new',
-      layerId: null,
-      startTime: 0,
-      trackColor: null,
-    });
-    void engine.startRecording().catch((error: Error) => {
-      clearSession();
-      Alert.alert('Recording failed', error.message);
-    });
-  }, [engine, memo, onAutoRecordConsumed, onDismiss, record]);
+
+    const memoId = memo.id;
+    const memoTitle = memo.title;
+    const precountMode = getMemoPrecountMode(memo);
+    const bpm = getMemoMetronomeSettings(memo).bpm;
+
+    void (async () => {
+      if (precountMode !== 'off') {
+        const completed = await runPrecount(precountMode, bpm);
+        if (!completed) {
+          pendingLocationNamingRef.current = false;
+          onDismiss();
+          void deleteMemo(memoId);
+          return;
+        }
+        if (engine.getState().isRecording) {
+          return;
+        }
+      }
+
+      beginSession({
+        memoId,
+        memoTitle,
+        mode: 'new',
+        layerId: null,
+        startTime: 0,
+        trackColor: null,
+      });
+      void engine.startRecording().catch((error: Error) => {
+        clearSession();
+        Alert.alert('Recording failed', error.message);
+      });
+    })();
+  }, [engine, memo, onAutoRecordConsumed, onDismiss, record, runPrecount]);
 
   const stopAndSaveActiveRecording = useCallback(
     async (options?: { reloadEngine?: boolean }): Promise<boolean> => {
@@ -1618,6 +1724,18 @@ export function MemoEditor({
         return;
       }
 
+      const precountMode = getMemoPrecountMode(memo);
+      if (precountMode !== 'off') {
+        const bpm = getMemoMetronomeSettings(memo).bpm;
+        const completed = await runPrecount(precountMode, bpm);
+        if (!completed) {
+          return;
+        }
+        if (engine.getState().isRecording) {
+          return;
+        }
+      }
+
       const useMonitorMix = needsMonitorMix(memo, mode);
       monitorMixRef.current = useMonitorMix;
 
@@ -1847,6 +1965,10 @@ export function MemoEditor({
     : currentTime;
   const metronomeSettings = useMemo(
     () => (memo ? getMemoMetronomeSettings(memo) : normalizeMetronomeSettings()),
+    [memo]
+  );
+  const precountMode = useMemo(
+    () => (memo ? getMemoPrecountMode(memo) : 'off'),
     [memo]
   );
 
@@ -2146,12 +2268,15 @@ export function MemoEditor({
             <View style={styles.footer}>
               <View style={styles.timeDisplay}>
                 <View style={styles.timeDisplaySide}>
-                  <MetronomeButton
-                    headphonesConnected={headphonesConnected}
-                    settings={metronomeSettings}
-                    onOpenSettings={() => setMetronomeSettingsVisible(true)}
-                    onToggle={handleMetronomeToggle}
-                  />
+                  <View style={styles.timeDisplaySideRow}>
+                    <MetronomeButton
+                      headphonesConnected={headphonesConnected}
+                      settings={metronomeSettings}
+                      onOpenSettings={() => setMetronomeSettingsVisible(true)}
+                      onToggle={handleMetronomeToggle}
+                    />
+                    <PrecountButton mode={precountMode} onCycle={handlePrecountCycle} />
+                  </View>
                 </View>
                 <MemoEditorTimeLabel
                   memoId={memo?.id}
@@ -2202,6 +2327,11 @@ export function MemoEditor({
         visible={metronomeSettingsVisible}
         onChange={handleMetronomeChange}
         onClose={() => setMetronomeSettingsVisible(false)}
+      />
+      <PrecountOverlay
+        count={precountNumber}
+        visible={precountVisible}
+        onCancel={handlePrecountCancel}
       />
       <Modal animationType="fade" transparent visible={isExporting}>
         <View style={styles.exportOverlay}>
@@ -2293,7 +2423,13 @@ function useMemoEditorStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           paddingBottom: 4,
         },
         timeDisplaySide: {
-          width: 32,
+          width: 72,
+          alignItems: 'flex-start',
+        },
+        timeDisplaySideRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 8,
         },
         largeTime: {
           flex: 1,

@@ -29,8 +29,9 @@ import {
   requireLayerFile,
   resolveMemoDir,
 } from './paths';
-import type { Layer, Memo, MetronomeSettings } from './types';
+import type { Layer, Memo, MetronomeSettings, PrecountMode } from './types';
 import {
+  DEFAULT_PRECOUNT_MODE,
   getDefaultLayerLabel,
   getLayerEffects,
   getMemoMetronomeSettings,
@@ -39,6 +40,7 @@ import {
   normalizeLayers,
   normalizeLoopRegion,
   normalizeMetronomeSettings,
+  normalizePrecountMode,
   getEarliestTrimInTimelineDelta,
   hasRecording,
 } from './types';
@@ -239,6 +241,7 @@ export async function createMemo(options?: CreateMemoOptions | string): Promise<
     duration: 0,
     trimStart: 0,
     trimEnd: 0,
+    precount: DEFAULT_PRECOUNT_MODE,
     layers: [createLayer(0)],
   };
   if (normalized.folderId) {
@@ -371,6 +374,20 @@ export async function updateMetronomeSettings(
     ...getMemoMetronomeSettings(memo),
     ...partial,
   });
+  memo.updatedAt = new Date().toISOString();
+  writeManifest(memo);
+  return memo;
+}
+
+export async function updatePrecountMode(
+  memoId: string,
+  mode: PrecountMode
+): Promise<Memo> {
+  const memo = await getMemo(memoId);
+  if (!memo) {
+    throw new Error('Memo not found');
+  }
+  memo.precount = normalizePrecountMode(mode);
   memo.updatedAt = new Date().toISOString();
   writeManifest(memo);
   return memo;

@@ -30,7 +30,7 @@ import {
   PLAYBACK_END_TOLERANCE,
 } from '@/src/audio/playbackPlans';
 import { hasAnySoloActive, mergeLayerEffects, type LayerEffects, type LayerEffectsChange } from '@/src/audio/layerEffects';
-import { scheduleMetronomeClicks } from '@/src/audio/metronome';
+import { scheduleMetronomeClicks, playMetronomeClick as scheduleOneMetronomeClick } from '@/src/audio/metronome';
 import { MemoMixGraph } from '@/src/audio/memoMixGraph';
 import { accumulatePeaksFromSamples } from '@/src/audio/recordingWaveformPeaks';
 import {
@@ -1142,6 +1142,25 @@ export class MemoAudioEngine {
     if (this.playbackContextStartWhen > 0) {
       this.resyncMetronome();
     }
+  }
+
+  /** Warm AudioContext + metronome gain so the first precount click is not delayed. */
+  async primeMetronomeOutput(): Promise<void> {
+    const context = await this.ensureContext();
+    const gain = this.ensureMetronomeGain(context);
+    gain.gain.value = this.metronomeSettings.volume / 100;
+  }
+
+  /** One-shot click for precount (independent of metronome enabled). */
+  async playMetronomeClick(options: { accent?: boolean } = {}): Promise<void> {
+    const context = await this.ensureContext();
+    const gain = this.ensureMetronomeGain(context);
+    gain.gain.value = this.metronomeSettings.volume / 100;
+    const source = scheduleOneMetronomeClick(context, gain, {
+      accent: options.accent,
+      volume: this.metronomeSettings.volume,
+    });
+    this.metronomeSources.push(source);
   }
 
   updateLayerEffects(layerId: string, partial: LayerEffectsChange): void {

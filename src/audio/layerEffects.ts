@@ -111,7 +111,7 @@ export type LayerEffectsChange = Omit<Partial<LayerEffects>, 'reverb' | 'delay' 
 };
 
 export const EQ_FREQUENCIES = [100, 250, 1000, 4000, 10000] as const;
-export const DEFAULT_BPM = 120;
+export const DEFAULT_BPM = 100;
 export const MIN_TRIM_SELECTION = 0.5;
 export const TRIM_SNAP_SECONDS = 0.1;
 

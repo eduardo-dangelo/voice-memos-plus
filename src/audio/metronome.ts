@@ -132,6 +132,29 @@ export function getMetronomeBeatTimes(
   return beatTimes;
 }
 
+export function playMetronomeClick(
+  context: AudioContext,
+  outputGain: GainNode,
+  options: { accent?: boolean; volume?: number } = {}
+): AudioBufferSourceNode {
+  const accent = options.accent ?? false;
+  const volumeGain = Math.max(0, Math.min(1, (options.volume ?? 70) / 100));
+  const buffer = accent ? getAccentClickBuffer(context) : getNormalClickBuffer(context);
+  const when = context.currentTime;
+
+  const source = context.createBufferSource();
+  source.buffer = buffer;
+
+  const clickGain = context.createGain();
+  clickGain.gain.value = volumeGain;
+  source.connect(clickGain);
+  clickGain.connect(outputGain);
+
+  source.start(when);
+  source.stop(when + CLICK_DURATION_SEC);
+  return source;
+}
+
 export function scheduleMetronomeClicks(
   context: AudioContext,
   outputGain: GainNode,

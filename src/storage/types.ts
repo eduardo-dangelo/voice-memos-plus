@@ -93,6 +93,29 @@ export function getMemoMetronomeSettings(memo: Pick<Memo, 'metronome'>): Metrono
   return normalizeMetronomeSettings(memo.metronome);
 }
 
+export type PrecountMode = 'off' | 'sound' | 'silent';
+
+export const PRECOUNT_MODES: PrecountMode[] = ['off', 'silent', 'sound'];
+
+export const DEFAULT_PRECOUNT_MODE: PrecountMode = 'sound';
+
+export function normalizePrecountMode(value?: string | null): PrecountMode {
+  if (value === 'sound' || value === 'silent' || value === 'off') {
+    return value;
+  }
+  // Older memos without a stored value stay off.
+  return 'off';
+}
+
+export function getMemoPrecountMode(memo: Pick<Memo, 'precount'>): PrecountMode {
+  return normalizePrecountMode(memo.precount);
+}
+
+export function nextPrecountMode(current: PrecountMode): PrecountMode {
+  const index = PRECOUNT_MODES.indexOf(current);
+  return PRECOUNT_MODES[(index + 1) % PRECOUNT_MODES.length]!;
+}
+
 export type MemoTitleSource = 'default' | 'location' | 'user';
 
 export type Memo = {
@@ -108,6 +131,8 @@ export type Memo = {
   loopEnd?: number;
   loopEnabled?: boolean;
   metronome?: MetronomeSettings;
+  /** Count-in before recording: off → silent → sound */
+  precount?: PrecountMode;
   folderId?: string;
   deletedAt?: string;
   layers: Layer[];
