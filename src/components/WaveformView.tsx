@@ -1077,7 +1077,7 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
   );
 }, areTrackWaveformRowPropsEqual);
 
-export function WaveformView({
+function WaveformViewComponent({
   tracks,
   currentTime,
   duration,
@@ -1551,20 +1551,6 @@ export function WaveformView({
     return () => cancelAnimationFrame(raf);
   }, [isPlaying, followRecordingScroll, duration, contentWidth, viewportWidth, layoutPixelsPerSecond]);
 
-  useLayoutEffect(() => {
-    if (!followRecordingScroll || viewportWidth <= 0) {
-      return;
-    }
-    const time = getRecordingTimeRef.current?.() ?? currentTimeRef.current;
-    const x = recordingTimeToScrollX(
-      time,
-      contentWidthRef.current,
-      layoutPixelsPerSecond
-    );
-    scrollOffsetRef.current = x;
-    scrollRef.current?.scrollTo({ x, animated: false });
-  }, [followRecordingScroll, viewportWidth, layoutPixelsPerSecond, currentTime]);
-
   useEffect(() => {
     if (!followRecordingScroll) {
       return;
@@ -1735,6 +1721,102 @@ export function WaveformView({
     </WaveformThemeContext.Provider>
   );
 }
+
+function areOverlayConfigsEqual<T extends { layerId: string }>(
+  a: T | undefined,
+  b: T | undefined,
+  keys: (keyof T)[]
+): boolean {
+  if (a === b) {
+    return true;
+  }
+  if (!a || !b) {
+    return false;
+  }
+  for (const key of keys) {
+    if (a[key] !== b[key]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function areWaveformViewPropsEqual(prev: Props, next: Props): boolean {
+  if (prev.tracks !== next.tracks) {
+    if (
+      prev.tracks.length !== next.tracks.length ||
+      prev.tracks.some((track, index) => !areTrackDataEqual(track, next.tracks[index]!))
+    ) {
+      return false;
+    }
+  }
+
+  const playing = next.isPlaying && !next.recordingLayoutActive;
+  if (!playing && prev.currentTime !== next.currentTime) {
+    return false;
+  }
+
+  if (
+    prev.duration !== next.duration ||
+    prev.isRecording !== next.isRecording ||
+    prev.recordingLayoutActive !== next.recordingLayoutActive ||
+    prev.isPlaying !== next.isPlaying ||
+    prev.getPlaybackTime !== next.getPlaybackTime ||
+    prev.getRecordingTime !== next.getRecordingTime ||
+    prev.onSeek !== next.onSeek ||
+    prev.onTrackPress !== next.onTrackPress ||
+    prev.onTrackDeselect !== next.onTrackDeselect ||
+    prev.onTrackLongPress !== next.onTrackLongPress ||
+    prev.onWidthChange !== next.onWidthChange ||
+    prev.volumeVisualDb !== next.volumeVisualDb
+  ) {
+    return false;
+  }
+
+  if (
+    !areOverlayConfigsEqual(prev.trimOverlay, next.trimOverlay, [
+      'layerId',
+      'trimIn',
+      'trimOut',
+      'onChange',
+    ])
+  ) {
+    return false;
+  }
+
+  if (
+    !areOverlayConfigsEqual(prev.moveOverlay, next.moveOverlay, [
+      'layerId',
+      'startTime',
+      'trimIn',
+      'onChange',
+    ])
+  ) {
+    return false;
+  }
+
+  const prevLoop = prev.loopOverlay;
+  const nextLoop = next.loopOverlay;
+  if (prevLoop !== nextLoop) {
+    if (!prevLoop || !nextLoop) {
+      return false;
+    }
+    if (
+      prevLoop.loopStart !== nextLoop.loopStart ||
+      prevLoop.loopEnd !== nextLoop.loopEnd ||
+      prevLoop.loopEnabled !== nextLoop.loopEnabled ||
+      prevLoop.duration !== nextLoop.duration ||
+      prevLoop.onChange !== nextLoop.onChange
+    ) {
+      return false;
+    }
+  }
+
+  // While playing, ignore currentTime — RAF + getPlaybackTime own scroll.
+  return true;
+}
+
+export const WaveformView = memo(WaveformViewComponent, areWaveformViewPropsEqual);
 
 function createWaveformStyles(colors: VoiceMemosColorScheme) {
   return StyleSheet.create({

@@ -176,6 +176,8 @@ export class MemoAudioEngine {
   private sessionMode: SessionMode = null;
   private lastOutputRouteKey = '';
   private recordingPeaksBuffer: number[] = [];
+  private lastEmittedRecordingPeakCount = -1;
+  private lastEmittedRecordingPeaks: number[] = [];
   private activeLayerPlayback = new Map<string, ActiveLayerPlayback>();
   private mixGraph = new MemoMixGraph();
   private metronomeSettings: MetronomeSettings = DEFAULT_METRONOME_SETTINGS;
@@ -1034,7 +1036,21 @@ export class MemoAudioEngine {
     }
     const duration = this.recorder.getCurrentDuration();
     const trimmed = this.trimRawPeaksToDuration(this.recordingPeaksBuffer, duration);
-    const peaks = this.toAbsolutePeaks(trimmed);
+
+    let peaks = this.lastEmittedRecordingPeaks;
+    if (trimmed.length !== this.lastEmittedRecordingPeakCount) {
+      peaks = this.toAbsolutePeaks(trimmed);
+      this.lastEmittedRecordingPeaks = peaks;
+      this.lastEmittedRecordingPeakCount = trimmed.length;
+    }
+
+    if (
+      peaks === this.state.recordingPeaks &&
+      Math.abs(duration - this.state.recordingDuration) < 0.05
+    ) {
+      return;
+    }
+
     this.emit({ recordingDuration: duration, recordingPeaks: peaks });
   }
 
@@ -1296,6 +1312,8 @@ export class MemoAudioEngine {
     const callbackConfig = this.getRecordingCallbackConfig();
 
     this.recordingPeaksBuffer = [];
+    this.lastEmittedRecordingPeakCount = -1;
+    this.lastEmittedRecordingPeaks = [];
     this.recorder.onAudioReady(
       {
         sampleRate: callbackConfig.sampleRate,
@@ -1340,7 +1358,7 @@ export class MemoAudioEngine {
     });
     this.recordingTimer = setInterval(() => {
       this.emitRecordingProgress();
-    }, 50);
+    }, 100);
 
     if (monitorMix) {
       await this.ensureMonitorContextReady();

@@ -8,7 +8,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { useAudioEngineState } from '@/src/audio/AudioEngineContext';
+import { useAudioEngineSelector } from '@/src/audio/AudioEngineContext';
 import { MemoEditor } from '@/src/components/MemoEditor';
 import { RecordingsList, type RecordingsListProps } from '@/src/components/RecordingsList';
 import { useIsRegularWidth } from '@/src/hooks/useIsRegularWidth';
@@ -29,7 +29,7 @@ export function RecordingsSplitView(props: Props) {
   const colors = useVoiceMemosColors();
   const insets = useSafeAreaInsets();
   const styles = useStyles(colors);
-  const engineState = useAudioEngineState();
+  const isRecording = useAudioEngineSelector((state) => state.isRecording);
   const [selected, setSelected] = useState<SelectedMemo | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const sidebarWidth = useSharedValue(SIDEBAR_WIDTH);
@@ -49,17 +49,12 @@ export function RecordingsSplitView(props: Props) {
 
   const handleSelectMemo = useCallback(
     (memoId: string | null, options?: { autoRecord?: boolean }) => {
-      if (
-        engineState.isRecording &&
-        selected &&
-        memoId !== null &&
-        memoId !== selected.id
-      ) {
+      if (isRecording && selected && memoId !== null && memoId !== selected.id) {
         Alert.alert('Recording in progress', 'Stop or finish recording before opening another memo.');
         return;
       }
       if (!memoId) {
-        if (engineState.isRecording) {
+        if (isRecording) {
           Alert.alert('Recording in progress', 'Finish recording before closing the editor.');
           return;
         }
@@ -73,7 +68,7 @@ export function RecordingsSplitView(props: Props) {
       }
       setSelected({ id: memoId, autoRecord: options?.autoRecord ?? false });
     },
-    [engineState.isRecording, selected]
+    [isRecording, selected]
   );
 
   const handleDismiss = useCallback(() => {

@@ -17,7 +17,8 @@ export function accumulatePeaksFromSamples(
     return existingPeaks;
   }
 
-  const peaks = existingPeaks.slice();
+  // Mutate in place — the engine owns this buffer for the recording session.
+  const peaks = existingPeaks;
 
   for (let i = 0; i < channelData.length; i++) {
     const sampleTime = bufferStartSec + i / sampleRate;

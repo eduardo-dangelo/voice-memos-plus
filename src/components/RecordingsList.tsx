@@ -23,7 +23,7 @@ import {
 import Animated from 'react-native-reanimated';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { useAudioEngineState } from '@/src/audio/AudioEngineContext';
+import { useAudioEngineSelector } from '@/src/audio/AudioEngineContext';
 import { memoAudioEngine } from '@/src/audio/MemoAudioEngine';
 import { FloatingHeaderButton } from '@/src/components/FloatingHeaderButton';
 import { LIST_ITEM_TRANSITION } from '@/src/components/listTransitions';
@@ -75,7 +75,7 @@ export function RecordingsList({
   const colors = useVoiceMemosColors();
   const insets = useSafeAreaInsets();
   const styles = useStyles(colors);
-  const engineState = useAudioEngineState();
+  const isRecording = useAudioEngineSelector((state) => state.isRecording);
   const { memos, refresh, removeMemo, removeMemos } = useMemos(scope);
   const [query, setQuery] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -95,18 +95,18 @@ export function RecordingsList({
 
   // Once recording is active, the isRecording flag keeps the button disabled.
   useEffect(() => {
-    if (engineState.isRecording && isStartingRecord) {
+    if (isRecording && isStartingRecord) {
       clearStartingRecord();
     }
-  }, [clearStartingRecord, engineState.isRecording, isStartingRecord]);
+  }, [clearStartingRecord, isRecording, isStartingRecord]);
 
   // After the sheet closes (list refocuses), re-enable if nothing is recording.
   useFocusEffect(
     useCallback(() => {
-      if (!engineState.isRecording && !getSession()) {
+      if (!isRecording && !getSession()) {
         clearStartingRecord();
       }
-    }, [clearStartingRecord, engineState.isRecording])
+    }, [clearStartingRecord, isRecording])
   );
 
   const filteredMemos = useMemo(() => {
@@ -219,7 +219,7 @@ export function RecordingsList({
   };
 
   const handleRecord = async () => {
-    if (startingRecordRef.current || isStartingRecord || engineState.isRecording) {
+    if (startingRecordRef.current || isStartingRecord || isRecording) {
       return;
     }
 
@@ -456,7 +456,7 @@ export function RecordingsList({
             { bottom: 32 + (isSidebar ? 0 : insets.bottom) },
           ]}>
           <RecordButton
-            disabled={isStartingRecord || engineState.isRecording}
+            disabled={isStartingRecord || isRecording}
             onPress={() => void handleRecord()}
           />
         </View>

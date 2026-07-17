@@ -1,5 +1,5 @@
 import { SymbolView } from 'expo-symbols';
-import { useMemo, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 
@@ -7,7 +7,7 @@ import { LIST_ITEM_EXIT, LIST_ITEM_TRANSITION } from '@/src/components/listTrans
 
 import { showMoveToFolderActionSheet } from '@/src/actions/showMoveToFolderActionSheet';
 import { shareMemo } from '@/src/actions/shareMemo';
-import { useAudioEngine, useAudioEngineState } from '@/src/audio/AudioEngineContext';
+import { useAudioEngine, useAudioEngineSelector } from '@/src/audio/AudioEngineContext';
 import {
   deleteMemo,
   duplicateMemo,
@@ -43,7 +43,45 @@ type Props = {
   onUpdated: () => void;
 };
 
-export function RecordingRow({
+type RowPlaybackSlice = {
+  isActive: boolean;
+  currentTime: number;
+  isPlaying: boolean;
+  duration: number;
+};
+
+const INACTIVE_PLAYBACK: RowPlaybackSlice = {
+  isActive: false,
+  currentTime: 0,
+  isPlaying: false,
+  duration: 0,
+};
+
+function areRowPlaybackSlicesEqual(a: RowPlaybackSlice, b: RowPlaybackSlice): boolean {
+  return (
+    a.isActive === b.isActive &&
+    a.currentTime === b.currentTime &&
+    a.isPlaying === b.isPlaying &&
+    a.duration === b.duration
+  );
+}
+
+/** Hot playback subscription — only the active memo row re-renders on time ticks. */
+function useRowPlayback(memoId: string): RowPlaybackSlice {
+  return useAudioEngineSelector((state): RowPlaybackSlice => {
+    if (state.memoId !== memoId) {
+      return INACTIVE_PLAYBACK;
+    }
+    return {
+      isActive: true,
+      currentTime: state.currentTime,
+      isPlaying: state.isPlaying,
+      duration: state.duration,
+    };
+  }, areRowPlaybackSlicesEqual);
+}
+
+function RecordingRowComponent({
   memo,
   expanded,
   selected,
@@ -62,21 +100,13 @@ export function RecordingRow({
   const colors = useVoiceMemosColors();
   const styles = useStyles(colors);
   const engine = useAudioEngine();
-  const engineState = useAudioEngineState();
+  const playback = useRowPlayback(memo.id);
   const [isExporting, setIsExporting] = useState(false);
-  const isActive = engineState.memoId === memo.id;
+  const isActive = playback.isActive;
   const duration =
-    isActive && engineState.duration > 0
-      ? engineState.duration
-      : memo.duration;
+    isActive && playback.duration > 0 ? playback.duration : memo.duration;
   const playable = hasRecording(memo);
-
-  const displayTime = useMemo(() => {
-    if (isActive) {
-      return engineState.currentTime;
-    }
-    return 0;
-  }, [engineState.currentTime, isActive]);
+  const displayTime = isActive ? playback.currentTime : 0;
 
   const ensureLoaded = async () => {
     if (!playable) {
@@ -223,9 +253,9 @@ export function RecordingRow({
           <View style={styles.expanded}>
             <PlaybackControls
               compact
-              currentTime={isActive ? displayTime : 0}
+              currentTime={displayTime}
               duration={duration}
-              isPlaying={isActive && engineState.isPlaying}
+              isPlaying={isActive && playback.isPlaying}
               onPlayPause={() => void handlePlayPause()}
               onSkipBack={() => void handleSkip(-15)}
               onSkipForward={() => void handleSkip(15)}
@@ -257,6 +287,8 @@ export function RecordingRow({
     </>
   );
 }
+
+export const RecordingRow = memo(RecordingRowComponent);
 
 function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
   return useMemo(

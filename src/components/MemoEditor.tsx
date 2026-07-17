@@ -1,7 +1,7 @@
 import * as Haptics from 'expo-haptics';
 import { router, useNavigation } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import {
   ActionSheetIOS,
   ActivityIndicator,
@@ -12,12 +12,15 @@ import {
   Text,
   View,
   type LayoutChangeEvent,
+  type StyleProp,
+  type TextStyle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { DEFAULT_TRACK_COLOR, pickRandomTrackColor } from '@/constants/VoiceMemosColors';
 import { shareMemo } from '@/src/actions/shareMemo';
-import { useAudioEngine, useAudioEngineState } from '@/src/audio/AudioEngineContext';
+import { useAudioEngine, useAudioEngineSelector } from '@/src/audio/AudioEngineContext';
+import type { EngineState } from '@/src/audio/MemoAudioEngine';
 import {
   isHeadphonesConnected,
   needsMonitorMix,
@@ -87,6 +90,88 @@ import {
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 import { formatDurationWithTenths } from '@/src/utils/format';
 
+type MemoEditorEngineSlice = {
+  memoId: string | null;
+  isRecording: boolean;
+  isPlaying: boolean;
+  duration: number;
+  currentTime: number;
+  monitorMixActive: boolean;
+  monitorMixReady: boolean;
+  recordingDuration: number;
+  recordingPeaks: number[];
+};
+
+function selectMemoEditorEngine(state: EngineState): MemoEditorEngineSlice {
+  return {
+    memoId: state.memoId,
+    isRecording: state.isRecording,
+    isPlaying: state.isPlaying,
+    duration: state.duration,
+    currentTime: state.currentTime,
+    monitorMixActive: state.monitorMixActive,
+    monitorMixReady: state.monitorMixReady,
+    recordingDuration: state.recordingDuration,
+    recordingPeaks: state.recordingPeaks,
+  };
+}
+
+/** Skip currentTime ticks while playing; keep recording peaks/duration hot. */
+function areMemoEditorEngineSlicesEqual(
+  a: MemoEditorEngineSlice,
+  b: MemoEditorEngineSlice
+): boolean {
+  if (
+    a.memoId !== b.memoId ||
+    a.isRecording !== b.isRecording ||
+    a.isPlaying !== b.isPlaying ||
+    a.duration !== b.duration ||
+    a.monitorMixActive !== b.monitorMixActive ||
+    a.monitorMixReady !== b.monitorMixReady
+  ) {
+    return false;
+  }
+
+  if (a.isRecording || b.isRecording) {
+    return (
+      a.recordingDuration === b.recordingDuration && a.recordingPeaks === b.recordingPeaks
+    );
+  }
+
+  if (a.isPlaying && b.isPlaying) {
+    return true;
+  }
+
+  return a.currentTime === b.currentTime;
+}
+
+function MemoEditorTimeLabel({
+  memoId,
+  pendingRecordingLayout,
+  recordingStartTimeRef,
+  style,
+}: {
+  memoId: string | undefined;
+  pendingRecordingLayout: boolean;
+  recordingStartTimeRef: MutableRefObject<number>;
+  style: StyleProp<TextStyle>;
+}) {
+  const label = useAudioEngineSelector((state) => {
+    if (pendingRecordingLayout) {
+      if (state.isRecording) {
+        return formatDurationWithTenths(
+          recordingStartTimeRef.current + state.recordingDuration
+        );
+      }
+      return formatDurationWithTenths(recordingStartTimeRef.current);
+    }
+    const isActive = memoId != null && state.memoId === memoId;
+    return formatDurationWithTenths(isActive ? state.currentTime : 0);
+  });
+
+  return <Text style={style}>{label}</Text>;
+}
+
 function deactivateLoopForMemo(
   engine: ReturnType<typeof useAudioEngine>,
   memo: Memo,
@@ -154,7 +239,10 @@ export function MemoEditor({
   const record = autoRecord ? '1' : undefined;
   const navigation = useNavigation();
   const engine = useAudioEngine();
-  const engineState = useAudioEngineState();
+  const engineState = useAudioEngineSelector(
+    selectMemoEditorEngine,
+    areMemoEditorEngineSlicesEqual
+  );
   const headphonesConnected = useHeadphonesConnected();
   const autoRecordStarted = useRef(false);
   const beginRecordingInFlight = useRef(false);
@@ -1444,6 +1532,8 @@ export function MemoEditor({
     ],
   );
 
+  const headerBar = useMemo(() => renderHeaderBar(), [renderHeaderBar]);
+
   useLayoutEffect(() => {
     if (isPane) {
       return;
@@ -1466,6 +1556,20 @@ export function MemoEditor({
       },
     });
   }, [backTitle, colors, isPane, navigation, renderHeaderBar]);
+
+  const getPlaybackTime = useCallback(() => engine.getPlaybackTime(), [engine]);
+  const getRecordingTime = useCallback(
+    () => recordingStartTime.current + engine.getRecordingDuration(),
+    [engine]
+  );
+  const handleWaveformSeek = useCallback(
+    (time: number) => {
+      if (!engine.getState().isRecording) {
+        engine.seek(time);
+      }
+    },
+    [engine]
+  );
 
   const handleStopRecording = () => {
     void stopAndSaveActiveRecording();
@@ -1950,64 +2054,68 @@ export function MemoEditor({
     : [];
   const showEditorContent = Boolean(memo && !loading);
 
+  const trimOverlay = useMemo(() => {
+    if (activeEditor !== 'trim' || savingTrim || !activeLayer || !activeLayerEffects) {
+      return undefined;
+    }
+    return {
+      layerId: activeLayer.id,
+      trimIn: activeLayerEffects.trimIn,
+      trimOut: activeLayerEffects.trimOut,
+      onChange: handleTrimChange,
+    };
+  }, [activeEditor, activeLayer, activeLayerEffects, handleTrimChange, savingTrim]);
+
+  const moveOverlay = useMemo(() => {
+    if (activeEditor !== 'move' || !activeLayer || !activeLayerEffects) {
+      return undefined;
+    }
+    return {
+      layerId: activeLayer.id,
+      startTime: activeLayer.startTime,
+      trimIn: activeLayerEffects.trimIn,
+      onChange: handleLayerStartTimeChange,
+    };
+  }, [activeEditor, activeLayer, activeLayerEffects, handleLayerStartTimeChange]);
+
+  const loopOverlay = useMemo(() => {
+    if (!memo || waveformDuration <= 0) {
+      return undefined;
+    }
+    return {
+      loopStart: memo.loopStart ?? 0,
+      loopEnd: memo.loopEnd ?? 0,
+      loopEnabled: memo.loopEnabled ?? false,
+      duration: waveformDuration,
+      onChange: handleLoopChange,
+    };
+  }, [handleLoopChange, memo, waveformDuration]);
+
+  const volumeVisualDb =
+    activeEditor === 'volume' && activeLayerEffects
+      ? activeLayerEffects.volumeDb
+      : undefined;
+
   return (
     <SafeAreaView edges={['bottom']} style={styles.screen}>
-      {isPane ? <View style={styles.paneHeader}>{renderHeaderBar()}</View> : null}
+      {isPane ? <View style={styles.paneHeader}>{headerBar}</View> : null}
       <View onLayout={handleContentLayout} style={styles.content}>
         <View style={styles.tracksArea}>
           {showEditorContent ? (
             <WaveformView
               currentTime={waveformCurrentTime}
               duration={waveformDuration}
-              getPlaybackTime={() => engine.getPlaybackTime()}
-              getRecordingTime={() =>
-                recordingStartTime.current + engine.getRecordingDuration()
-              }
+              getPlaybackTime={getPlaybackTime}
+              getRecordingTime={getRecordingTime}
               isPlaying={engineState.isPlaying && !monitorMixPreparing}
               isRecording={isRecording}
               recordingLayoutActive={pendingRecordingLayout}
               tracks={waveformTracks}
-              trimOverlay={
-                activeEditor === 'trim' && !savingTrim && activeLayer && activeLayerEffects
-                  ? {
-                      layerId: activeLayer.id,
-                      trimIn: activeLayerEffects.trimIn,
-                      trimOut: activeLayerEffects.trimOut,
-                      onChange: handleTrimChange,
-                    }
-                  : undefined
-              }
-              moveOverlay={
-                activeEditor === 'move' && activeLayer && activeLayerEffects
-                  ? {
-                      layerId: activeLayer.id,
-                      startTime: activeLayer.startTime,
-                      trimIn: activeLayerEffects.trimIn,
-                      onChange: handleLayerStartTimeChange,
-                    }
-                  : undefined
-              }
-              volumeVisualDb={
-                activeEditor === 'volume' && activeLayerEffects
-                  ? activeLayerEffects.volumeDb
-                  : undefined
-              }
-              loopOverlay={
-                memo && waveformDuration > 0
-                  ? {
-                      loopStart: memo.loopStart ?? 0,
-                      loopEnd: memo.loopEnd ?? 0,
-                      loopEnabled: memo.loopEnabled ?? false,
-                      duration: waveformDuration,
-                      onChange: handleLoopChange,
-                    }
-                  : undefined
-              }
-              onSeek={(time) => {
-                if (!isRecording) {
-                  engine.seek(time);
-                }
-              }}
+              trimOverlay={trimOverlay}
+              moveOverlay={moveOverlay}
+              volumeVisualDb={volumeVisualDb}
+              loopOverlay={loopOverlay}
+              onSeek={handleWaveformSeek}
               onTrackPress={handleTrackPress}
               onTrackDeselect={handleTrackDeselect}
               onTrackLongPress={handleTrackLongPress}
@@ -2045,11 +2153,12 @@ export function MemoEditor({
                     onToggle={handleMetronomeToggle}
                   />
                 </View>
-                <Text style={styles.largeTime}>
-                  {formatDurationWithTenths(
-                    pendingRecordingLayout ? waveformCurrentTime : currentTime
-                  )}
-                </Text>
+                <MemoEditorTimeLabel
+                  memoId={memo?.id}
+                  pendingRecordingLayout={pendingRecordingLayout}
+                  recordingStartTimeRef={recordingStartTime}
+                  style={styles.largeTime}
+                />
                 <View style={styles.timeDisplaySide} />
               </View>
 

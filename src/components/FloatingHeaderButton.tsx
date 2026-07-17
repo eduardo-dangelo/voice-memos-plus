@@ -1,6 +1,6 @@
 import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
 import { SymbolView } from 'expo-symbols';
-import { useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View, type ColorValue } from 'react-native';
 
 import { useColorScheme } from '@/components/useColorScheme';
@@ -61,7 +61,7 @@ const ICON_SIZE = {
 } as const;
 
 /** Glass icon chrome without a Pressable — for MenuView / other native triggers. */
-export function FloatingHeaderIconFace({
+export const FloatingHeaderIconFace = memo(function FloatingHeaderIconFace({
   icon,
   accessibilityLabel,
   tintColor,
@@ -85,7 +85,7 @@ export function FloatingHeaderIconFace({
       )}
     </View>
   );
-}
+});
 
 export function FloatingHeaderButton({
   onPress,
