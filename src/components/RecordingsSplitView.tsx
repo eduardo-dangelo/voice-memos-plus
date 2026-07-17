@@ -44,7 +44,6 @@ export function RecordingsSplitView(props: Props) {
   const sidebarAnimatedStyle = useAnimatedStyle(() => ({
     width: sidebarWidth.value,
     opacity: sidebarWidth.value / SIDEBAR_WIDTH,
-    borderRightWidth: sidebarWidth.value > 1 ? StyleSheet.hairlineWidth : 0,
   }));
 
   const handleSelectMemo = useCallback(
@@ -67,6 +66,9 @@ export function RecordingsSplitView(props: Props) {
         return;
       }
       setSelected({ id: memoId, autoRecord: options?.autoRecord ?? false });
+      if (options?.autoRecord) {
+        setSidebarCollapsed(true);
+      }
     },
     [isRecording, selected]
   );
@@ -106,6 +108,7 @@ export function RecordingsSplitView(props: Props) {
           />
         </View>
       </Animated.View>
+      {!sidebarCollapsed ? <View style={styles.divider} /> : null}
       <View style={[styles.detail, { paddingTop: insets.top }]}>
         {selected ? (
           <MemoEditor
@@ -140,12 +143,16 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
         },
         sidebar: {
           overflow: 'hidden',
-          borderRightColor: colors.separator,
           backgroundColor: colors.background,
         },
         sidebarInner: {
           width: SIDEBAR_WIDTH,
           flex: 1,
+        },
+        divider: {
+          width: StyleSheet.hairlineWidth,
+          alignSelf: 'stretch',
+          backgroundColor: colors.separator,
         },
         detail: {
           flex: 1,
