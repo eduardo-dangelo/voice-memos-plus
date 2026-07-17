@@ -1,7 +1,7 @@
 import * as Haptics from 'expo-haptics';
 import { SymbolView } from 'expo-symbols';
 import { useMemo } from 'react';
-import { Alert, Pressable, StyleSheet } from 'react-native';
+import { Pressable, StyleSheet } from 'react-native';
 
 import type { MetronomeSettings } from '@/src/storage/types';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
@@ -10,30 +10,20 @@ const LONG_PRESS_DELAY_MS = 400;
 
 type Props = {
   settings: MetronomeSettings;
-  headphonesConnected: boolean;
   onToggle: () => void;
   onOpenSettings: () => void;
 };
 
 export function MetronomeButton({
   settings,
-  headphonesConnected,
   onToggle,
   onOpenSettings,
 }: Props) {
   const colors = useVoiceMemosColors();
   const styles = useStyles(colors);
   const enabled = settings.enabled;
-  const inactive = !headphonesConnected;
 
   const handlePress = () => {
-    if (!headphonesConnected) {
-      Alert.alert(
-        'Connect headphones',
-        'Plug in earbuds or headphones to use the metronome.'
-      );
-      return;
-    }
     void Haptics.selectionAsync();
     onToggle();
   };
@@ -48,15 +38,11 @@ export function MetronomeButton({
       accessibilityHint="Long press to configure tempo and metronome settings"
       accessibilityLabel={enabled ? 'Metronome on' : 'Metronome off'}
       accessibilityRole="button"
-      accessibilityState={{ disabled: inactive, selected: enabled }}
+      accessibilityState={{ selected: enabled }}
       delayLongPress={LONG_PRESS_DELAY_MS}
       onLongPress={handleLongPress}
       onPress={handlePress}
-      style={[
-        styles.button,
-        enabled && styles.buttonEnabled,
-        inactive && styles.buttonDisabled,
-      ]}>
+      style={[styles.button, enabled && styles.buttonEnabled]}>
       <SymbolView
         name={{ ios: enabled ? 'metronome.fill' : 'metronome' }}
         size={18}
@@ -82,9 +68,6 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
         },
         buttonEnabled: {
           borderColor: colors.accent,
-        },
-        buttonDisabled: {
-          opacity: 0.4,
         },
       }),
     [colors]

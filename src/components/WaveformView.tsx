@@ -225,18 +225,6 @@ function getTrackBarCount(
   return Math.max(1, Math.floor(Math.min(contentWidth, targetWidth) / BAR_STEP));
 }
 
-function getRecordingBarCount(
-  trackDuration: number,
-  contentWidth: number,
-  pixelsPerSecond: number
-): number {
-  if (trackDuration <= 0) {
-    return 0;
-  }
-  const targetWidth = trackDuration * pixelsPerSecond;
-  return Math.max(1, Math.ceil(Math.min(contentWidth, targetWidth) / BAR_STEP));
-}
-
 function timeToScrollX(time: number, contentWidth: number, pixelsPerSecond: number): number {
   return Math.max(0, Math.min(contentWidth, time * pixelsPerSecond));
 }
@@ -762,10 +750,7 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
     }
   };
 
-  const barCount =
-    track.id === '__recording__'
-      ? getRecordingBarCount(track.duration, contentWidth, pixelsPerSecond)
-      : getTrackBarCount(track.duration, contentWidth, pixelsPerSecond);
+  const barCount = getTrackBarCount(track.duration, contentWidth, pixelsPerSecond);
   const trackOffset = track.startTime * pixelsPerSecond;
   const trackWidth = barCount * BAR_STEP;
 
@@ -779,7 +764,7 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
 
   const liveRecording = track.liveRecording;
   const liveBarCount = liveRecording
-    ? getRecordingBarCount(liveRecording.duration, contentWidth, pixelsPerSecond)
+    ? getTrackBarCount(liveRecording.duration, contentWidth, pixelsPerSecond)
     : 0;
   const liveTrackOffset = liveRecording ? liveRecording.startTime * pixelsPerSecond : 0;
   const liveTrackWidth = liveBarCount * BAR_STEP;
@@ -1143,6 +1128,7 @@ function WaveformViewComponent({
   const lastDoubleTapAtRef = useRef(0);
   const frozenZoomRef = useRef<FrozenTimelineZoom | null>(null);
   const prevFollowRecordingScrollRef = useRef(false);
+  const wasFollowingRecordingScrollRef = useRef(false);
 
   const followRecordingScroll = recordingLayoutActive || isRecording;
   const followRecordingScrollRef = useRef(followRecordingScroll);
@@ -1521,9 +1507,17 @@ function WaveformViewComponent({
       gestureOverlay ||
       isUserScrollingRef.current
     ) {
+      if (followRecordingScroll) {
+        wasFollowingRecordingScrollRef.current = true;
+      }
       return;
     }
-    scrollRef.current?.scrollTo({ x: scrollX, animated: true });
+    const justExitedRecordingFollow = wasFollowingRecordingScrollRef.current;
+    wasFollowingRecordingScrollRef.current = false;
+    scrollRef.current?.scrollTo({
+      x: scrollX,
+      animated: !justExitedRecordingFollow,
+    });
   }, [scrollX, viewportWidth, followRecordingScroll, isPlaying, gestureOverlay, layoutPixelsPerSecond]);
 
   useEffect(() => {
