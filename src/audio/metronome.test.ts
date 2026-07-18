@@ -147,6 +147,11 @@ describe('getMetronomeGridLinesInRange', () => {
     assert.equal(lines[1]?.kind, 'beat');
   });
 
+  it('returns no lines when showGrid is off', () => {
+    const settings = makeSettings({ showGrid: false, bpm: 120, timeSignature: '4/4' });
+    assert.deepEqual(getMetronomeGridLinesInRange(settings, 0, 2, 48), []);
+  });
+
   it('thins to bar lines at low zoom', () => {
     const settings = makeSettings({ bpm: 120, timeSignature: '4/4' });
     const lines = getMetronomeGridLinesInRange(settings, 0, 8, 8);
@@ -167,6 +172,10 @@ describe('getMetronomeGridLinesInRange', () => {
 describe('normalizeMetronomeSettings', () => {
   it('defaults missing time signature to 4/4', () => {
     assert.equal(normalizeMetronomeSettings({}).timeSignature, '4/4');
+  });
+
+  it('defaults showGrid to true', () => {
+    assert.equal(normalizeMetronomeSettings({}).showGrid, true);
   });
 
   it('preserves a valid time signature preset', () => {

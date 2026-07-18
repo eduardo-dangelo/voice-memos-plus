@@ -73,6 +73,15 @@ export function MetronomeSettingsSheet({ visible, settings, onChange, onClose }:
           </View>
 
           <View style={styles.section}>
+            <Text style={styles.sectionLabel}>Show grid lines</Text>
+            <PresetPills
+              options={ACCENT_OPTIONS}
+              selectedId={settings.showGrid ? 'on' : 'off'}
+              onSelect={(value) => onChange({ showGrid: value === 'on' })}
+            />
+          </View>
+
+          <View style={styles.section}>
             <View style={styles.sliderRow}>
               <Text style={styles.sliderLabel}>Volume</Text>
               <View style={styles.sliderTrack}>

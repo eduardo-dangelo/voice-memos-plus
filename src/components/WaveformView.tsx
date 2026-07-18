@@ -1219,7 +1219,7 @@ function WaveformViewComponent({
     const vpWidth = viewportWidthRef.current;
     const gridDuration = Math.max(durationRef.current, layoutDurationRef.current);
 
-    if (!settings || vpWidth <= 0 || pps <= 0 || gridDuration <= 0) {
+    if (!settings || !settings.showGrid || vpWidth <= 0 || pps <= 0 || gridDuration <= 0) {
       metronomeGridBufferRef.current = null;
       setMetronomeGridLines((prev) => (prev.length === 0 ? prev : []));
       return;
@@ -1255,6 +1255,7 @@ function WaveformViewComponent({
     metronome?.bpm,
     metronome?.timeSignature,
     metronome?.accentEnabled,
+    metronome?.showGrid,
     layoutPixelsPerSecond,
     viewportWidth,
     duration,
@@ -1868,7 +1869,8 @@ function areWaveformViewPropsEqual(prev: Props, next: Props): boolean {
     if (
       prevMetronome.bpm !== nextMetronome.bpm ||
       prevMetronome.timeSignature !== nextMetronome.timeSignature ||
-      prevMetronome.accentEnabled !== nextMetronome.accentEnabled
+      prevMetronome.accentEnabled !== nextMetronome.accentEnabled ||
+      prevMetronome.showGrid !== nextMetronome.showGrid
     ) {
       return false;
     }

@@ -1978,6 +1978,12 @@ export function MemoEditor({
   }, [cancelEditDraft, pendingRecordingLayout]);
 
   useEffect(() => {
+    if (isRecording) {
+      setMetronomeSettingsVisible(false);
+    }
+  }, [isRecording]);
+
+  useEffect(() => {
     if (!isRecording || !engineState.monitorMixActive) {
       return;
     }
@@ -2389,6 +2395,7 @@ export function MemoEditor({
               <View style={styles.timeDisplay}>
                 <View style={styles.timeDisplaySide}>
                   <MetronomeButton
+                    disabled={isRecording}
                     settings={metronomeSettings}
                     onOpenSettings={() => setMetronomeSettingsVisible(true)}
                     onToggle={handleMetronomeToggle}
@@ -2401,7 +2408,11 @@ export function MemoEditor({
                   style={styles.largeTime}
                 />
                 <View style={styles.timeDisplaySideEnd}>
-                  <PrecountButton mode={precountMode} onCycle={handlePrecountCycle} />
+                  <PrecountButton
+                    disabled={isRecording}
+                    mode={precountMode}
+                    onCycle={handlePrecountCycle}
+                  />
                 </View>
               </View>
 

@@ -225,6 +225,8 @@ export type CreateMemoOptions = {
   title?: string;
   folderId?: string;
   titleSource?: Memo['titleSource'];
+  precount?: PrecountMode;
+  metronome?: Partial<MetronomeSettings>;
 };
 
 export async function createMemo(options?: CreateMemoOptions | string): Promise<Memo> {
@@ -239,7 +241,10 @@ export async function createMemo(options?: CreateMemoOptions | string): Promise<
     duration: 0,
     trimStart: 0,
     trimEnd: 0,
-    precount: DEFAULT_PRECOUNT_MODE,
+    precount:
+      normalized.precount !== undefined
+        ? normalizePrecountMode(normalized.precount)
+        : DEFAULT_PRECOUNT_MODE,
     layers: [createLayer(0)],
   };
   if (normalized.folderId) {
@@ -247,6 +252,9 @@ export async function createMemo(options?: CreateMemoOptions | string): Promise<
   }
   if (normalized.titleSource) {
     memo.titleSource = normalized.titleSource;
+  }
+  if (normalized.metronome) {
+    memo.metronome = normalizeMetronomeSettings(normalized.metronome);
   }
 
   const dir = getMemoDir(memo.id);

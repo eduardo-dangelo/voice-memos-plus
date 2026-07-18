@@ -27,10 +27,14 @@ import { useAudioEngineSelector } from '@/src/audio/AudioEngineContext';
 import { memoAudioEngine } from '@/src/audio/MemoAudioEngine';
 import { FloatingHeaderButton } from '@/src/components/FloatingHeaderButton';
 import { LIST_ITEM_TRANSITION } from '@/src/components/listTransitions';
-import { RecordButton } from '@/src/components/RecordButton';
+import {
+  RecordFabCluster,
+  type RecordFabSettings,
+} from '@/src/components/RecordFabCluster';
 import { RecordingRow } from '@/src/components/RecordingRow';
 import { useMemos } from '@/src/hooks/useMemos';
 import { getSession } from '@/src/recording/activeRecordingSession';
+import { setRecordingDefaults } from '@/src/settings/appSettings';
 import {
   createMemo,
   deleteMemo,
@@ -218,7 +222,7 @@ export function RecordingsList({
     });
   };
 
-  const handleRecord = async () => {
+  const handleStartRecording = async (settings: RecordFabSettings) => {
     if (startingRecordRef.current || isStartingRecord || isRecording) {
       return;
     }
@@ -226,7 +230,16 @@ export function RecordingsList({
     startingRecordRef.current = true;
     setIsStartingRecord(true);
     try {
-      const memo = await createMemo(folderId ? { folderId } : undefined);
+      await setRecordingDefaults({
+        precount: settings.precount,
+        metronomeEnabled: settings.metronome.enabled,
+        bpm: settings.metronome.bpm,
+      });
+      const memo = await createMemo({
+        ...(folderId ? { folderId } : {}),
+        precount: settings.precount,
+        metronome: settings.metronome,
+      });
       if (layoutMode === 'sidebar' && onSelectMemo) {
         await refresh({ silent: true });
         onSelectMemo(memo.id, { autoRecord: true });
@@ -449,17 +462,11 @@ export function RecordingsList({
       />
 
       {showRecordButton && !selectionMode ? (
-        <View
-          pointerEvents="box-none"
-          style={[
-            styles.fabContainer,
-            { bottom: 32 + (isSidebar ? 0 : insets.bottom) },
-          ]}>
-          <RecordButton
-            disabled={isStartingRecord || isRecording}
-            onPress={() => void handleRecord()}
-          />
-        </View>
+        <RecordFabCluster
+          bottomOffset={32 + (isSidebar ? 0 : insets.bottom)}
+          disabled={isStartingRecord || isRecording}
+          onRecord={(settings) => void handleStartRecording(settings)}
+        />
       ) : null}
     </>
   );
@@ -578,13 +585,6 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           fontSize: 15,
           color: colors.secondaryText,
           textAlign: 'center',
-        },
-        fabContainer: {
-          position: 'absolute',
-          left: 0,
-          right: 0,
-          bottom: 32,
-          alignItems: 'center',
         },
       }),
     [colors]

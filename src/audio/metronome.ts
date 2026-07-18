@@ -165,7 +165,8 @@ export function getMetronomeGridLineKind(
 
 /**
  * Zoom-aware step between grid lines (seconds). Ignores `enabled` so the visual
- * grid follows tempo config even when metronome clicks are off.
+ * grid follows tempo config even when metronome clicks are off; visibility is
+ * controlled by `showGrid` in getMetronomeGridLinesInRange.
  */
 export function getMetronomeGridStepSec(
   settings: MetronomeSettings,
@@ -195,7 +196,8 @@ function classifyGridLine(beatTime: number, settings: MetronomeSettings): Metron
 }
 
 /**
- * Visual grid lines for [startAt, endAt). Ignores `settings.enabled`.
+ * Visual grid lines for [startAt, endAt). Respects `showGrid`; ignores `enabled`
+ * so the grid can stay visible when metronome clicks are off.
  * Applies LOD thinning from zoom, then a hard max line count.
  */
 export function getMetronomeGridLinesInRange(
@@ -204,7 +206,7 @@ export function getMetronomeGridLinesInRange(
   endAt: number,
   pixelsPerSecond: number
 ): MetronomeGridLine[] {
-  if (endAt <= startAt + TIME_EPSILON || pixelsPerSecond <= 0) {
+  if (!settings.showGrid || endAt <= startAt + TIME_EPSILON || pixelsPerSecond <= 0) {
     return [];
   }
 

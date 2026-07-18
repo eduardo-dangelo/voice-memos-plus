@@ -44,6 +44,7 @@ export type MetronomeSettings = {
   bpm: number;
   timeSignature: TimeSignaturePreset;
   accentEnabled: boolean;
+  showGrid: boolean;
   volume: number;
 };
 
@@ -59,6 +60,7 @@ export const DEFAULT_METRONOME_SETTINGS: MetronomeSettings = {
   bpm: DEFAULT_BPM,
   timeSignature: '4/4',
   accentEnabled: true,
+  showGrid: true,
   volume: 70,
 };
 
@@ -80,6 +82,7 @@ export function normalizeMetronomeSettings(
     bpm: Math.max(40, Math.min(240, metronome?.bpm ?? defaults.bpm)),
     timeSignature,
     accentEnabled: metronome?.accentEnabled ?? defaults.accentEnabled,
+    showGrid: metronome?.showGrid ?? defaults.showGrid,
     volume: Math.max(0, Math.min(100, metronome?.volume ?? defaults.volume)),
   };
 }
