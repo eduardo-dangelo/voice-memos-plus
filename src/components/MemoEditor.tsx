@@ -1764,6 +1764,13 @@ export function MemoEditor({
     [engine]
   );
 
+  const handleScrubRate = useCallback(
+    (rate: number) => {
+      engine.setPlaybackRate(rate);
+    },
+    [engine]
+  );
+
   const handleStopRecording = () => {
     if (isStoppingRecordingRef.current || !engine.getState().isRecording) {
       return;
@@ -2383,6 +2390,7 @@ export function MemoEditor({
               loopOverlay={loopOverlay}
               metronome={metronomeSettings}
               onSeek={handleWaveformSeek}
+              onScrubRate={handleScrubRate}
               onTrackPress={handleTrackPress}
               onTrackDeselect={handleTrackDeselect}
               onTrackLongPress={handleTrackLongPress}

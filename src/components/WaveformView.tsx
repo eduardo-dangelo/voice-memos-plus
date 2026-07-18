@@ -7,13 +7,14 @@ import {
   NativeSyntheticEvent,
   PanResponder,
   Pressable,
+  ScrollView as RNScrollView,
   StyleSheet,
   Text,
   View,
   type GestureResponderEvent,
   type PanResponderGestureState,
 } from 'react-native';
-import { ScrollView } from 'react-native-gesture-handler';
+import { ScrollView as GHScrollView } from 'react-native-gesture-handler';
 
 import { colorWithAlpha, type VoiceMemosColorScheme } from '@/constants/VoiceMemosColors';
 import { clampTrimValues, dbToLinear } from '@/src/audio/layerEffects';
@@ -199,6 +200,8 @@ type Props = {
   getPlaybackTime?: () => number;
   getRecordingTime?: () => number;
   onSeek: (time: number) => void;
+  /** DJ scrub: map drag velocity to playback rate while playing (1 = normal). */
+  onScrubRate?: (rate: number) => void;
   onTrackPress: (trackId: string) => void;
   onTrackDeselect?: () => void;
   onTrackLongPress?: (trackId: string) => void;
@@ -209,6 +212,13 @@ type Props = {
   metronome?: MetronomeSettings;
   volumeVisualDb?: number;
 };
+
+/** Scrub rate follows finger speed; 1× ≈ scrolling at layoutPixelsPerSecond. */
+const SCRUB_RATE_MIN = -2;
+const SCRUB_RATE_MAX = 2;
+const SCRUB_RATE_EPSILON = 0.02;
+/** No move samples for this long while scrubbing → treat as hold (rate 0). */
+const SCRUB_HOLD_IDLE_MS = 48;
 
 function getMarkerInterval(pixelsPerSecond: number): number {
   if (pixelsPerSecond >= MIN_LABEL_SPACING) {
@@ -1082,6 +1092,7 @@ function WaveformViewComponent({
   getPlaybackTime,
   getRecordingTime,
   onSeek,
+  onScrubRate,
   onTrackPress,
   onTrackDeselect,
   onTrackLongPress,
@@ -1095,8 +1106,8 @@ function WaveformViewComponent({
   const colors = useVoiceMemosColors();
   const styles = useMemo(() => createWaveformStyles(colors), [colors]);
   const theme = useMemo(() => ({ colors, styles }), [colors, styles]);
-  const scrollRef = useRef<ScrollView>(null);
-  const verticalScrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<RNScrollView>(null);
+  const verticalScrollRef = useRef<GHScrollView>(null);
   const isUserScrollingRef = useRef(false);
   const scrollOffsetRef = useRef(0);
   const verticalScrollOffsetRef = useRef(0);
@@ -1115,6 +1126,13 @@ function WaveformViewComponent({
   const contentWidthRef = useRef(0);
   const onSeekRef = useRef(onSeek);
   onSeekRef.current = onSeek;
+  const onScrubRateRef = useRef(onScrubRate);
+  onScrubRateRef.current = onScrubRate;
+  const lastScrubRateRef = useRef(1);
+  const isScrubbingRef = useRef(false);
+  const scrubLastMoveXRef = useRef(0);
+  const scrubLastMoveTRef = useRef(0);
+  const scrubHoldIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onTrackPressRef = useRef(onTrackPress);
   onTrackPressRef.current = onTrackPress;
   const onTrackDeselectRef = useRef(onTrackDeselect);
@@ -1444,7 +1462,83 @@ function WaveformViewComponent({
   const zoomEnabledRef = useRef(zoomEnabled);
   zoomEnabledRef.current = zoomEnabled;
 
-  const twoFingerZoomResponder = useRef(
+  const scrubEnabled =
+    Boolean(onScrubRate) &&
+    isPlaying &&
+    !isRecording &&
+    !followRecordingScroll &&
+    !trimGestureActive &&
+    !zoomGestureActive;
+  const scrubEnabledRef = useRef(scrubEnabled);
+  scrubEnabledRef.current = scrubEnabled;
+
+  const clearScrubHoldIdleTimerRef = useRef(() => {});
+  clearScrubHoldIdleTimerRef.current = () => {
+    if (scrubHoldIdleTimerRef.current !== null) {
+      clearTimeout(scrubHoldIdleTimerRef.current);
+      scrubHoldIdleTimerRef.current = null;
+    }
+  };
+
+  const scheduleScrubHoldIdleRef = useRef(() => {});
+  scheduleScrubHoldIdleRef.current = () => {
+    clearScrubHoldIdleTimerRef.current();
+    scrubHoldIdleTimerRef.current = setTimeout(() => {
+      scrubHoldIdleTimerRef.current = null;
+      if (isScrubbingRef.current) {
+        emitScrubRateRef.current(0);
+      }
+    }, SCRUB_HOLD_IDLE_MS);
+  };
+
+  const emitScrubRateRef = useRef((_rate: number) => {});
+  emitScrubRateRef.current = (rate: number) => {
+    const clamped = Math.max(SCRUB_RATE_MIN, Math.min(SCRUB_RATE_MAX, rate));
+    // Near-zero velocity freezes playback (hold = pause).
+    const next = Math.abs(clamped) < SCRUB_RATE_EPSILON ? 0 : clamped;
+    if (Math.abs(next - lastScrubRateRef.current) < SCRUB_RATE_EPSILON) {
+      return;
+    }
+    lastScrubRateRef.current = next;
+    onScrubRateRef.current?.(next);
+  };
+
+  const beginScrubGestureRef = useRef((_moveX?: number) => {});
+  beginScrubGestureRef.current = (moveX = 0) => {
+    isScrubbingRef.current = true;
+    scrubLastMoveXRef.current = moveX;
+    scrubLastMoveTRef.current = Date.now();
+    clearScrubHoldIdleTimerRef.current();
+    // Touch = grab platter: pause immediately so reverse does not fight 1×.
+    lastScrubRateRef.current = 1;
+    onScrubRateRef.current?.(0);
+    lastScrubRateRef.current = 0;
+  };
+
+  const endScrubGestureRef = useRef(() => {});
+  endScrubGestureRef.current = () => {
+    if (!isScrubbingRef.current) {
+      return;
+    }
+    clearScrubHoldIdleTimerRef.current();
+    isScrubbingRef.current = false;
+    lastScrubRateRef.current = 1;
+    onScrubRateRef.current?.(1);
+  };
+
+  useEffect(() => {
+    if (!scrubEnabled && isScrubbingRef.current) {
+      endScrubGestureRef.current();
+    }
+  }, [scrubEnabled]);
+
+  const shouldClaimScrubTouchRef = useRef<
+    (touches: readonly { pageX: number; pageY: number }[]) => boolean
+  >(() => false);
+  shouldClaimScrubTouchRef.current = (touches) =>
+    scrubEnabledRef.current && touches.length === 1;
+
+  const timelineZoomResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: (event) =>
         shouldCaptureTwoFingerZoom(event.nativeEvent.touches, zoomEnabledRef.current),
@@ -1475,6 +1569,47 @@ function WaveformViewComponent({
       },
       onPanResponderRelease: () => endTwoFingerZoomRef.current(),
       onPanResponderTerminate: () => endTwoFingerZoomRef.current(),
+    })
+  ).current;
+
+  // Dedicated scrub responder on an overlay so RNGH ScrollView cannot steal the drag.
+  const scrubPanResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: (event) =>
+        shouldClaimScrubTouchRef.current(event.nativeEvent.touches),
+      onMoveShouldSetPanResponder: (event) =>
+        shouldClaimScrubTouchRef.current(event.nativeEvent.touches),
+      onStartShouldSetPanResponderCapture: (event) =>
+        shouldClaimScrubTouchRef.current(event.nativeEvent.touches),
+      onMoveShouldSetPanResponderCapture: (event) =>
+        shouldClaimScrubTouchRef.current(event.nativeEvent.touches),
+      onPanResponderTerminationRequest: () => false,
+      onPanResponderGrant: (_event, gesture) => {
+        beginScrubGestureRef.current(gesture.moveX);
+      },
+      onPanResponderMove: (_event, gesture) => {
+        if (!scrubEnabledRef.current) {
+          return;
+        }
+        if (!isScrubbingRef.current) {
+          beginScrubGestureRef.current(gesture.moveX);
+        }
+        const now = Date.now();
+        const dtSec = Math.max(1, now - scrubLastMoveTRef.current) / 1000;
+        const vx = (gesture.moveX - scrubLastMoveXRef.current) / dtSec;
+        scrubLastMoveXRef.current = gesture.moveX;
+        scrubLastMoveTRef.current = now;
+        const pps = layoutPixelsPerSecondRef.current;
+        if (pps <= 0) {
+          emitScrubRateRef.current(0);
+          return;
+        }
+        // Finger right → reverse; rate 1 ≈ dragging at pixelsPerSecond. Hold → idle → pause.
+        emitScrubRateRef.current(-vx / pps);
+        scheduleScrubHoldIdleRef.current();
+      },
+      onPanResponderRelease: () => endScrubGestureRef.current(),
+      onPanResponderTerminate: () => endScrubGestureRef.current(),
     })
   ).current;
 
@@ -1686,14 +1821,17 @@ function WaveformViewComponent({
     return () => cancelAnimationFrame(raf);
   }, [followRecordingScroll, contentWidth, viewportWidth, layoutPixelsPerSecond]);
 
+  // While playing, use RN ScrollView so gesture-handler cannot steal DJ scrub pans.
+  const HorizontalScrollView = scrubEnabled ? RNScrollView : GHScrollView;
+
   return (
     <WaveformThemeContext.Provider value={theme}>
     <View
       ref={containerRef}
-      {...twoFingerZoomResponder.panHandlers}
+      {...timelineZoomResponder.panHandlers}
       onLayout={handleLayout}
       style={styles.container}>
-      <ScrollView
+      <HorizontalScrollView
         ref={scrollRef}
         horizontal
         bounces={false}
@@ -1724,7 +1862,7 @@ function WaveformViewComponent({
               sidePadding={sidePadding}
             />
           ) : null}
-          <ScrollView
+          <GHScrollView
             ref={verticalScrollRef}
             bounces={false}
             nestedScrollEnabled
@@ -1780,7 +1918,7 @@ function WaveformViewComponent({
                 />
               ) : null}
             </View>
-          </ScrollView>
+          </GHScrollView>
           <View
             pointerEvents="none"
             style={[styles.markerBand, { width: bandWidth }]}>
@@ -1798,7 +1936,10 @@ function WaveformViewComponent({
             })}
           </View>
         </View>
-      </ScrollView>
+      </HorizontalScrollView>
+      {scrubEnabled ? (
+        <View {...scrubPanResponder.panHandlers} style={styles.scrubOverlay} />
+      ) : null}
       <View pointerEvents="none" style={[styles.fixedPlayhead, { height: playheadHeight }]}>
         <View style={styles.playheadCapTop} />
         <View style={styles.playheadLine} />
@@ -1851,6 +1992,7 @@ function areWaveformViewPropsEqual(prev: Props, next: Props): boolean {
     prev.getPlaybackTime !== next.getPlaybackTime ||
     prev.getRecordingTime !== next.getRecordingTime ||
     prev.onSeek !== next.onSeek ||
+    prev.onScrubRate !== next.onScrubRate ||
     prev.onTrackPress !== next.onTrackPress ||
     prev.onTrackDeselect !== next.onTrackDeselect ||
     prev.onTrackLongPress !== next.onTrackLongPress ||
@@ -2032,6 +2174,10 @@ function createWaveformStyles(colors: VoiceMemosColorScheme) {
     justifyContent: 'space-between',
     overflow: 'visible',
     zIndex: 10,
+  },
+  scrubOverlay: {
+    ...StyleSheet.absoluteFill,
+    zIndex: 20,
   },
   playheadCapTop: {
     width: PLAYHEAD_CAP_SIZE,
