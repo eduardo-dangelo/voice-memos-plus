@@ -310,7 +310,7 @@ export async function spliceRecording(
   trimEnd: number,
   replacementPath: string,
   outputPath: string,
-  options?: { leadingPadSeconds?: number }
+  options?: { leadingPadSeconds?: number; replacementSkipSeconds?: number }
 ): Promise<number> {
   deleteLegacySpliceSidecars(originalPath);
 
@@ -331,6 +331,16 @@ export async function spliceRecording(
     replacement.sampleRate,
     targetSampleRate
   );
+  const replacementSkipSeconds = options?.replacementSkipSeconds ?? 0;
+  if (replacementSkipSeconds > 0.001) {
+    const skipSamples = Math.min(
+      replacementData.length,
+      Math.round(replacementSkipSeconds * targetSampleRate)
+    );
+    if (skipSamples > 0 && skipSamples < replacementData.length) {
+      replacementData = replacementData.subarray(skipSamples);
+    }
+  }
   const leadingPadSeconds = options?.leadingPadSeconds ?? 0;
   if (leadingPadSeconds > 0.001) {
     const padSamples = Math.round(leadingPadSeconds * targetSampleRate);

@@ -185,9 +185,12 @@ export class MemoAudioEngine {
   private mixGraph = new MemoMixGraph();
   private metronomeSettings: MetronomeSettings = DEFAULT_METRONOME_SETTINGS;
   private metronomeGain: GainNode | null = null;
+  private metronomeGainContext: AudioContext | null = null;
   private metronomeSources: AudioBufferSourceNode[] = [];
   private metronomeOnlyActive = false;
   private metronomeScheduledUntil = 0;
+  /** False while Phase B warmup runs so precount clicks cannot rebuild a stale graph. */
+  private allowPrecountClicks = true;
   private deferredPlaybackSetup = false;
   private pendingEngineReload: { memo: Memo; seekTime: number } | null = null;
   private deferredSetupInFlight: Promise<void> | null = null;
@@ -196,7 +199,10 @@ export class MemoAudioEngine {
   private recordingStartInFlight: Promise<void> | null = null;
   private recordingPrepareInFlight: Promise<void> | null = null;
   private recordingPrepared = false;
+  private recordingWarmupFinalized = false;
   private preparedMonitorMix = false;
+  /** Resampled/ready buffers for monitor-mix atomic start (path → buffer). */
+  private recordingPlaybackBuffers = new Map<string, AudioBuffer>();
 
   constructor() {
     AudioManager.addSystemEventListener('routeChange', () => {
@@ -462,18 +468,27 @@ export class MemoAudioEngine {
   private async resetPlaybackGraph(options?: { preserveLayerBuffers?: boolean }): Promise<void> {
     this.stopPlayback();
     this.clearMonitorPlaybackState();
-    if (this.context) {
-      const context = this.context;
-      this.context = null;
-      await context.close();
-    }
-    this.disposeMixGraph();
+    await this.closeContextAndDisposeGraph();
     if (options?.preserveLayerBuffers) {
       this.pruneLayerBuffers();
     } else {
       this.invalidateLayerBuffers();
     }
     clearReverbIrCache();
+  }
+
+  /** Close AudioContext and drop mix/metronome nodes so they cannot outlive it. */
+  private async closeContextAndDisposeGraph(): Promise<void> {
+    if (this.context) {
+      const context = this.context;
+      this.context = null;
+      try {
+        await context.close();
+      } catch {
+        // Context may already be closed.
+      }
+    }
+    this.disposeMixGraph();
   }
 
   private clearMonitorPlaybackState(): void {
@@ -526,6 +541,196 @@ export class MemoAudioEngine {
     await this.play();
   }
 
+  private async ensureRecordingContext(options?: {
+    /** Session already configured via prepareRecordingRoute — skip another cycle. */
+    sessionReady?: boolean;
+  }): Promise<AudioContext> {
+    if (!options?.sessionReady) {
+      await this.configureForRecording();
+    }
+    const targetRate = Math.round(
+      this.activeRecordingSampleRate ?? AudioManager.getDevicePreferredSampleRate()
+    );
+
+    if (this.context && Math.round(this.context.sampleRate) !== targetRate) {
+      await this.closeContextAndDisposeGraph();
+    }
+
+    if (!this.context) {
+      this.context = await this.createAudioContextAtRate(targetRate);
+    }
+
+    if (this.context.state === 'suspended') {
+      await this.context.resume();
+    }
+    return this.context;
+  }
+
+  /**
+   * Schedule metronome for recording using an already-warmed recording context.
+   * Must run synchronously before recorder.start().
+   */
+  private armMetronomeForRecording(startTime: number, startWhen: number): void {
+    if (!this.metronomeSettings.enabled || !this.context) {
+      return;
+    }
+
+    this.stopMetronomeSources();
+    this.metronomeOnlyActive = true;
+    this.metronomeScheduledUntil = startTime;
+    this.playbackStartAt = startTime;
+    this.playbackEndAt = startTime;
+    this.playbackContextStartWhen = startWhen;
+    this.extendMetronomeOnlySchedule(startTime);
+  }
+
+  /**
+   * Schedule monitor-mix playback + metronome at a fixed audio time.
+   * Uses buffers warmed in finalizeRecordingWarmup — no awaits.
+   */
+  private startMonitorMixAt(startAt: number, startWhen: number): void {
+    const context = this.context;
+    if (!context) {
+      return;
+    }
+
+    const timelineDuration = this.state.duration;
+    const bounds = this.getPlaybackBounds(timelineDuration);
+    const endAt = bounds.end;
+    let playStart = Math.max(bounds.start, startAt);
+    if (playStart >= endAt - PLAYBACK_END_TOLERANCE) {
+      playStart = bounds.start;
+    }
+
+    const playDuration = endAt - playStart;
+    if (playDuration <= PLAYBACK_END_TOLERANCE) {
+      if (this.metronomeSettings.enabled) {
+        this.armMetronomeForRecording(startAt, startWhen);
+      }
+      return;
+    }
+
+    this.stopMetronomeSources();
+    this.stopActiveSources();
+    this.clearMetronomeOnlyState();
+
+    this.playbackStartAt = playStart;
+    this.playbackEndAt = endAt;
+    this.playbackContextStartWhen = startWhen;
+
+    const planSpecs = this.buildPlaybackPlans(playStart, endAt);
+    let scheduledSources = 0;
+
+    for (const plan of planSpecs) {
+      const buffer = this.recordingPlaybackBuffers.get(plan.layer.path);
+      if (!buffer) {
+        continue;
+      }
+
+      const trimOut = Math.min(plan.playbackEffects.trimOut, buffer.duration);
+      const trimIn = Math.min(
+        plan.playbackEffects.trimIn,
+        Math.max(0, trimOut - PLAYBACK_END_TOLERANCE)
+      );
+      const playbackEffects: LayerEffects = { ...plan.playbackEffects, trimIn, trimOut };
+      const activeStart = plan.layer.startTime + trimIn;
+      const relativeStart = Math.max(0, playStart - activeStart);
+      const bufferOffset = trimIn + relativeStart;
+      const maxBufferOffset = trimOut - PLAYBACK_END_TOLERANCE;
+
+      if (bufferOffset >= maxBufferOffset) {
+        continue;
+      }
+
+      const layerPlayLength = Math.min(plan.layerPlayLength, trimOut - bufferOffset);
+      if (layerPlayLength <= PLAYBACK_END_TOLERANCE) {
+        continue;
+      }
+
+      const channel = this.mixGraph.getChannel(plan.layer.id);
+      if (!channel) {
+        continue;
+      }
+
+      const layerStartWhen = startWhen + plan.delay;
+      const stopWhen = layerStartWhen + layerPlayLength;
+      const hasDelay = isDelayPathActive(playbackEffects);
+      const hasReverb = isReverbPathActive(playbackEffects);
+
+      const drySources = [
+        this.schedulePathSource(
+          context,
+          channel.dry,
+          buffer,
+          layerStartWhen,
+          stopWhen,
+          bufferOffset
+        ),
+      ];
+      scheduledSources += 1;
+
+      const delaySources: AudioBufferSourceNode[] = [];
+      if (hasDelay && channel.delay) {
+        delaySources.push(
+          this.schedulePathSource(
+            context,
+            channel.delay,
+            buffer,
+            layerStartWhen,
+            stopWhen,
+            bufferOffset
+          )
+        );
+        scheduledSources += 1;
+      }
+
+      const reverbSources: AudioBufferSourceNode[] = [];
+      if (hasReverb && channel.reverb) {
+        reverbSources.push(
+          this.schedulePathSource(
+            context,
+            channel.reverb,
+            buffer,
+            layerStartWhen,
+            stopWhen,
+            bufferOffset
+          )
+        );
+        scheduledSources += 1;
+      }
+
+      this.activeLayerPlayback.set(plan.layer.id, {
+        layerId: plan.layer.id,
+        hasDelay,
+        hasReverb,
+        drySources,
+        delaySources,
+        reverbSources,
+        buffer,
+        bufferOffset,
+        scheduleDelay: plan.delay,
+        layerPlayLength,
+        playbackEffects,
+      });
+    }
+
+    if (scheduledSources === 0) {
+      this.playbackContextStartWhen = 0;
+      if (this.metronomeSettings.enabled) {
+        this.armMetronomeForRecording(startAt, startWhen);
+      }
+      return;
+    }
+
+    // Chunked schedule — never create the full memo's worth of click nodes at once
+    // (same freeze as metronome-only recording on long takes).
+    if (this.metronomeSettings.enabled) {
+      this.metronomeOnlyActive = true;
+      this.metronomeScheduledUntil = playStart;
+      this.extendMetronomeOnlySchedule(playStart);
+    }
+  }
+
   /**
    * Schedule metronome clicks while recording without monitor-mix playback
    * (first track / single-layer replace). Uses short sliding windows so we
@@ -536,18 +741,11 @@ export class MemoAudioEngine {
       return;
     }
 
-    const context = await this.ensureContext();
+    const context = await this.ensureRecordingContext();
     this.syncMixGraph(context);
 
     const when = context.currentTime + PLAYBACK_SCHEDULE_LEAD;
-    this.stopMetronomeSources();
-    this.metronomeOnlyActive = true;
-    this.metronomeScheduledUntil = startTime;
-    this.playbackStartAt = startTime;
-    this.playbackEndAt = startTime;
-    this.playbackContextStartWhen = when;
-
-    this.extendMetronomeOnlySchedule(startTime);
+    this.armMetronomeForRecording(startTime, when);
   }
 
   private extendMetronomeOnlySchedule(timelineNow: number): void {
@@ -582,7 +780,10 @@ export class MemoAudioEngine {
     );
     this.metronomeSources.push(...sources);
     this.metronomeScheduledUntil = scheduleTo;
-    this.playbackEndAt = scheduleTo;
+    // Keep monitor-mix end intact — only metronome-only mode extends playbackEndAt.
+    if (this.activeLayerPlayback.size === 0) {
+      this.playbackEndAt = scheduleTo;
+    }
   }
 
   private clearMetronomeOnlyState(): void {
@@ -609,9 +810,7 @@ export class MemoAudioEngine {
       this.context &&
       Math.round(this.context.sampleRate) !== targetRate
     ) {
-      const stale = this.context;
-      this.context = null;
-      await stale.close();
+      await this.closeContextAndDisposeGraph();
     }
 
     if (!this.context) {
@@ -695,6 +894,12 @@ export class MemoAudioEngine {
       }
 
       if (nextTime >= this.playbackEndAt - PLAYBACK_END_TOLERANCE) {
+        if (this.state.isRecording) {
+          // Monitor range ended while still recording — do not tear down the
+          // live recording graph; chunked metronome keeps extending via progress.
+          this.clearPlaybackTimer();
+          return;
+        }
         this.finishPlaybackNaturally(this.playbackEndAt, sessionId);
         return;
       }
@@ -748,11 +953,22 @@ export class MemoAudioEngine {
   }
 
   private ensureMetronomeGain(context: AudioContext): GainNode {
+    if (this.metronomeGain && this.metronomeGainContext !== context) {
+      try {
+        this.metronomeGain.disconnect();
+      } catch {
+        // Already disconnected.
+      }
+      this.metronomeGain = null;
+      this.metronomeGainContext = null;
+    }
+
     if (!this.metronomeGain) {
       const master = this.mixGraph.getMasterGain(context);
       this.metronomeGain = context.createGain();
       this.metronomeGain.gain.value = this.metronomeSettings.volume / 100;
       this.metronomeGain.connect(master);
+      this.metronomeGainContext = context;
     }
     return this.metronomeGain;
   }
@@ -806,6 +1022,7 @@ export class MemoAudioEngine {
         // Already disconnected.
       }
       this.metronomeGain = null;
+      this.metronomeGainContext = null;
     }
     this.mixGraph.dispose();
     this.mixGraph = new MemoMixGraph();
@@ -1224,14 +1441,26 @@ export class MemoAudioEngine {
 
   /** Warm AudioContext + metronome gain so the first precount click is not delayed. */
   async primeMetronomeOutput(): Promise<void> {
-    const context = await this.ensureContext();
+    if (!this.allowPrecountClicks) {
+      return;
+    }
+    const context = await this.getContextForPrecountClick();
+    if (!this.allowPrecountClicks || !context) {
+      return;
+    }
     const gain = this.ensureMetronomeGain(context);
     gain.gain.value = this.metronomeSettings.volume / 100;
   }
 
   /** One-shot click for precount (independent of metronome enabled). */
   async playMetronomeClick(options: { accent?: boolean } = {}): Promise<void> {
-    const context = await this.ensureContext();
+    if (!this.allowPrecountClicks) {
+      return;
+    }
+    const context = await this.getContextForPrecountClick();
+    if (!this.allowPrecountClicks || !context || this.context !== context) {
+      return;
+    }
     const gain = this.ensureMetronomeGain(context);
     gain.gain.value = this.metronomeSettings.volume / 100;
     const source = scheduleOneMetronomeClick(context, gain, {
@@ -1239,6 +1468,20 @@ export class MemoAudioEngine {
       volume: this.metronomeSettings.volume,
     });
     this.metronomeSources.push(source);
+  }
+
+  /**
+   * Prefer the recording context after finalizeRecordingWarmup so precount
+   * clicks do not flip the session back to playback.
+   */
+  private async getContextForPrecountClick(): Promise<AudioContext | null> {
+    if (this.recordingWarmupFinalized && this.context) {
+      if (this.context.state === 'suspended') {
+        await this.context.resume();
+      }
+      return this.context;
+    }
+    return this.ensureContext();
   }
 
   updateLayerEffects(layerId: string, partial: LayerEffectsChange): void {
@@ -1357,7 +1600,7 @@ export class MemoAudioEngine {
 
   /**
    * Warm permission, recorder allocation, and monitor-mix buffers without
-   * tearing down the current playback/precount AudioContext.
+   * tearing down the current playback/precount AudioContext (Phase A).
    */
   async prepareRecordingStart(options?: { monitorMix?: boolean }): Promise<void> {
     if (this.state.isRecording || this.recordingPrepared) {
@@ -1466,14 +1709,18 @@ export class MemoAudioEngine {
   }
 
   /**
-   * Activate recording route, start the prepared recorder, and begin monitor mix.
-   * Call after precount so the gap after the last beat stays minimal.
+   * Route + recording AudioContext before precount / commit.
+   * Leaves context alive for precount clicks and atomic commit.
    */
-  async commitRecordingStart(options?: {
+  async finalizeRecordingWarmup(options?: {
     monitorMix?: boolean;
-    monitorStartTime?: number;
   }): Promise<void> {
     if (this.state.isRecording) {
+      return;
+    }
+
+    // Fast path first — never await prepare in-flight if already warm (avoids hang).
+    if (this.recordingWarmupFinalized && this.context && this.recorder) {
       return;
     }
 
@@ -1483,6 +1730,57 @@ export class MemoAudioEngine {
 
     if (!this.recordingPrepared || !this.recorder) {
       await this.prepareRecordingStart({ monitorMix: options?.monitorMix });
+    }
+
+    if (this.recordingWarmupFinalized && this.context && this.recorder) {
+      return;
+    }
+
+    const monitorMix = options?.monitorMix ?? this.preparedMonitorMix;
+
+    try {
+      await this.resetPlaybackGraph({
+        preserveLayerBuffers: this.loadedLayers.length > 0,
+      });
+
+      if (!this.recorder) {
+        this.recordingPrepared = false;
+        throw new Error('Recording was not prepared');
+      }
+
+      await this.prepareRecordingRoute();
+
+      const context = await this.ensureRecordingContext({ sessionReady: true });
+      this.syncMixGraph(context);
+
+      this.recordingPlaybackBuffers.clear();
+      if (monitorMix && this.loadedLayers.length > 0) {
+        await Promise.all(
+          this.loadedLayers.map(async (layer) => {
+            const buffer = await this.getLayerBuffer(context, layer);
+            this.recordingPlaybackBuffers.set(layer.path, buffer);
+          })
+        );
+      }
+
+      this.recordingWarmupFinalized = true;
+    } catch (error) {
+      this.allowPrecountClicks = true;
+      throw error;
+    }
+  }
+
+  /**
+   * Finalize warmup if needed, optionally wait for a precount downbeat, then
+   * start metronome/monitor and recorder together (no heavy work between them).
+   */
+  async commitRecordingStart(options?: {
+    monitorMix?: boolean;
+    monitorStartTime?: number;
+    nextBeatDeadlineMs?: number;
+  }): Promise<void> {
+    if (this.state.isRecording) {
+      return;
     }
 
     if (this.recordingStartInFlight) {
@@ -1503,6 +1801,7 @@ export class MemoAudioEngine {
   private async performCommitRecordingStart(options?: {
     monitorMix?: boolean;
     monitorStartTime?: number;
+    nextBeatDeadlineMs?: number;
   }): Promise<void> {
     if (this.state.isRecording) {
       return;
@@ -1511,16 +1810,40 @@ export class MemoAudioEngine {
     const monitorMix = options?.monitorMix ?? this.preparedMonitorMix;
     const monitorStartTime = options?.monitorStartTime ?? 0;
 
-    await this.resetPlaybackGraph({
-      preserveLayerBuffers: this.loadedLayers.length > 0,
-    });
+    await this.finalizeRecordingWarmup({ monitorMix });
 
-    if (!this.recorder) {
-      this.recordingPrepared = false;
-      throw new Error('Recording was not prepared');
+    const deadlineMs = options?.nextBeatDeadlineMs;
+    if (deadlineMs != null) {
+      const delayMs = deadlineMs - Date.now();
+      if (delayMs > 0) {
+        await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+      } else if (__DEV__ && delayMs < -50) {
+        console.log(
+          `[audio] recording start missed downbeat by ${Math.round(-delayMs)}ms; starting now`
+        );
+      }
     }
 
-    await this.prepareRecordingRoute();
+    if (!this.recorder || !this.context) {
+      this.recordingPrepared = false;
+      this.recordingWarmupFinalized = false;
+      throw new Error('Recording warmup incomplete');
+    }
+
+    // End precount click gate before atomic arm + capture.
+    // Do not stopMetronomeSources here — arm/monitor mix stops when replacing;
+    // stopping immediately would mute the just-played "1" click (speaker I/O lag).
+    this.allowPrecountClicks = false;
+
+    const context = this.context;
+    const startWhen = context.currentTime + PLAYBACK_SCHEDULE_LEAD;
+
+    // Atomic: schedule audible output, then start capture — no awaits in between.
+    if (monitorMix) {
+      this.startMonitorMixAt(monitorStartTime, startWhen);
+    } else if (this.metronomeSettings.enabled) {
+      this.armMetronomeForRecording(monitorStartTime, startWhen);
+    }
 
     const startResult = this.recorder.start();
 
@@ -1528,10 +1851,13 @@ export class MemoAudioEngine {
       this.recorder.clearOnAudioReady();
       this.recorder = null;
       this.recordingPrepared = false;
+      this.recordingWarmupFinalized = false;
+      this.invalidateAndStopSources();
       throw new Error(startResult.message);
     }
 
     this.recordingPrepared = false;
+    this.recordingWarmupFinalized = false;
     this.refreshActiveRecordingSampleRate();
 
     this.emit({
@@ -1539,19 +1865,17 @@ export class MemoAudioEngine {
       recordingDuration: 0,
       recordingPeaks: [],
       monitorMixActive: monitorMix,
-      monitorMixReady: !monitorMix,
+      monitorMixReady: true,
       isPlaying: false,
-      currentTime: monitorMix ? monitorStartTime : this.state.currentTime,
+      currentTime: monitorStartTime,
     });
     this.recordingTimer = setInterval(() => {
       this.emitRecordingProgress();
     }, 100);
 
-    if (monitorMix) {
-      await this.ensureMonitorContextReady();
-      await this.beginMonitorPlayback(monitorStartTime);
-    } else if (this.metronomeSettings.enabled) {
-      await this.beginMetronomeOnlyDuringRecording(monitorStartTime);
+    if (monitorMix && this.playbackContextStartWhen > 0) {
+      const sessionId = this.activePlaybackSessionId;
+      this.startPlaybackTimer(sessionId, context);
     }
 
     const session = getSession();
@@ -1585,8 +1909,12 @@ export class MemoAudioEngine {
 
     this.recordingPeaksBuffer = [];
     this.recordingPrepared = false;
+    this.recordingWarmupFinalized = false;
     this.preparedMonitorMix = false;
+    this.recordingPlaybackBuffers.clear();
+    this.allowPrecountClicks = true;
     this.clearRecordingSampleRateState();
+    this.invalidateAndStopSources();
   }
 
   async cancelRecording(): Promise<void> {
@@ -1599,7 +1927,10 @@ export class MemoAudioEngine {
       }
       this.recordingPeaksBuffer = [];
       this.recordingPrepared = false;
+      this.recordingWarmupFinalized = false;
       this.preparedMonitorMix = false;
+      this.recordingPlaybackBuffers.clear();
+      this.allowPrecountClicks = true;
       this.clearRecordingSampleRateState();
       await this.resetPlaybackGraph();
       await this.configureForPlayback();
@@ -1639,9 +1970,11 @@ export class MemoAudioEngine {
 
       const wasMonitorMix = this.state.monitorMixActive;
       this.stopMetronomeSources();
+      this.stopActiveSources();
       this.clearMetronomeOnlyState();
       this.playbackContextStartWhen = 0;
       this.clearRecordingSampleRateState();
+      this.allowPrecountClicks = true;
       this.emit({
         isRecording: false,
         recordingDuration: 0,

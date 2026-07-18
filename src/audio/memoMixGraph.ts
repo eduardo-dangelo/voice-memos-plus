@@ -74,12 +74,22 @@ function applyDelayBusParams(bus: DelayBus, effects: LayerEffects, context: Audi
 }
 
 export class MemoMixGraph {
+  private boundContext: AudioContext | null = null;
   private masterGain: GainNode | null = null;
   private layerChannels = new Map<string, LayerChannel>();
   private delayBuses = new Map<string, DelayBus>();
   private reverbBuses = new Map<string, ReverbBus>();
 
+  /** Drop graph nodes if they belong to a different AudioContext. */
+  private bindContext(context: AudioContext): void {
+    if (this.boundContext && this.boundContext !== context) {
+      this.dispose();
+    }
+    this.boundContext = context;
+  }
+
   getMasterGain(context: AudioContext): GainNode {
+    this.bindContext(context);
     if (!this.masterGain) {
       this.masterGain = context.createGain();
       this.masterGain.gain.value = 1;
@@ -115,6 +125,7 @@ export class MemoMixGraph {
 
   /** Ensure channels exist and effects are applied for the given layers. */
   syncLayers(context: AudioContext, layers: { id: string; effects: LayerEffects }[]): void {
+    this.bindContext(context);
     this.getMasterGain(context);
     const nextIds = new Set(layers.map((layer) => layer.id));
 
@@ -573,5 +584,6 @@ export class MemoMixGraph {
       }
       this.masterGain = null;
     }
+    this.boundContext = null;
   }
 }

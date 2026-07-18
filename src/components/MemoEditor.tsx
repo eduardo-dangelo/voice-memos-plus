@@ -806,7 +806,10 @@ export function MemoEditor({
   }, []);
 
   const runPrecount = useCallback(
-    async (mode: Exclude<PrecountMode, 'off'>, bpm: number): Promise<boolean> => {
+    async (
+      mode: Exclude<PrecountMode, 'off'>,
+      bpm: number
+    ): Promise<{ completed: false } | { completed: true; nextBeatDeadlineMs: number }> => {
       precountCancelledRef.current = false;
       setPrecountNumber(null);
       setPrecountVisible(true);
@@ -826,6 +829,7 @@ export function MemoEditor({
       };
 
       try {
+        // Caller must finalizeRecordingWarmup first so clicks use the recording context.
         if (mode === 'sound') {
           try {
             await engine.primeMetronomeOutput();
@@ -834,16 +838,18 @@ export function MemoEditor({
           }
         }
 
-        // Let the modal mount before the first numeral so mount cost is outside beat 1.
+        // Let the modal mount before the first numeral so mount cost is outside beat 4.
         await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
         if (precountCancelledRef.current) {
-          return false;
+          return { completed: false };
         }
 
         const startMs = Date.now();
+
+        // Beats "4" → "1" — equal timing; number + click in the same turn.
         for (let i = 0; i < 4; i++) {
           if (precountCancelledRef.current) {
-            return false;
+            return { completed: false };
           }
           const n = 4 - i;
           setPrecountNumber(n);
@@ -855,10 +861,15 @@ export function MemoEditor({
           }
           const ok = await waitUntil(startMs + (i + 1) * intervalMs);
           if (!ok) {
-            return false;
+            return { completed: false };
           }
         }
-        return true;
+
+        const beat1Deadline = startMs + 4 * intervalMs;
+        return {
+          completed: true,
+          nextBeatDeadlineMs: Math.max(beat1Deadline, Date.now()),
+        };
       } finally {
         setPrecountVisible(false);
         setPrecountNumber(null);
@@ -866,6 +877,11 @@ export function MemoEditor({
     },
     [engine]
   );
+
+  const clearPrecountOverlay = useCallback(() => {
+    setPrecountVisible(false);
+    setPrecountNumber(null);
+  }, []);
 
   const handleTrackPress = useCallback(
     (trackId: string) => {
@@ -1223,35 +1239,44 @@ export function MemoEditor({
     const bpm = getMemoMetronomeSettings(memo).bpm;
 
     void (async () => {
-      const preparePromise = engine.prepareRecordingStart();
-
-      if (precountMode !== 'off') {
-        const completed = await runPrecount(precountMode, bpm);
-        if (!completed) {
-          await engine.cancelPreparedRecording();
-          pendingLocationNamingRef.current = false;
-          onDismiss();
-          void deleteMemo(memoId);
-          return;
-        }
-        if (engine.getState().isRecording) {
-          return;
-        }
-      }
-
-      beginSession({
-        memoId,
-        memoTitle,
-        mode: 'new',
-        layerId: null,
-        startTime: 0,
-        trackColor: null,
-      });
+      let nextBeatDeadlineMs: number | undefined;
       try {
-        await preparePromise;
-        await engine.commitRecordingStart();
+        if (precountMode !== 'off') {
+          await engine.prepareRecordingStart();
+          await engine.finalizeRecordingWarmup();
+          const precountResult = await runPrecount(precountMode, bpm);
+          if (!precountResult.completed) {
+            await engine.cancelPreparedRecording();
+            clearPrecountOverlay();
+            pendingLocationNamingRef.current = false;
+            onDismiss();
+            void deleteMemo(memoId);
+            return;
+          }
+          if (engine.getState().isRecording) {
+            clearPrecountOverlay();
+            return;
+          }
+          nextBeatDeadlineMs = precountResult.nextBeatDeadlineMs;
+        }
+
+        beginSession({
+          memoId,
+          memoTitle,
+          mode: 'new',
+          layerId: null,
+          startTime: 0,
+          trackColor: null,
+        });
+
+        if (precountMode === 'off') {
+          await engine.prepareRecordingStart();
+          await engine.finalizeRecordingWarmup();
+        }
+        await engine.commitRecordingStart({ nextBeatDeadlineMs });
       } catch (error) {
         await engine.cancelPreparedRecording();
+        clearPrecountOverlay();
         clearSession();
         Alert.alert(
           'Recording failed',
@@ -1259,7 +1284,15 @@ export function MemoEditor({
         );
       }
     })();
-  }, [engine, memo, onAutoRecordConsumed, onDismiss, record, runPrecount]);
+  }, [
+    clearPrecountOverlay,
+    engine,
+    memo,
+    onAutoRecordConsumed,
+    onDismiss,
+    record,
+    runPrecount,
+  ]);
 
   const stopAndSaveActiveRecording = useCallback(
     async (options?: { reloadEngine?: boolean }): Promise<boolean> => {
@@ -1320,6 +1353,7 @@ export function MemoEditor({
   const cancelActiveRecording = useCallback(async () => {
     if (!engine.getState().isRecording) {
       await engine.cancelPreparedRecording();
+      clearPrecountOverlay();
       setReplaceMode(false);
       setStackMode(false);
       setRecordingArmed(false);
@@ -1330,6 +1364,7 @@ export function MemoEditor({
     }
 
     await engine.cancelRecording();
+    clearPrecountOverlay();
     monitorMixRef.current = false;
     setReplaceMode(false);
     setStackMode(false);
@@ -1337,7 +1372,7 @@ export function MemoEditor({
     pendingRecordModeRef.current = null;
     pendingRecordingColor.current = null;
     liveRecordingSnapshot.current = null;
-  }, [engine]);
+  }, [clearPrecountOverlay, engine]);
 
   useEffect(() => {
     const applyPendingLocationNaming = () => {
@@ -1801,40 +1836,46 @@ export function MemoEditor({
         trackColor: pendingRecordingColor.current,
       });
 
-      const preparePromise = engine.prepareRecordingStart({
-        monitorMix: useMonitorMix,
-      });
-
+      let nextBeatDeadlineMs: number | undefined;
       const precountMode = getMemoPrecountMode(memo);
-      if (precountMode !== 'off') {
-        const bpm = getMemoMetronomeSettings(memo).bpm;
-        const completed = await runPrecount(precountMode, bpm);
-        if (!completed) {
-          await engine.cancelPreparedRecording();
-          monitorMixRef.current = false;
-          setReplaceMode(false);
-          setStackMode(false);
-          setRecordingArmed(false);
-          pendingRecordModeRef.current = null;
-          pendingRecordingColor.current = null;
-          liveRecordingSnapshot.current = null;
-          clearSession();
-          return;
-        }
-        if (engine.getState().isRecording) {
-          return;
-        }
-      }
-
       try {
-        await preparePromise;
+        await engine.prepareRecordingStart({
+          monitorMix: useMonitorMix,
+        });
+        await engine.finalizeRecordingWarmup({ monitorMix: useMonitorMix });
+
+        if (precountMode !== 'off') {
+          const bpm = getMemoMetronomeSettings(memo).bpm;
+          const precountResult = await runPrecount(precountMode, bpm);
+          if (!precountResult.completed) {
+            await engine.cancelPreparedRecording();
+            clearPrecountOverlay();
+            monitorMixRef.current = false;
+            setReplaceMode(false);
+            setStackMode(false);
+            setRecordingArmed(false);
+            pendingRecordModeRef.current = null;
+            pendingRecordingColor.current = null;
+            liveRecordingSnapshot.current = null;
+            clearSession();
+            return;
+          }
+          if (engine.getState().isRecording) {
+            clearPrecountOverlay();
+            return;
+          }
+          nextBeatDeadlineMs = precountResult.nextBeatDeadlineMs;
+        }
+
         await engine.commitRecordingStart({
           monitorMix: useMonitorMix,
           monitorStartTime: startTime,
+          nextBeatDeadlineMs,
         });
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       } catch (error) {
         await engine.cancelPreparedRecording();
+        clearPrecountOverlay();
         monitorMixRef.current = false;
         setReplaceMode(false);
         setStackMode(false);
