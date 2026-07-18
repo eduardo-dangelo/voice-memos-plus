@@ -16,6 +16,7 @@ type Props = {
   onStopRecording?: () => void;
   recordDisabled?: boolean;
   stopRecordingDisabled?: boolean;
+  isStoppingRecording?: boolean;
   isRecording?: boolean;
   compact?: boolean;
   showProgressBar?: boolean;
@@ -33,6 +34,7 @@ export function PlaybackControls({
   onStopRecording,
   recordDisabled = false,
   stopRecordingDisabled = false,
+  isStoppingRecording = false,
   isRecording = false,
   compact = false,
   showProgressBar = true,
@@ -41,6 +43,7 @@ export function PlaybackControls({
   const colors = useVoiceMemosColors();
   const styles = useStyles(colors);
   const progress = duration > 0 ? currentTime / duration : 0;
+  const stopDisabled = stopRecordingDisabled || isStoppingRecording;
 
   return (
     <View style={styles.container}>
@@ -59,12 +62,13 @@ export function PlaybackControls({
         {isRecording ? (
           <Pressable
             accessibilityLabel="Stop recording"
-            disabled={stopRecordingDisabled}
+            disabled={stopDisabled}
+            hitSlop={12}
             onPress={onStopRecording}
             style={[
               styles.stopButton,
               compact && styles.stopButtonCompact,
-              stopRecordingDisabled && styles.recordDisabled,
+              stopRecordingDisabled && !isStoppingRecording && styles.recordDisabled,
             ]}>
             <View style={[styles.stopSquare, compact && styles.stopSquareCompact]} />
           </Pressable>
@@ -127,7 +131,7 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           justifyContent: 'space-between',
         },
         controlsRowMinHeight: {
-          minHeight: 40,
+          minHeight: 48,
         },
         controlsRowCentered: {
           justifyContent: 'center',
@@ -157,17 +161,17 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           borderRadius: 14,
         },
         stopButton: {
-          width: 32,
-          height: 32,
-          borderRadius: 16,
+          width: 48,
+          height: 48,
+          borderRadius: 24,
           backgroundColor: colors.recordRed,
           alignItems: 'center',
           justifyContent: 'center',
         },
         stopButtonCompact: {
-          width: 28,
-          height: 28,
-          borderRadius: 14,
+          width: 40,
+          height: 40,
+          borderRadius: 20,
         },
         recordDisabled: {
           opacity: 0.4,
@@ -184,14 +188,14 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           borderRadius: 5,
         },
         stopSquare: {
-          width: 12,
-          height: 12,
+          width: 16,
+          height: 16,
           borderRadius: 2,
           backgroundColor: '#FFFFFF',
         },
         stopSquareCompact: {
-          width: 10,
-          height: 10,
+          width: 14,
+          height: 14,
           borderRadius: 2,
         },
         time: {

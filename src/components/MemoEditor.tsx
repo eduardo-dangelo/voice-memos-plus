@@ -295,6 +295,8 @@ export function MemoEditor({
   const [layoutReady, setLayoutReady] = useState(false);
   const [precountVisible, setPrecountVisible] = useState(false);
   const [precountNumber, setPrecountNumber] = useState<number | null>(null);
+  const [isStoppingRecording, setIsStoppingRecording] = useState(false);
+  const isStoppingRecordingRef = useRef(false);
   const lastLayoutHeightRef = useRef<number | null>(null);
   const settleRafRef = useRef<number | null>(null);
   const stackModeRef = useRef(false);
@@ -1296,20 +1298,30 @@ export function MemoEditor({
 
   const stopAndSaveActiveRecording = useCallback(
     async (options?: { reloadEngine?: boolean }): Promise<boolean> => {
+      const clearStopping = () => {
+        isStoppingRecordingRef.current = false;
+        setIsStoppingRecording(false);
+      };
+
       const existingResult = await awaitSaveInFlight();
       if (existingResult) {
+        clearStopping();
         return true;
       }
 
       if (!engine.getState().isRecording) {
+        clearStopping();
         return true;
       }
 
       if (!memoRef.current) {
+        clearStopping();
         return false;
       }
 
       isSavingRecordingOnExit.current = true;
+      isStoppingRecordingRef.current = true;
+      setIsStoppingRecording(true);
       try {
         const state = engine.getState();
         liveRecordingSnapshot.current = {
@@ -1345,6 +1357,7 @@ export function MemoEditor({
         return false;
       } finally {
         isSavingRecordingOnExit.current = false;
+        clearStopping();
       }
     },
     [engine]
@@ -1752,6 +1765,12 @@ export function MemoEditor({
   );
 
   const handleStopRecording = () => {
+    if (isStoppingRecordingRef.current || !engine.getState().isRecording) {
+      return;
+    }
+    isStoppingRecordingRef.current = true;
+    setIsStoppingRecording(true);
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     void stopAndSaveActiveRecording();
   };
 
@@ -2421,6 +2440,7 @@ export function MemoEditor({
                 duration={duration}
                 isPlaying={engineState.isPlaying}
                 isRecording={pendingRecordingLayout}
+                isStoppingRecording={isStoppingRecording}
                 recordDisabled={!memo || !hasRecording(memo)}
                 showProgressBar={false}
                 showTimeLabels={false}
@@ -2429,7 +2449,7 @@ export function MemoEditor({
                 onRecordPress={showRecordOptions}
                 onSkipBack={() => engine.skip(-15)}
                 onSkipForward={() => engine.skip(15)}
-                onStopRecording={() => void handleStopRecording()}
+                onStopRecording={handleStopRecording}
               />
             </View>
           </>
