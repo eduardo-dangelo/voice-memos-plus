@@ -22,11 +22,6 @@ export function getDefaultLayerLabel(order: number): string {
   return `Track ${order + 1}`;
 }
 
-export function hasCustomLayerLabel(layer: Pick<Layer, 'label' | 'order'>): boolean {
-  const n = layer.order + 1;
-  return layer.label !== `Track ${n}` && layer.label !== `Layer ${n}`;
-}
-
 export type Folder = {
   id: string;
   name: string;
@@ -171,10 +166,6 @@ export function normalizeLoopRegion(memo: Memo, timelineDuration: number): void 
   }
 }
 
-export function getLayerSourceDuration(layer: Layer): number {
-  return layer.duration;
-}
-
 export function getLayerActiveStartTime(layer: Layer): number {
   const effects = getLayerEffects(layer);
   return layer.startTime + effects.trimIn;
@@ -253,12 +244,6 @@ export function normalizeLayers(memo: Memo): Memo {
 
 export function getLayerEffects(layer: Layer): LayerEffects {
   return normalizeLayerEffects({ duration: layer.duration, effects: layer.effects });
-}
-
-export function getEffectiveDuration(memo: Memo): number {
-  const end = memo.trimEnd > 0 ? memo.trimEnd : memo.duration;
-  const start = memo.trimStart;
-  return Math.max(0, end - start);
 }
 
 export function hasRecording(memo: Memo): boolean {

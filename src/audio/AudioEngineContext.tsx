@@ -21,11 +21,6 @@ export function useAudioEngine(): MemoAudioEngine {
   return useContext(AudioEngineContext);
 }
 
-export function useAudioEngineState(): EngineState {
-  const engine = useAudioEngine();
-  return useSyncExternalStore(engine.subscribe.bind(engine), engine.getState.bind(engine));
-}
-
 /**
  * Subscribe to a slice of engine state. Re-renders only when the selected value
  * changes per `isEqual` (defaults to Object.is).

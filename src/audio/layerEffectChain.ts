@@ -230,10 +230,6 @@ export function applyPathInputEffects(
   });
 }
 
-export function getEffectiveLayerTimelineDuration(effects: LayerEffects): number {
-  return Math.max(0, effects.trimOut - effects.trimIn);
-}
-
 export function clearReverbIrCache(): void {
   reverbIrCache.clear();
 }

@@ -140,31 +140,6 @@ async function exportMonoSamplesToPath(
   return preflight.duration;
 }
 
-export async function trimAudioFile(
-  inputPath: string,
-  trimIn: number,
-  trimOut: number,
-  outputPath: string
-): Promise<void> {
-  const buffer = await decodeAudioData(inputPath);
-  const { startSample, length, sampleRate } = getTrimSampleRange(buffer, trimIn, trimOut);
-  const samples = buffer.getChannelData(0).slice(startSample, startSample + length);
-  await exportMonoSamplesToPath(samples, sampleRate, outputPath);
-}
-
-export function resampleMonoBuffer(
-  buffer: AudioBuffer,
-  targetRate: number,
-  context: AudioContext
-): AudioBuffer {
-  return resampleMonoBufferFromRate(
-    buffer,
-    buffer.sampleRate,
-    targetRate,
-    context
-  );
-}
-
 export function resampleMonoBufferFromRate(
   buffer: AudioBuffer,
   fromRate: number,

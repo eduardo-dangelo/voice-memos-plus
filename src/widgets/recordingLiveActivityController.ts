@@ -10,8 +10,6 @@ import type { MemoAudioEngine } from '@/src/audio/MemoAudioEngine';
 
 import RecordingActivity, { type RecordingActivityProps } from './RecordingLiveActivity';
 
-const LIVE_ACTIVITY_NAME = 'RecordingActivity';
-
 let instance: LiveActivity<RecordingActivityProps> | null = null;
 
 function memoDeepLink(memoId: string): string {
@@ -156,8 +154,4 @@ export async function recoverMemoLiveActivity(engine: MemoAudioEngine): Promise<
 
   await endAllInstances();
   instance = null;
-}
-
-export function getRecordingLiveActivityName(): string {
-  return LIVE_ACTIVITY_NAME;
 }

@@ -217,14 +217,6 @@ export function createDefaultLayerEffects(duration: number): LayerEffects {
   };
 }
 
-export function getEffectiveLayerDuration(effects: LayerEffects): number {
-  return Math.max(0, effects.trimOut - effects.trimIn);
-}
-
-export function isDefaultTrim(effects: LayerEffects, layerDuration: number): boolean {
-  return effects.trimIn <= 0.01 && effects.trimOut >= layerDuration - 0.01;
-}
-
 export function hasFullEffectChain(effects: LayerEffects): boolean {
   if (hasActiveReverb(effects)) {
     return true;
@@ -266,17 +258,6 @@ export function isLayerAudible(effects: LayerEffects, anySoloActive: boolean): b
 
 export function isLayerSelectable(effects: LayerEffects, anySoloActive: boolean): boolean {
   return isLayerAudible(effects, anySoloActive);
-}
-
-export function hasActiveVolumeEffect(effects: LayerEffects): boolean {
-  return Boolean(effects.muted) || effects.volumeDb !== 0;
-}
-
-export function hasAppliedAudioEffects(effects: LayerEffects): boolean {
-  if (effects.muted) {
-    return true;
-  }
-  return hasFullEffectChain(effects);
 }
 
 export function normalizeLayerEffects(
@@ -430,26 +411,6 @@ export function clampTrimValues(
     Math.max(snappedOut, clampedIn + MIN_TRIM_SELECTION)
   );
   return { trimIn: clampedIn, trimOut: clampedOut };
-}
-
-export function shiftTrimWindow(
-  trimIn: number,
-  trimOut: number,
-  deltaSec: number,
-  layerDuration: number
-): { trimIn: number; trimOut: number } {
-  const width = Math.max(MIN_TRIM_SELECTION, trimOut - trimIn);
-  let nextIn = trimIn + deltaSec;
-  nextIn = Math.max(0, Math.min(nextIn, layerDuration - width));
-  return clampTrimValues(nextIn, nextIn + width, layerDuration);
-}
-
-export function formatDb(value: number): string {
-  if (value <= -24) {
-    return 'Mute';
-  }
-  const sign = value > 0 ? '+' : '';
-  return `${sign}${value.toFixed(1)} dB`;
 }
 
 export function formatEqBand(value: number): string {

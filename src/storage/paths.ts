@@ -88,28 +88,6 @@ export function requireLayerFile(memoId: string, fileName: string): File {
   return file;
 }
 
-export function getPrimaryLayerFile(memo: Memo): File {
-  const layer = memo.layers[0];
-  const file = getLayerFile(memo.id, layer?.fileName ?? 'layer-0.m4a');
-  if (!file) {
-    throw new Error('Memo not found');
-  }
-  return file;
-}
-
-export function getLayerFileById(memo: Memo, layerId: string): File | null {
-  const layer = memo.layers.find((entry) => entry.id === layerId);
-  if (!layer) {
-    return null;
-  }
-  return getLayerFile(memo.id, layer.fileName);
-}
-
-export function layerFileExists(memo: Memo): boolean {
-  const file = getLayerFile(memo.id, memo.layers[0]?.fileName ?? 'layer-0.m4a');
-  return file?.exists ?? false;
-}
-
 export function getMemoLayersForPlayback(memo: Memo): LoadedLayer[] {
   return getPlayableLayers(memo).map((layer) => {
     const file = getLayerFile(memo.id, layer.fileName);

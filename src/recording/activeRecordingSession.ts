@@ -260,10 +260,6 @@ export async function stopAndSave(
   }
 }
 
-export function isSaveInFlight(): boolean {
-  return saveInFlight !== null;
-}
-
 export async function awaitSaveInFlight(): Promise<RecordingSaveResult | null | void> {
   if (!saveInFlight) {
     return;

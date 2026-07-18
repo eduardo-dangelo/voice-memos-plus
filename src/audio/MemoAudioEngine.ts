@@ -14,7 +14,6 @@ import { AppState } from 'react-native';
 
 import {
     assertRecordingRouteOk,
-    getActiveRouteSnapshot,
     logRouteSnapshot,
     pinBuiltInMicrophone,
 } from '@/src/audio/audioInputRouting';

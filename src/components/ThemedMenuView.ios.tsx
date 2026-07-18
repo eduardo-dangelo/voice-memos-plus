@@ -1,6 +1,5 @@
 import { requireNativeView } from 'expo';
 import { useMemo, type ReactNode, type Ref } from 'react';
-import type { StyleProp, ViewStyle } from 'react-native';
 
 import { useColorScheme } from '@/components/useColorScheme';
 import type {

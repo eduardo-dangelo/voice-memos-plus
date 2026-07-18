@@ -3,9 +3,7 @@ import { Directory, File, Paths } from 'expo-file-system';
 import { computeWaveformPeaks, peakCountForDuration, resolveWaveformPeaks } from '@/src/audio/waveform';
 import {
   createDefaultLayerEffects,
-  isDefaultTrim,
   mergeLayerEffects,
-  type LayerEffects,
   type LayerEffectsChange,
 } from '@/src/audio/layerEffects';
 import { renderMemoForShare } from '@/src/audio/memoExport';
@@ -42,7 +40,6 @@ import {
   normalizeLoopRegion,
   normalizeMetronomeSettings,
   normalizePrecountMode,
-  getEarliestTrimInTimelineDelta,
   hasRecording,
 } from './types';
 
@@ -394,22 +391,6 @@ export async function updatePrecountMode(
   return memo;
 }
 
-export async function updateTrim(
-  memoId: string,
-  trimStart: number,
-  trimEnd: number
-): Promise<Memo> {
-  const memo = await getMemo(memoId);
-  if (!memo) {
-    throw new Error('Memo not found');
-  }
-  memo.trimStart = Math.max(0, trimStart);
-  memo.trimEnd = Math.min(memo.duration, trimEnd);
-  memo.updatedAt = new Date().toISOString();
-  writeManifest(memo);
-  return memo;
-}
-
 export async function updateLayerEffects(
   memoId: string,
   layerId: string,
@@ -453,84 +434,6 @@ export async function updateLayerStartTimes(
   writeManifest(memo);
   return memo;
 }
-
-export async function updateLayerStartTime(
-  memoId: string,
-  layerId: string,
-  startTime: number
-): Promise<Memo> {
-  return updateLayerStartTimes(memoId, { [layerId]: startTime });
-}
-
-export type TrimBounds = {
-  trimIn: number;
-  trimOut: number;
-  preservedEffects?: Pick<LayerEffects, 'volumeDb' | 'reverb' | 'delay' | 'eq'>;
-};
-
-export async function commitLayerTrim(
-  memoId: string,
-  layerId: string,
-  bounds: TrimBounds
-): Promise<Memo> {
-  const memo = await getMemo(memoId);
-  if (!memo) {
-    throw new Error('Memo not found');
-  }
-
-  const layer = memo.layers.find((entry) => entry.id === layerId);
-  if (!layer) {
-    throw new Error('Layer not found');
-  }
-
-  const layerFile = requireLayerFile(memoId, layer.fileName);
-  if (!layerFile.exists) {
-    throw new Error('Layer audio file not found');
-  }
-
-  const trimEffects: Pick<LayerEffects, 'trimIn' | 'trimOut'> = {
-    trimIn: bounds.trimIn,
-    trimOut: bounds.trimOut,
-  };
-
-  if (isDefaultTrim({ ...getLayerEffects(layer), ...trimEffects }, layer.duration)) {
-    return memo;
-  }
-
-  const effects = getLayerEffects(layer);
-  const preservedEffects = bounds.preservedEffects ?? {
-    volumeDb: effects.volumeDb,
-    reverb: { ...effects.reverb },
-    delay: { ...effects.delay },
-    eq: { preset: effects.eq.preset, bands: [...effects.eq.bands] as LayerEffects['eq']['bands'] },
-  };
-
-  const timelineDelta = getEarliestTrimInTimelineDelta(layer, memo.layers, bounds.trimIn);
-
-  layer.effects = mergeLayerEffects(
-    getLayerEffects(layer),
-    {
-      ...preservedEffects,
-      trimIn: bounds.trimIn,
-      trimOut: bounds.trimOut,
-    },
-    layer.duration
-  );
-
-  if (timelineDelta !== 0) {
-    for (const entry of memo.layers) {
-      entry.startTime += timelineDelta;
-    }
-  }
-
-  updateMemoTimeline(memo);
-  memo.updatedAt = new Date().toISOString();
-  writeManifest(memo);
-  return memo;
-}
-
-/** @deprecated Use commitLayerTrim — trim save is non-destructive. */
-export const applyLayerTrim = commitLayerTrim;
 
 export async function ensureWaveformPeaks(memo: Memo): Promise<Memo> {
   let changed = false;
@@ -850,24 +753,6 @@ export async function duplicateMemo(memoId: string): Promise<Memo> {
   };
   writeManifest(updated);
   return updated;
-}
-
-export async function replaceRecordingSegment(
-  memoId: string,
-  layerId: string,
-  trimStart: number,
-  trimEnd: number,
-  replacementPath: string,
-  capturedPeaks?: number[]
-): Promise<Memo> {
-  return replaceLayerSegment(
-    memoId,
-    layerId,
-    trimStart,
-    trimEnd,
-    replacementPath,
-    capturedPeaks
-  );
 }
 
 export async function exportMemoToFile(memo: Memo, format: ExportFormat): Promise<File> {

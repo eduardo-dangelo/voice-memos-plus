@@ -1,5 +1,4 @@
 import { AudioManager } from 'react-native-audio-api';
-import { useEffect, useState } from 'react';
 
 import type { Memo } from '@/src/storage/types';
 import { getPlayableLayers } from '@/src/storage/types';
@@ -76,32 +75,4 @@ export function subscribeHeadphoneDisconnect(onDisconnect: () => void): () => vo
   return () => {
     subscription?.remove();
   };
-}
-
-export function useHeadphonesConnected(): boolean {
-  const [connected, setConnected] = useState(false);
-
-  useEffect(() => {
-    let mounted = true;
-
-    async function refresh() {
-      const next = await isHeadphonesConnected();
-      if (mounted) {
-        setConnected(next);
-      }
-    }
-
-    void refresh();
-
-    const subscription = AudioManager.addSystemEventListener('routeChange', () => {
-      void refresh();
-    });
-
-    return () => {
-      mounted = false;
-      subscription?.remove();
-    };
-  }, []);
-
-  return connected;
 }
