@@ -34,6 +34,15 @@ import {
 } from '@/src/audio/waveform';
 import { LoopColumnOverlay } from '@/src/components/LoopColumnOverlay';
 import { LOOP_ROW_HEIGHT, LoopRegionBar, type LoopOverlayConfig } from '@/src/components/LoopRegionBar';
+import {
+  buildMetronomeGridLines,
+  getMetronomeGridBufferRange,
+  isMetronomeGridBufferValid,
+  MetronomeTrackGrid,
+  type MetronomeGridBuffer,
+} from '@/src/components/MetronomeGridOverlay';
+import type { MetronomeGridLine } from '@/src/audio/metronome';
+import type { MetronomeSettings } from '@/src/storage/types';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 import { formatMarkerTime } from '@/src/utils/format';
 
@@ -197,6 +206,7 @@ type Props = {
   trimOverlay?: TrimOverlayConfig;
   moveOverlay?: MoveOverlayConfig;
   loopOverlay?: LoopOverlayConfig;
+  metronome?: MetronomeSettings;
   volumeVisualDb?: number;
 };
 
@@ -1079,6 +1089,7 @@ function WaveformViewComponent({
   trimOverlay,
   moveOverlay,
   loopOverlay,
+  metronome,
   volumeVisualDb,
 }: Props) {
   const colors = useVoiceMemosColors();
@@ -1188,6 +1199,68 @@ function WaveformViewComponent({
     return ticks;
   }, [layoutDuration]);
 
+  const [metronomeGridLines, setMetronomeGridLines] = useState<MetronomeGridLine[]>([]);
+  const metronomeGridBufferRef = useRef<MetronomeGridBuffer | null>(null);
+  const metronomeRef = useRef(metronome);
+  metronomeRef.current = metronome;
+  const layoutPixelsPerSecondRef = useRef(layoutPixelsPerSecond);
+  layoutPixelsPerSecondRef.current = layoutPixelsPerSecond;
+  const viewportWidthRef = useRef(viewportWidth);
+  viewportWidthRef.current = viewportWidth;
+  const durationRef = useRef(duration);
+  durationRef.current = duration;
+  const layoutDurationRef = useRef(layoutDuration);
+  layoutDurationRef.current = layoutDuration;
+
+  const syncMetronomeGridRef = useRef((_scrollX: number, _force = false) => {});
+  syncMetronomeGridRef.current = (nextScrollX: number, force = false) => {
+    const settings = metronomeRef.current;
+    const pps = layoutPixelsPerSecondRef.current;
+    const vpWidth = viewportWidthRef.current;
+    const gridDuration = Math.max(durationRef.current, layoutDurationRef.current);
+
+    if (!settings || vpWidth <= 0 || pps <= 0 || gridDuration <= 0) {
+      metronomeGridBufferRef.current = null;
+      setMetronomeGridLines((prev) => (prev.length === 0 ? prev : []));
+      return;
+    }
+
+    if (
+      !force &&
+      isMetronomeGridBufferValid(metronomeGridBufferRef.current, nextScrollX, vpWidth, pps)
+    ) {
+      return;
+    }
+
+    const buffer = getMetronomeGridBufferRange(nextScrollX, vpWidth, pps, gridDuration);
+    metronomeGridBufferRef.current = buffer;
+    const nextLines = buildMetronomeGridLines(settings, buffer, pps);
+    setMetronomeGridLines((prev) => {
+      if (
+        prev.length === nextLines.length &&
+        prev.every(
+          (line, index) =>
+            line.time === nextLines[index]?.time && line.kind === nextLines[index]?.kind
+        )
+      ) {
+        return prev;
+      }
+      return nextLines;
+    });
+  };
+
+  useEffect(() => {
+    syncMetronomeGridRef.current(scrollOffsetRef.current, true);
+  }, [
+    metronome?.bpm,
+    metronome?.timeSignature,
+    metronome?.accentEnabled,
+    layoutPixelsPerSecond,
+    viewportWidth,
+    duration,
+    layoutDuration,
+  ]);
+
   useLayoutEffect(() => {
     const wasFollowing = prevFollowRecordingScrollRef.current;
     if (followRecordingScroll && !wasFollowing) {
@@ -1287,6 +1360,7 @@ function WaveformViewComponent({
     setTrackZoom(nextTrackZoom);
     scrollOffsetRef.current = nextScrollX;
     verticalScrollOffsetRef.current = nextScrollY;
+    syncMetronomeGridRef.current(nextScrollX, true);
     scrollRef.current?.scrollTo({ x: nextScrollX, animated: false });
     verticalScrollRef.current?.scrollTo({ y: nextScrollY, animated: false });
   }, [tracks.length, viewportWidth, waveformAreaHeight]);
@@ -1413,6 +1487,7 @@ function WaveformViewComponent({
   const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const x = event.nativeEvent.contentOffset.x;
     scrollOffsetRef.current = x;
+    syncMetronomeGridRef.current(x);
     if (trimGestureActiveRef.current) {
       return;
     }
@@ -1459,6 +1534,7 @@ function WaveformViewComponent({
           return;
         }
         scrollOffsetRef.current = next;
+        syncMetronomeGridRef.current(next);
         scrollRef.current?.scrollTo({ x: next, animated: false });
       },
       onTrimGestureActive: (active: boolean) => {
@@ -1514,6 +1590,8 @@ function WaveformViewComponent({
     }
     const justExitedRecordingFollow = wasFollowingRecordingScrollRef.current;
     wasFollowingRecordingScrollRef.current = false;
+    scrollOffsetRef.current = scrollX;
+    syncMetronomeGridRef.current(scrollX);
     scrollRef.current?.scrollTo({
       x: scrollX,
       animated: !justExitedRecordingFollow,
@@ -1534,8 +1612,11 @@ function WaveformViewComponent({
     let raf = 0;
     const tick = () => {
       const time = getPlaybackTimeRef.current?.() ?? currentTimeRef.current;
+      const x = timeToScrollX(time, contentWidth, layoutPixelsPerSecond);
+      scrollOffsetRef.current = x;
+      syncMetronomeGridRef.current(x);
       scrollRef.current?.scrollTo({
-        x: timeToScrollX(time, contentWidth, layoutPixelsPerSecond),
+        x,
         animated: false,
       });
       raf = requestAnimationFrame(tick);
@@ -1562,6 +1643,7 @@ function WaveformViewComponent({
         layoutPixelsPerSecond
       );
       scrollOffsetRef.current = x;
+      syncMetronomeGridRef.current(x);
       scrollRef.current?.scrollTo({ x, animated: false });
     };
 
@@ -1589,8 +1671,11 @@ function WaveformViewComponent({
       }
       const time = getRecordingTimeRef.current?.() ?? currentTimeRef.current;
       const width = contentWidthRef.current;
+      const x = recordingTimeToScrollX(time, width, layoutPixelsPerSecond);
+      scrollOffsetRef.current = x;
+      syncMetronomeGridRef.current(x);
       scrollRef.current?.scrollTo({
-        x: recordingTimeToScrollX(time, width, layoutPixelsPerSecond),
+        x,
         animated: false,
       });
       raf = requestAnimationFrame(tick);
@@ -1632,6 +1717,7 @@ function WaveformViewComponent({
               config={loopOverlay}
               disabled={isRecording}
               editDisabled={isPlaying}
+              gridLines={metronomeGridLines}
               pixelsPerSecond={layoutPixelsPerSecond}
               scrollHelpers={loopScrollHelpers}
               sidePadding={sidePadding}
@@ -1676,6 +1762,12 @@ function WaveformViewComponent({
                   onPress={(locationX) => handleTrackPress(track.id, locationX)}
                 />
               ))}
+              <MetronomeTrackGrid
+                height={tracksContentHeight}
+                lines={metronomeGridLines}
+                pixelsPerSecond={layoutPixelsPerSecond}
+                sidePadding={sidePadding}
+              />
               {loopOverlay ? (
                 <LoopColumnOverlay
                   height={tracksContentHeight}
@@ -1765,6 +1857,21 @@ function areWaveformViewPropsEqual(prev: Props, next: Props): boolean {
     prev.volumeVisualDb !== next.volumeVisualDb
   ) {
     return false;
+  }
+
+  const prevMetronome = prev.metronome;
+  const nextMetronome = next.metronome;
+  if (prevMetronome !== nextMetronome) {
+    if (!prevMetronome || !nextMetronome) {
+      return false;
+    }
+    if (
+      prevMetronome.bpm !== nextMetronome.bpm ||
+      prevMetronome.timeSignature !== nextMetronome.timeSignature ||
+      prevMetronome.accentEnabled !== nextMetronome.accentEnabled
+    ) {
+      return false;
+    }
   }
 
   if (

@@ -107,18 +107,25 @@ export function isSecondaryAccentBeat(beatTime: number, settings: MetronomeSetti
   return clickIndex % config.clicksPerBar === config.secondaryAccentAt;
 }
 
-export function getMetronomeBeatTimes(
-  settings: MetronomeSettings,
-  startAt: number,
-  endAt: number
-): number[] {
-  if (!settings.enabled || endAt <= startAt + TIME_EPSILON) {
+export type MetronomeGridLineKind = 'bar' | 'secondary' | 'beat';
+
+export type MetronomeGridLine = {
+  time: number;
+  kind: MetronomeGridLineKind;
+};
+
+/** Minimum pixel spacing between adjacent grid lines before LOD thins further. */
+export const METRONOME_GRID_MIN_SPACING_PX = 10;
+
+/** Hard cap on lines returned for a single buffer window. */
+export const METRONOME_GRID_MAX_LINES = 80;
+
+function collectBeatTimesInRange(startAt: number, endAt: number, interval: number): number[] {
+  if (endAt <= startAt + TIME_EPSILON || interval <= 0) {
     return [];
   }
 
-  const interval = getClickIntervalSec(settings);
   const beatTimes: number[] = [];
-
   let beatTime = Math.ceil((startAt - TIME_EPSILON) / interval) * interval;
   if (beatTime < startAt - TIME_EPSILON) {
     beatTime += interval;
@@ -130,6 +137,131 @@ export function getMetronomeBeatTimes(
   }
 
   return beatTimes;
+}
+
+export function getMetronomeBeatTimes(
+  settings: MetronomeSettings,
+  startAt: number,
+  endAt: number
+): number[] {
+  if (!settings.enabled) {
+    return [];
+  }
+  return collectBeatTimesInRange(startAt, endAt, getClickIntervalSec(settings));
+}
+
+export function getMetronomeGridLineKind(
+  beatTime: number,
+  settings: MetronomeSettings
+): MetronomeGridLineKind {
+  if (isPrimaryAccentBeat(beatTime, settings)) {
+    return 'bar';
+  }
+  if (isSecondaryAccentBeat(beatTime, settings)) {
+    return 'secondary';
+  }
+  return 'beat';
+}
+
+/**
+ * Zoom-aware step between grid lines (seconds). Ignores `enabled` so the visual
+ * grid follows tempo config even when metronome clicks are off.
+ */
+export function getMetronomeGridStepSec(
+  settings: MetronomeSettings,
+  pixelsPerSecond: number
+): number {
+  const beatInterval = getClickIntervalSec(settings);
+  const config = getTimeSignatureConfig(settings.timeSignature);
+  const barInterval = beatInterval * config.clicksPerBar;
+  const minSpacing = METRONOME_GRID_MIN_SPACING_PX;
+
+  if (beatInterval * pixelsPerSecond >= minSpacing) {
+    return beatInterval;
+  }
+  if (barInterval * pixelsPerSecond >= minSpacing) {
+    return barInterval;
+  }
+
+  let n = 2;
+  while (barInterval * n * pixelsPerSecond < minSpacing && n < 64) {
+    n *= 2;
+  }
+  return barInterval * n;
+}
+
+function classifyGridLine(beatTime: number, settings: MetronomeSettings): MetronomeGridLine {
+  return { time: beatTime, kind: getMetronomeGridLineKind(beatTime, settings) };
+}
+
+/**
+ * Visual grid lines for [startAt, endAt). Ignores `settings.enabled`.
+ * Applies LOD thinning from zoom, then a hard max line count.
+ */
+export function getMetronomeGridLinesInRange(
+  settings: MetronomeSettings,
+  startAt: number,
+  endAt: number,
+  pixelsPerSecond: number
+): MetronomeGridLine[] {
+  if (endAt <= startAt + TIME_EPSILON || pixelsPerSecond <= 0) {
+    return [];
+  }
+
+  const beatInterval = getClickIntervalSec(settings);
+  const stepSec = getMetronomeGridStepSec(settings, pixelsPerSecond);
+  const times = collectBeatTimesInRange(startAt, endAt, stepSec);
+
+  let lines: MetronomeGridLine[];
+
+  if (Math.abs(stepSec - beatInterval) < TIME_EPSILON) {
+    lines = times.map((time) => classifyGridLine(time, settings));
+  } else {
+    // Stepped by bar (or N bars): keep accent hierarchy when accent is on.
+    lines = times.map((time) => {
+      if (!settings.accentEnabled) {
+        return { time, kind: 'beat' as const };
+      }
+      return { time, kind: 'bar' as const };
+    });
+
+    // When LOD is exactly one bar and accent is on, include 6/8 secondary if spacing allows.
+    const config = getTimeSignatureConfig(settings.timeSignature);
+    const barInterval = beatInterval * config.clicksPerBar;
+    if (
+      settings.accentEnabled &&
+      config.secondaryAccentAt !== undefined &&
+      Math.abs(stepSec - barInterval) < TIME_EPSILON &&
+      beatInterval * pixelsPerSecond >= METRONOME_GRID_MIN_SPACING_PX / 2
+    ) {
+      const withSecondary: MetronomeGridLine[] = [];
+      for (const line of lines) {
+        withSecondary.push(line);
+        const secondaryTime = line.time + beatInterval * config.secondaryAccentAt;
+        if (secondaryTime < endAt - TIME_EPSILON && secondaryTime >= startAt - TIME_EPSILON) {
+          withSecondary.push({ time: secondaryTime, kind: 'secondary' });
+        }
+      }
+      lines = withSecondary;
+    }
+  }
+
+  if (lines.length <= METRONOME_GRID_MAX_LINES) {
+    return lines;
+  }
+
+  // Prefer keeping bar lines when capping.
+  const bars = lines.filter((line) => line.kind === 'bar');
+  if (bars.length > 0 && bars.length <= METRONOME_GRID_MAX_LINES) {
+    return bars;
+  }
+
+  const stride = Math.ceil(lines.length / METRONOME_GRID_MAX_LINES);
+  const capped: MetronomeGridLine[] = [];
+  for (let i = 0; i < lines.length; i += stride) {
+    capped.push(lines[i]!);
+  }
+  return capped;
 }
 
 export function playMetronomeClick(

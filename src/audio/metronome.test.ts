@@ -4,9 +4,14 @@ import { describe, it } from 'node:test';
 import {
   getClickIntervalSec,
   getMetronomeBeatTimes,
+  getMetronomeGridLineKind,
+  getMetronomeGridLinesInRange,
+  getMetronomeGridStepSec,
   getQuarterIntervalSec,
   isPrimaryAccentBeat,
   isSecondaryAccentBeat,
+  METRONOME_GRID_MAX_LINES,
+  METRONOME_GRID_MIN_SPACING_PX,
 } from './metronome';
 import {
   DEFAULT_METRONOME_SETTINGS,
@@ -94,6 +99,68 @@ describe('getMetronomeBeatTimes', () => {
     );
     assert.deepEqual(beats, [0]);
     assert.equal(getQuarterIntervalSec(120), 0.5);
+  });
+});
+
+describe('getMetronomeGridLineKind', () => {
+  it('labels downbeats as bar when accent is enabled', () => {
+    const settings = makeSettings({ bpm: 120, timeSignature: '4/4' });
+    assert.equal(getMetronomeGridLineKind(0, settings), 'bar');
+    assert.equal(getMetronomeGridLineKind(0.5, settings), 'beat');
+  });
+
+  it('labels 6/8 midpoint as secondary', () => {
+    const settings = makeSettings({ bpm: 120, timeSignature: '6/8' });
+    assert.equal(getMetronomeGridLineKind(0.75, settings), 'secondary');
+  });
+
+  it('treats all lines as beat when accent is off', () => {
+    const settings = makeSettings({ bpm: 120, timeSignature: '4/4', accentEnabled: false });
+    assert.equal(getMetronomeGridLineKind(0, settings), 'beat');
+    assert.equal(getMetronomeGridLineKind(0.5, settings), 'beat');
+  });
+});
+
+describe('getMetronomeGridStepSec', () => {
+  it('uses beat spacing when zoom is wide enough', () => {
+    const settings = makeSettings({ bpm: 120, timeSignature: '4/4' });
+    assert.equal(getMetronomeGridStepSec(settings, 48), 0.5);
+  });
+
+  it('steps up to bars when beat spacing is too dense', () => {
+    const settings = makeSettings({ bpm: 120, timeSignature: '4/4' });
+    const beatPx = 0.5 * 8;
+    assert.ok(beatPx < METRONOME_GRID_MIN_SPACING_PX);
+    assert.equal(getMetronomeGridStepSec(settings, 8), 2);
+  });
+});
+
+describe('getMetronomeGridLinesInRange', () => {
+  it('returns lines even when metronome sound is disabled', () => {
+    const settings = makeSettings({ enabled: false, bpm: 120, timeSignature: '4/4' });
+    const lines = getMetronomeGridLinesInRange(settings, 0, 2, 48);
+    assert.deepEqual(
+      lines.map((line) => line.time),
+      [0, 0.5, 1, 1.5]
+    );
+    assert.equal(lines[0]?.kind, 'bar');
+    assert.equal(lines[1]?.kind, 'beat');
+  });
+
+  it('thins to bar lines at low zoom', () => {
+    const settings = makeSettings({ bpm: 120, timeSignature: '4/4' });
+    const lines = getMetronomeGridLinesInRange(settings, 0, 8, 8);
+    assert.deepEqual(
+      lines.map((line) => line.time),
+      [0, 2, 4, 6]
+    );
+    assert.ok(lines.every((line) => line.kind === 'bar'));
+  });
+
+  it('respects the hard max line cap', () => {
+    const settings = makeSettings({ bpm: 240, timeSignature: '6/8' });
+    const lines = getMetronomeGridLinesInRange(settings, 0, 120, 400);
+    assert.ok(lines.length <= METRONOME_GRID_MAX_LINES);
   });
 });
 

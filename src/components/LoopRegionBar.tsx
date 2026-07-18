@@ -8,6 +8,8 @@ import {
   type PanResponderGestureState,
 } from 'react-native';
 
+import type { MetronomeGridLine } from '@/src/audio/metronome';
+import { MetronomeRulerTicks } from '@/src/components/MetronomeGridOverlay';
 import { MIN_LOOP_DURATION } from '@/src/storage/types';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
@@ -37,6 +39,7 @@ type Props = {
   pixelsPerSecond: number;
   config: LoopOverlayConfig;
   scrollHelpers: LoopScrollHelpers;
+  gridLines?: MetronomeGridLine[];
   disabled?: boolean;
   editDisabled?: boolean;
 };
@@ -80,50 +83,13 @@ export function getLoopRegionLayout({
   return { left, width: Math.max(2, right - left), hasRegion: true };
 }
 
-function LoopRulerTicks({
-  sidePadding,
-  duration,
-  height,
-  pixelsPerSecond,
-  styles,
-}: {
-  sidePadding: number;
-  duration: number;
-  height: number;
-  pixelsPerSecond: number;
-  styles: ReturnType<typeof createLoopRegionStyles>;
-}) {
-  const seconds = useMemo(() => {
-    if (duration <= 0) {
-      return [];
-    }
-    const ticks: number[] = [];
-    for (let second = 0; second <= Math.ceil(duration); second += 1) {
-      ticks.push(second);
-    }
-    return ticks;
-  }, [duration]);
-
-  return (
-    <>
-      {seconds.map((second) => (
-        <View
-          key={second}
-          pointerEvents="none"
-          style={[styles.rulerMarker, { left: sidePadding + second * pixelsPerSecond }]}>
-          <View style={[styles.rulerTick, { height: Math.min(6, height) }]} />
-        </View>
-      ))}
-    </>
-  );
-}
-
 export function LoopRegionBar({
   bandWidth,
   sidePadding,
   pixelsPerSecond,
   config,
   scrollHelpers,
+  gridLines,
   disabled = false,
   editDisabled = false,
 }: Props) {
@@ -411,13 +377,14 @@ export function LoopRegionBar({
   return (
     <View style={[styles.bar, { width: bandWidth, height: LOOP_ROW_HEIGHT }]}>
       <View pointerEvents="none" style={[styles.rulerLayer, { width: bandWidth, height: LOOP_ROW_HEIGHT }]}>
-        <LoopRulerTicks
-          duration={duration}
-          height={LOOP_ROW_HEIGHT}
-          pixelsPerSecond={pixelsPerSecond}
-          sidePadding={sidePadding}
-          styles={styles}
-        />
+        {gridLines && gridLines.length > 0 ? (
+          <MetronomeRulerTicks
+            height={LOOP_ROW_HEIGHT}
+            lines={gridLines}
+            pixelsPerSecond={pixelsPerSecond}
+            sidePadding={sidePadding}
+          />
+        ) : null}
       </View>
 
       {displayHasRegion ? (
@@ -489,16 +456,6 @@ function createLoopRegionStyles(colors: ReturnType<typeof useVoiceMemosColors>) 
       top: 0,
       left: 0,
       zIndex: 2,
-    },
-    rulerMarker: {
-      position: 'absolute',
-      top: 0,
-      alignItems: 'center',
-    },
-    rulerTick: {
-      width: 1,
-      backgroundColor: colors.secondaryText,
-      opacity: 0.35,
     },
     createLayer: {
       position: 'absolute',

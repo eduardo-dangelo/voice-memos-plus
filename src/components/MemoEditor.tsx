@@ -2356,6 +2356,7 @@ export function MemoEditor({
               moveOverlay={moveOverlay}
               volumeVisualDb={volumeVisualDb}
               loopOverlay={loopOverlay}
+              metronome={metronomeSettings}
               onSeek={handleWaveformSeek}
               onTrackPress={handleTrackPress}
               onTrackDeselect={handleTrackDeselect}
