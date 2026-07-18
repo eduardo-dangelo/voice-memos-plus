@@ -852,6 +852,14 @@ export class MemoAudioEngine {
   private isAtPlaybackEnd(timelineDuration?: number): boolean {
     const duration = timelineDuration ?? this.state.duration;
     const bounds = this.getPlaybackBounds(duration);
+    // Past the loop but not past the memo end — not "at end" for restart-at-loop-start.
+    if (
+      this.state.loopEnabled &&
+      this.hasValidLoop() &&
+      this.state.currentTime >= bounds.end
+    ) {
+      return this.state.currentTime >= this.getPlaybackEnd(duration) - PLAYBACK_END_TOLERANCE;
+    }
     return this.state.currentTime >= bounds.end - PLAYBACK_END_TOLERANCE;
   }
 
@@ -1265,13 +1273,17 @@ export class MemoAudioEngine {
       return;
     }
     if (this.state.loopEnabled && this.hasValidLoop()) {
-      this.clearPlaybackTimer();
-      this.stopMetronomeSources();
-      this.stopActiveSources();
-      this.playbackContextStartWhen = 0;
-      this.emit({ currentTime: this.state.loopStart, isPlaying: true });
-      void this.play();
-      return;
+      const loopEnd = Math.min(this.state.loopEnd, this.getPlaybackEnd(this.state.duration));
+      // Only wrap when this play segment ended at the loop end, not after playing past it.
+      if (endAt <= loopEnd + PLAYBACK_END_TOLERANCE) {
+        this.clearPlaybackTimer();
+        this.stopMetronomeSources();
+        this.stopActiveSources();
+        this.playbackContextStartWhen = 0;
+        this.emit({ currentTime: this.state.loopStart, isPlaying: true });
+        void this.play();
+        return;
+      }
     }
     this.invalidateAndStopSources();
     this.emit({ isPlaying: false, currentTime: endAt });
@@ -2079,16 +2091,16 @@ export class MemoAudioEngine {
 
       const timelineDuration = this.state.duration;
       const bounds = this.getPlaybackBounds(timelineDuration);
-      const endAt = bounds.end;
+      let endAt = bounds.end;
       let startAt = Math.max(bounds.start, this.state.currentTime);
       if (
         this.state.loopEnabled &&
         this.hasValidLoop() &&
-        (this.state.currentTime < bounds.start ||
-          this.state.currentTime >= bounds.end - PLAYBACK_END_TOLERANCE)
+        this.state.currentTime >= bounds.end
       ) {
-        startAt = bounds.start;
-        this.emit({ currentTime: startAt });
+        // After the loop: play from playhead to memo end; do not snap back
+        startAt = this.state.currentTime;
+        endAt = this.getPlaybackEnd(timelineDuration);
       } else if (this.isAtPlaybackEnd(timelineDuration)) {
         startAt = bounds.start;
         this.emit({ currentTime: startAt });
@@ -2284,6 +2296,16 @@ export class MemoAudioEngine {
     if (this.isAtPlaybackEnd()) {
       const bounds = this.getPlaybackBounds(this.state.duration);
       this.emit({ currentTime: bounds.start });
+    } else if (this.state.loopEnabled && this.hasValidLoop()) {
+      const bounds = this.getPlaybackBounds(this.state.duration);
+      // Press-play with playhead before/inside the loop → start at loop start.
+      // After the loop: leave playhead alone (play() continues to memo end).
+      if (
+        this.state.currentTime < bounds.end &&
+        this.state.currentTime !== bounds.start
+      ) {
+        this.emit({ currentTime: bounds.start });
+      }
     }
 
     return this.play();
