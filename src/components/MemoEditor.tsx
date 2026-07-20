@@ -1824,6 +1824,10 @@ export function MemoEditor({
         return;
       }
 
+      if (!sidebarCollapsed && onToggleSidebar) {
+        onToggleSidebar();
+      }
+
       const useMonitorMix = needsMonitorMix(memo, mode);
       monitorMixRef.current = useMonitorMix;
 

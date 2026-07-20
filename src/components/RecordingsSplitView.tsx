@@ -41,6 +41,13 @@ export function RecordingsSplitView(props: Props) {
     });
   }, [sidebarCollapsed, sidebarWidth]);
 
+  // Any active recording on iPad stays full screen (sidebar collapsed).
+  useEffect(() => {
+    if (isRecording && !sidebarCollapsed) {
+      setSidebarCollapsed(true);
+    }
+  }, [isRecording, sidebarCollapsed]);
+
   const sidebarAnimatedStyle = useAnimatedStyle(() => ({
     width: sidebarWidth.value,
     opacity: sidebarWidth.value / SIDEBAR_WIDTH,
@@ -79,8 +86,11 @@ export function RecordingsSplitView(props: Props) {
   }, []);
 
   const handleToggleSidebar = useCallback(() => {
+    if (isRecording) {
+      return;
+    }
     setSidebarCollapsed((current) => !current);
-  }, []);
+  }, [isRecording]);
 
   const handleAutoRecordConsumed = useCallback(() => {
     setSelected((current) => (current ? { ...current, autoRecord: false } : null));
