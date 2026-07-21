@@ -63,7 +63,6 @@ import { loadMemoIntoEngine } from '@/src/audio/loadMemoIntoEngine';
 
 type SessionMode = 'recording' | 'playback' | null;
 
-const MAX_RECORDING_PEAKS = 150;
 const RECORDING_BAR_STEP = WAVEFORM_BAR_WIDTH + WAVEFORM_BAR_GAP;
 const RECORDING_SAMPLE_RATE = 44100;
 const PLAYBACK_SCHEDULE_LEAD = 0.01;
@@ -1475,19 +1474,6 @@ export class MemoAudioEngine {
     void this.play();
   }
 
-  private downsampleRecordingPeaks(peaks: number[]): number[] {
-    if (peaks.length <= MAX_RECORDING_PEAKS) {
-      return peaks;
-    }
-    const bucketSize = Math.ceil(peaks.length / MAX_RECORDING_PEAKS);
-    const downsampled: number[] = [];
-    for (let i = 0; i < peaks.length; i += bucketSize) {
-      const bucket = peaks.slice(i, i + bucketSize);
-      downsampled.push(Math.max(...bucket));
-    }
-    return downsampled.slice(0, MAX_RECORDING_PEAKS);
-  }
-
   private toAbsolutePeaks(raw: number[]): number[] {
     return raw.map(peakToAbsoluteScale);
   }
@@ -2209,7 +2195,7 @@ export class MemoAudioEngine {
         this.recordingPeaksBuffer,
         this.recorder.getCurrentDuration()
       );
-      const peaks = this.toAbsolutePeaks(this.downsampleRecordingPeaks(trimmed));
+      const peaks = this.toAbsolutePeaks(trimmed);
       this.recorder.clearOnAudioReady();
       const result = this.recorder.stop();
       this.recorder = null;
