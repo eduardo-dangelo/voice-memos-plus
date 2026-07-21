@@ -33,6 +33,7 @@ import { hasAnySoloActive, mergeLayerEffects, type LayerEffects, type LayerEffec
 import { scheduleMetronomeClicks, playMetronomeClick as scheduleOneMetronomeClick } from '@/src/audio/metronome';
 import { MemoMixGraph } from '@/src/audio/memoMixGraph';
 import { accumulatePeaksFromSamples } from '@/src/audio/recordingWaveformPeaks';
+import { appendAbsoluteRecordingPeaks } from '@/src/audio/recordingPeaksEmit';
 import {
     peakToAbsoluteScale,
     WAVEFORM_BAR_GAP,
@@ -1534,12 +1535,15 @@ export class MemoAudioEngine {
     return raw.map(peakToAbsoluteScale);
   }
 
-  private trimRawPeaksToDuration(raw: number[], duration: number): number[] {
-    const barCount = Math.max(
+  private recordingPeakBarCount(duration: number): number {
+    return Math.max(
       1,
-      Math.floor(duration * WAVEFORM_PIXELS_PER_SECOND / RECORDING_BAR_STEP)
+      Math.floor((duration * WAVEFORM_PIXELS_PER_SECOND) / RECORDING_BAR_STEP)
     );
-    return raw.slice(0, barCount);
+  }
+
+  private trimRawPeaksToDuration(raw: number[], duration: number): number[] {
+    return raw.slice(0, this.recordingPeakBarCount(duration));
   }
 
   private emitRecordingProgress(): void {
@@ -1555,13 +1559,18 @@ export class MemoAudioEngine {
       }
     }
 
-    const trimmed = this.trimRawPeaksToDuration(this.recordingPeaksBuffer, duration);
-
+    const barCount = this.recordingPeakBarCount(duration);
     let peaks = this.lastEmittedRecordingPeaks;
-    if (trimmed.length !== this.lastEmittedRecordingPeakCount) {
-      peaks = this.toAbsolutePeaks(trimmed);
-      this.lastEmittedRecordingPeaks = peaks;
-      this.lastEmittedRecordingPeakCount = trimmed.length;
+    if (barCount !== this.lastEmittedRecordingPeakCount) {
+      const next = appendAbsoluteRecordingPeaks(
+        this.recordingPeaksBuffer,
+        barCount,
+        this.lastEmittedRecordingPeaks,
+        this.lastEmittedRecordingPeakCount
+      );
+      peaks = next.peaks;
+      this.lastEmittedRecordingPeaks = next.peaks;
+      this.lastEmittedRecordingPeakCount = next.count;
     }
 
     if (

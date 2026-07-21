@@ -39,7 +39,7 @@
     "start": "expo start",
     "ios": "expo run:ios",
     "prebuild:ios": "expo prebuild --platform ios && node scripts/strip-push-entitlement.js",
-    "test": "npx tsx --test src/audio/normalizeRecordingLogic.test.ts src/audio/metronome.test.ts src/audio/timelineZoom.test.ts src/audio/recordingWaveformPeaks.test.ts src/audio/playbackPlans.test.ts src/storage/replaceSpliceLogic.test.ts src/location/formatLocationTitle.test.ts src/location/locationNaming.test.ts"
+    "test": "npx tsx --test src/audio/normalizeRecordingLogic.test.ts src/audio/metronome.test.ts src/audio/timelineZoom.test.ts src/audio/recordingWaveformPeaks.test.ts src/audio/recordingPeaksEmit.test.ts src/audio/playbackPlans.test.ts src/storage/replaceSpliceLogic.test.ts src/location/formatLocationTitle.test.ts src/location/locationNaming.test.ts src/components/waveformViewport.test.ts"
   },
   "private": true
 }

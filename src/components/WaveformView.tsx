@@ -42,6 +42,10 @@ import {
   MetronomeTrackGrid,
   type MetronomeGridBuffer,
 } from '@/src/components/MetronomeGridOverlay';
+import {
+  getVisibleBarIndexRange,
+  getVisibleMarkerSeconds,
+} from '@/src/components/waveformViewport';
 import type { MetronomeGridLine } from '@/src/audio/metronome';
 import type { MetronomeSettings } from '@/src/storage/types';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
@@ -693,6 +697,8 @@ type TrackWaveformRowProps = {
   sidePadding: number;
   trackHeight: number;
   pixelsPerSecond: number;
+  visibleTimeStart: number;
+  visibleTimeEnd: number;
   onPress: (locationX: number) => void;
   onLongPress?: () => void;
   trimOverlay?: TrimOverlayConfig;
@@ -713,6 +719,8 @@ function areTrackWaveformRowPropsEqual(
     prev.sidePadding !== next.sidePadding ||
     prev.trackHeight !== next.trackHeight ||
     prev.pixelsPerSecond !== next.pixelsPerSecond ||
+    prev.visibleTimeStart !== next.visibleTimeStart ||
+    prev.visibleTimeEnd !== next.visibleTimeEnd ||
     prev.scrollPriority !== next.scrollPriority ||
     prev.showBottomDivider !== next.showBottomDivider ||
     prev.volumeVisualDb !== next.volumeVisualDb ||
@@ -744,6 +752,8 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
   sidePadding,
   trackHeight,
   pixelsPerSecond,
+  visibleTimeStart,
+  visibleTimeEnd,
   onPress,
   onLongPress,
   trimOverlay,
@@ -782,6 +792,20 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
     return barCount > 0 ? resamplePeaks(source, barCount) : [];
   }, [barCount, track.peaks]);
 
+  const visibleBars = useMemo(() => {
+    if (visibleTimeEnd <= visibleTimeStart) {
+      return { startIndex: 0, endIndex: barCount };
+    }
+    return getVisibleBarIndexRange(
+      visibleTimeStart,
+      visibleTimeEnd,
+      track.startTime,
+      barCount,
+      pixelsPerSecond,
+      BAR_STEP
+    );
+  }, [barCount, pixelsPerSecond, track.startTime, visibleTimeEnd, visibleTimeStart]);
+
   const liveRecording = track.liveRecording;
   const liveBarCount = liveRecording
     ? getTrackBarCount(liveRecording.duration, contentWidth, pixelsPerSecond)
@@ -799,6 +823,29 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
         : getPeaksForMemo(liveRecording.peaks, liveBarCount);
     return resamplePeaks(source, liveBarCount);
   }, [liveBarCount, liveRecording]);
+
+  const visibleLiveBars = useMemo(() => {
+    if (!liveRecording) {
+      return { startIndex: 0, endIndex: 0 };
+    }
+    if (visibleTimeEnd <= visibleTimeStart) {
+      return { startIndex: 0, endIndex: liveBarCount };
+    }
+    return getVisibleBarIndexRange(
+      visibleTimeStart,
+      visibleTimeEnd,
+      liveRecording.startTime,
+      liveBarCount,
+      pixelsPerSecond,
+      BAR_STEP
+    );
+  }, [
+    liveBarCount,
+    liveRecording,
+    pixelsPerSecond,
+    visibleTimeEnd,
+    visibleTimeStart,
+  ]);
 
   const replaceTailDimLeft =
     track.replaceTailDimFrom !== undefined
@@ -922,30 +969,37 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
                   width: trackWidth,
                 },
               ]}>
-              {normalizedPeaks.map((peak, index) => {
-                const scaled = peakToAbsoluteScale(peak) * volumeScale;
-                const barHeight =
-                  scaled <= 0.01
-                    ? 2
-                    : Math.max(4, Math.min(trackHeight - 16, scaled * (trackHeight - 16)));
-                const barTime = (index * BAR_STEP) / pixelsPerSecond;
-                const inKeepRegion =
-                  !showTrimOverlay ||
-                  !trimOverlay ||
-                  (barTime >= trimOverlay.trimIn && barTime < trimOverlay.trimOut);
-                return (
-                  <View
-                    key={index}
-                    style={[
-                      styles.bar,
-                      {
-                        height: barHeight,
-                        backgroundColor: inKeepRegion ? barColor : mutedBarColor,
-                      },
-                    ]}
-                  />
-                );
-              })}
+              {Array.from(
+                { length: Math.max(0, visibleBars.endIndex - visibleBars.startIndex) },
+                (_, offset) => {
+                  const index = visibleBars.startIndex + offset;
+                  const peak = normalizedPeaks[index] ?? 0;
+                  const scaled = peakToAbsoluteScale(peak) * volumeScale;
+                  const barHeight =
+                    scaled <= 0.01
+                      ? 2
+                      : Math.max(4, Math.min(trackHeight - 16, scaled * (trackHeight - 16)));
+                  const barTime = (index * BAR_STEP) / pixelsPerSecond;
+                  const inKeepRegion =
+                    !showTrimOverlay ||
+                    !trimOverlay ||
+                    (barTime >= trimOverlay.trimIn && barTime < trimOverlay.trimOut);
+                  return (
+                    <View
+                      key={index}
+                      style={[
+                        styles.bar,
+                        {
+                          left: index * BAR_STEP,
+                          top: (trackHeight - barHeight) / 2,
+                          height: barHeight,
+                          backgroundColor: inKeepRegion ? barColor : mutedBarColor,
+                        },
+                      ]}
+                    />
+                  );
+                }
+              )}
             </View>
           ) : null}
           {replaceTailDimWidth > 0 ? (
@@ -972,25 +1026,32 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
                   width: liveTrackWidth,
                 },
               ]}>
-              {normalizedLivePeaks.map((peak, index) => {
-                const scaled = peakToAbsoluteScale(peak);
-                const barHeight =
-                  scaled <= 0.01
-                    ? 2
-                    : Math.max(4, Math.min(trackHeight - 16, scaled * (trackHeight - 16)));
-                return (
-                  <View
-                    key={`live-${index}`}
-                    style={[
-                      styles.bar,
-                      {
-                        height: barHeight,
-                        backgroundColor: colors.recordRed,
-                      },
-                    ]}
-                  />
-                );
-              })}
+              {Array.from(
+                { length: Math.max(0, visibleLiveBars.endIndex - visibleLiveBars.startIndex) },
+                (_, offset) => {
+                  const index = visibleLiveBars.startIndex + offset;
+                  const peak = normalizedLivePeaks[index] ?? 0;
+                  const scaled = peakToAbsoluteScale(peak);
+                  const barHeight =
+                    scaled <= 0.01
+                      ? 2
+                      : Math.max(4, Math.min(trackHeight - 16, scaled * (trackHeight - 16)));
+                  return (
+                    <View
+                      key={`live-${index}`}
+                      style={[
+                        styles.bar,
+                        {
+                          left: index * BAR_STEP,
+                          top: (trackHeight - barHeight) / 2,
+                          height: barHeight,
+                          backgroundColor: colors.recordRed,
+                        },
+                      ]}
+                    />
+                  );
+                }
+              )}
             </View>
           ) : null}
         </View>
@@ -1221,16 +1282,22 @@ function WaveformViewComponent({
   const scrollX = timeToScrollX(currentTime, contentWidth, layoutPixelsPerSecond);
 
   const markerInterval = getMarkerInterval(layoutPixelsPerSecond);
-  const markerSeconds = useMemo(() => {
-    if (layoutDuration <= 0) {
-      return [];
-    }
-    const ticks: number[] = [];
-    for (let second = 0; second <= Math.ceil(layoutDuration); second += 1) {
-      ticks.push(second);
-    }
-    return ticks;
-  }, [layoutDuration]);
+
+  const [viewportTimeBuffer, setViewportTimeBuffer] = useState<MetronomeGridBuffer>({
+    start: 0,
+    end: 0,
+  });
+  const viewportTimeBufferRef = useRef<MetronomeGridBuffer | null>(null);
+
+  const visibleMarkerSeconds = useMemo(
+    () =>
+      getVisibleMarkerSeconds(
+        viewportTimeBuffer.start,
+        viewportTimeBuffer.end,
+        layoutDuration
+      ),
+    [layoutDuration, viewportTimeBuffer.end, viewportTimeBuffer.start]
+  );
 
   const [metronomeGridLines, setMetronomeGridLines] = useState<MetronomeGridLine[]>([]);
   const metronomeGridBufferRef = useRef<MetronomeGridBuffer | null>(null);
@@ -1245,12 +1312,29 @@ function WaveformViewComponent({
   const layoutDurationRef = useRef(layoutDuration);
   layoutDurationRef.current = layoutDuration;
 
-  const syncMetronomeGridRef = useRef((_scrollX: number, _force = false) => {});
-  syncMetronomeGridRef.current = (nextScrollX: number, force = false) => {
+  const syncViewportBuffersRef = useRef((_scrollX: number, _force = false) => {});
+  syncViewportBuffersRef.current = (nextScrollX: number, force = false) => {
     const settings = metronomeRef.current;
     const pps = layoutPixelsPerSecondRef.current;
     const vpWidth = viewportWidthRef.current;
     const gridDuration = Math.max(durationRef.current, layoutDurationRef.current);
+
+    const viewportBufferValid =
+      !force &&
+      isMetronomeGridBufferValid(viewportTimeBufferRef.current, nextScrollX, vpWidth, pps);
+
+    if (!viewportBufferValid && vpWidth > 0 && pps > 0 && gridDuration > 0) {
+      const buffer = getMetronomeGridBufferRange(nextScrollX, vpWidth, pps, gridDuration);
+      viewportTimeBufferRef.current = buffer;
+      setViewportTimeBuffer((prev) =>
+        prev.start === buffer.start && prev.end === buffer.end ? prev : buffer
+      );
+    } else if (vpWidth <= 0 || pps <= 0 || gridDuration <= 0) {
+      viewportTimeBufferRef.current = null;
+      setViewportTimeBuffer((prev) =>
+        prev.start === 0 && prev.end === 0 ? prev : { start: 0, end: 0 }
+      );
+    }
 
     if (!settings || !settings.showGrid || vpWidth <= 0 || pps <= 0 || gridDuration <= 0) {
       metronomeGridBufferRef.current = null;
@@ -1281,6 +1365,9 @@ function WaveformViewComponent({
       return nextLines;
     });
   };
+
+  // Keep the old name as an alias so existing call sites stay valid.
+  const syncMetronomeGridRef = syncViewportBuffersRef;
 
   useEffect(() => {
     syncMetronomeGridRef.current(scrollOffsetRef.current, true);
@@ -1897,6 +1984,8 @@ function WaveformViewComponent({
                   sidePadding={sidePadding}
                   track={track}
                   trackHeight={trackHeight}
+                  visibleTimeEnd={viewportTimeBuffer.end}
+                  visibleTimeStart={viewportTimeBuffer.start}
                   scrollPriority={Boolean(
                     isPlaying ||
                     followRecordingScroll ||
@@ -1937,7 +2026,7 @@ function WaveformViewComponent({
           <View
             pointerEvents="none"
             style={[styles.markerBand, { width: bandWidth }]}>
-            {markerSeconds.map((second) => {
+            {visibleMarkerSeconds.map((second) => {
               const x = sidePadding + second * layoutPixelsPerSecond;
               const showLabel = second % markerInterval === 0;
               return (
@@ -2174,12 +2263,10 @@ function createWaveformStyles(colors: VoiceMemosColorScheme) {
     backgroundColor: colors.waveformCenterLine,
   },
   barsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: BAR_GAP,
     height: '100%',
   },
   bar: {
+    position: 'absolute',
     width: BAR_WIDTH,
     borderRadius: 1,
   },

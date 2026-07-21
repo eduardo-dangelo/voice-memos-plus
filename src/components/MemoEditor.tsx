@@ -1,7 +1,7 @@
 import * as Haptics from 'expo-haptics';
 import { router, useNavigation } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import {
   ActionSheetIOS,
   ActivityIndicator,
@@ -105,7 +105,6 @@ type MemoEditorEngineSlice = {
   monitorMixActive: boolean;
   monitorMixReady: boolean;
   recordingDuration: number;
-  recordingPeaks: number[];
 };
 
 function selectMemoEditorEngine(state: EngineState): MemoEditorEngineSlice {
@@ -118,11 +117,10 @@ function selectMemoEditorEngine(state: EngineState): MemoEditorEngineSlice {
     monitorMixActive: state.monitorMixActive,
     monitorMixReady: state.monitorMixReady,
     recordingDuration: state.recordingDuration,
-    recordingPeaks: state.recordingPeaks,
   };
 }
 
-/** Skip currentTime ticks while playing; keep recording peaks/duration hot. */
+/** Skip currentTime ticks while playing; recording peaks update via LiveRecordingWaveform. */
 function areMemoEditorEngineSlicesEqual(
   a: MemoEditorEngineSlice,
   b: MemoEditorEngineSlice
@@ -139,9 +137,7 @@ function areMemoEditorEngineSlicesEqual(
   }
 
   if (a.isRecording || b.isRecording) {
-    return (
-      a.recordingDuration === b.recordingDuration && a.recordingPeaks === b.recordingPeaks
-    );
+    return a.recordingDuration === b.recordingDuration;
   }
 
   if (a.isPlaying && b.isPlaying) {
@@ -149,6 +145,45 @@ function areMemoEditorEngineSlicesEqual(
   }
 
   return a.currentTime === b.currentTime;
+}
+
+function injectLiveRecordingPeaks(tracks: TrackData[], peaks: number[]): TrackData[] {
+  if (peaks.length === 0) {
+    return tracks;
+  }
+  return tracks.map((track) => {
+    if (track.id === '__recording__') {
+      return { ...track, peaks };
+    }
+    if (track.liveRecording) {
+      return {
+        ...track,
+        liveRecording: { ...track.liveRecording, peaks },
+      };
+    }
+    return track;
+  });
+}
+
+type LiveRecordingWaveformProps = {
+  isRecording: boolean;
+  tracks: TrackData[];
+} & Omit<ComponentProps<typeof WaveformView>, 'tracks'>;
+/** Subscribes only to live peaks so MemoEditor shell can ignore peak identity. */
+function LiveRecordingWaveform({
+  isRecording,
+  tracks,
+  ...waveformProps
+}: LiveRecordingWaveformProps) {
+  const recordingPeaks = useAudioEngineSelector((state) => state.recordingPeaks);
+  const tracksWithPeaks = useMemo(() => {
+    if (!isRecording) {
+      return tracks;
+    }
+    return injectLiveRecordingPeaks(tracks, recordingPeaks);
+  }, [isRecording, recordingPeaks, tracks]);
+
+  return <WaveformView {...waveformProps} isRecording={isRecording} tracks={tracksWithPeaks} />;
 }
 
 function MemoEditorTimeLabel({
@@ -2034,17 +2069,14 @@ export function MemoEditor({
     if (!isRecording) {
       return;
     }
+    const state = engine.getState();
     liveRecordingSnapshot.current = {
       startTime: recordingStartTime.current,
-      duration: Math.max(engineState.recordingDuration, 0.01),
-      peaks: engineState.recordingPeaks,
+      duration: Math.max(state.recordingDuration, 0.01),
+      peaks: state.recordingPeaks,
       color: pendingRecordingColor.current,
     };
-  }, [
-    isRecording,
-    engineState.recordingDuration,
-    engineState.recordingPeaks,
-  ]);
+  }, [engine, isRecording, engineState.recordingDuration]);
 
   useEffect(() => {
     if (!pendingRecordingLayout) {
@@ -2270,10 +2302,8 @@ export function MemoEditor({
 
       if (isRecording) {
         recordingDuration = Math.max(engineState.recordingDuration, 0.01);
-        recordingPeaks =
-          engineState.recordingPeaks.length > 0
-            ? engineState.recordingPeaks
-            : undefined;
+        // Live peaks are injected by LiveRecordingWaveform; keep shell tracks peak-free.
+        recordingPeaks = undefined;
         recordingColor = isStackLayout
           ? (pendingRecordingColor.current ?? undefined)
           : resolveTrackColor(memo.layers[0]?.color);
@@ -2362,7 +2392,6 @@ export function MemoEditor({
     activeLayerId,
     duration,
     engineState.recordingDuration,
-    engineState.recordingPeaks,
     inactivePlayableById,
     inactivePlayableTracks,
     isRecording,
@@ -2429,7 +2458,7 @@ export function MemoEditor({
       <View onLayout={handleContentLayout} style={styles.content}>
         <View style={styles.tracksArea}>
           {showEditorContent ? (
-            <WaveformView
+            <LiveRecordingWaveform
               currentTime={waveformCurrentTime}
               duration={waveformDuration}
               getPlaybackTime={getPlaybackTime}
