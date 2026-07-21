@@ -1944,6 +1944,7 @@ export function MemoEditor({
           monitorMix: useMonitorMix,
           monitorStartTime: startTime,
           nextBeatDeadlineMs,
+          silentLayerId: mode === 'replace' ? activeLayerId ?? undefined : undefined,
         });
         clearPrecountOverlay();
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);

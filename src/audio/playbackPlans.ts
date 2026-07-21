@@ -79,3 +79,14 @@ export function buildLayerPlaybackPlans(
 
   return plans;
 }
+
+/** Drop a layer from monitor-mix plans (e.g. the track being replaced). */
+export function filterPlaybackPlansBySilentLayer<T extends { layer: { id: string } }>(
+  plans: T[],
+  silentLayerId?: string | null
+): T[] {
+  if (!silentLayerId) {
+    return plans;
+  }
+  return plans.filter((plan) => plan.layer.id !== silentLayerId);
+}

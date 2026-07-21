@@ -25,6 +25,7 @@ import {
 } from '@/src/audio/layerEffectChain';
 import {
   buildLayerPlaybackPlans,
+  filterPlaybackPlansBySilentLayer,
   getLayerEffectsForPlayback,
   PLAYBACK_END_TOLERANCE,
 } from '@/src/audio/playbackPlans';
@@ -241,6 +242,8 @@ export class MemoAudioEngine {
   private recordingPrepared = false;
   private recordingWarmupFinalized = false;
   private preparedMonitorMix = false;
+  /** Layer muted in monitor mix while replacing (other layers stay audible). */
+  private monitorSilentLayerId: string | null = null;
   /** Set by abortRecordingStartCommit() to interrupt the precount downbeat wait. */
   private recordingStartAborted = false;
   /** Resampled/ready buffers for monitor-mix atomic start (path → buffer). */
@@ -698,7 +701,10 @@ export class MemoAudioEngine {
     this.playbackRateAnchorPosition = playStart;
     this.scrubMetronomeMuted = false;
 
-    const planSpecs = this.buildPlaybackPlans(playStart, endAt);
+    const planSpecs = filterPlaybackPlansBySilentLayer(
+      this.buildPlaybackPlans(playStart, endAt),
+      this.monitorSilentLayerId
+    );
     let scheduledSources = 0;
 
     for (const plan of planSpecs) {
@@ -1794,6 +1800,7 @@ export class MemoAudioEngine {
   async startRecording(options?: {
     monitorMix?: boolean;
     monitorStartTime?: number;
+    silentLayerId?: string;
   }): Promise<void> {
     if (this.state.isRecording) {
       return;
@@ -2004,6 +2011,7 @@ export class MemoAudioEngine {
     monitorMix?: boolean;
     monitorStartTime?: number;
     nextBeatDeadlineMs?: number;
+    silentLayerId?: string;
   }): Promise<void> {
     if (this.state.isRecording) {
       return;
@@ -2028,6 +2036,7 @@ export class MemoAudioEngine {
     monitorMix?: boolean;
     monitorStartTime?: number;
     nextBeatDeadlineMs?: number;
+    silentLayerId?: string;
   }): Promise<void> {
     if (this.state.isRecording) {
       return;
@@ -2037,6 +2046,7 @@ export class MemoAudioEngine {
 
     const monitorMix = options?.monitorMix ?? this.preparedMonitorMix;
     const monitorStartTime = options?.monitorStartTime ?? 0;
+    this.monitorSilentLayerId = options?.silentLayerId ?? null;
 
     await this.finalizeRecordingWarmup({ monitorMix });
 
@@ -2130,6 +2140,7 @@ export class MemoAudioEngine {
       this.recorder = null;
       this.recordingPrepared = false;
       this.recordingWarmupFinalized = false;
+      this.monitorSilentLayerId = null;
       this.invalidateAndStopSources();
       throw new Error(startResult.message);
     }
@@ -2194,6 +2205,7 @@ export class MemoAudioEngine {
     this.recordingPrepared = false;
     this.recordingWarmupFinalized = false;
     this.preparedMonitorMix = false;
+    this.monitorSilentLayerId = null;
     this.recordingPlaybackBuffers.clear();
     this.allowPrecountClicks = true;
     this.clearRecordingSampleRateState();
@@ -2212,6 +2224,7 @@ export class MemoAudioEngine {
       this.recordingPrepared = false;
       this.recordingWarmupFinalized = false;
       this.preparedMonitorMix = false;
+      this.monitorSilentLayerId = null;
       this.recordingPlaybackBuffers.clear();
       this.allowPrecountClicks = true;
       this.clearRecordingSampleRateState();
@@ -2260,6 +2273,7 @@ export class MemoAudioEngine {
       this.playbackContextStartWhen = 0;
       this.resetPlaybackRateClock();
       this.clearRecordingSampleRateState();
+      this.monitorSilentLayerId = null;
       this.allowPrecountClicks = true;
       this.emit({
         isRecording: false,
@@ -2368,7 +2382,7 @@ export class MemoAudioEngine {
       }
     }
 
-    const playPromise = this.runPlay();
+    const playPromise = this.runPlay(requestId);
     this.playInFlight = playPromise;
     try {
       await playPromise;
@@ -2379,16 +2393,19 @@ export class MemoAudioEngine {
     }
   }
 
-  private async runPlay(): Promise<void> {
+  private async runPlay(requestId: number): Promise<void> {
     if (this.loadedLayers.length === 0) {
       return;
     }
-    if (this.state.isRecording && !this.state.monitorMixActive) {
+    if (this.state.isRecording) {
       return;
     }
 
     try {
       const context = await this.ensureContext();
+      if (requestId !== this.playRequestId || this.state.isRecording) {
+        return;
+      }
       // Loop wrap already stopped sources; still invalidate session for a clean restart.
       this.invalidateAndStopSources();
 
@@ -2458,7 +2475,11 @@ export class MemoAudioEngine {
       );
 
       // Another play()/stop may have started during buffer decode.
-      if (sessionId !== this.activePlaybackSessionId) {
+      if (
+        requestId !== this.playRequestId ||
+        sessionId !== this.activePlaybackSessionId ||
+        this.state.isRecording
+      ) {
         return;
       }
 
@@ -2583,7 +2604,12 @@ export class MemoAudioEngine {
   }
 
   pause(): void {
+    // Always cancel in-flight play(); isPlaying stays false until sources schedule.
+    this.playRequestId += 1;
     if (!this.state.isPlaying) {
+      if (!this.state.isRecording) {
+        this.invalidateAndStopSources();
+      }
       return;
     }
     const pausedAt = this.context
