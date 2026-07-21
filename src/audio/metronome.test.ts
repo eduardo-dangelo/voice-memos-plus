@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
+  ACCENT_AMPLITUDE,
   getClickIntervalSec,
   getMetronomeBeatTimes,
   getMetronomeGridLineKind,
@@ -12,6 +13,9 @@ import {
   isSecondaryAccentBeat,
   METRONOME_GRID_MAX_LINES,
   METRONOME_GRID_MIN_SPACING_PX,
+  NORMAL_AMPLITUDE,
+  SECONDARY_ACCENT_GAIN,
+  synthesizeClickSamples,
 } from './metronome';
 import {
   DEFAULT_METRONOME_SETTINGS,
@@ -22,6 +26,37 @@ import {
 function makeSettings(overrides: Partial<MetronomeSettings> = {}): MetronomeSettings {
   return { ...DEFAULT_METRONOME_SETTINGS, enabled: true, ...overrides };
 }
+
+describe('synthesizeClickSamples', () => {
+  const sampleRate = 48_000;
+
+  it('keeps normal and accent peaks within full scale', () => {
+    for (const [freq, amp] of [
+      [1000, NORMAL_AMPLITUDE],
+      [1500, ACCENT_AMPLITUDE],
+    ] as const) {
+      const samples = synthesizeClickSamples(sampleRate, freq, amp);
+      let peak = 0;
+      for (const sample of samples) {
+        peak = Math.max(peak, Math.abs(sample));
+        assert.ok(sample >= -1 && sample <= 1);
+      }
+      assert.ok(peak > 0.05, 'click should be audible');
+      assert.ok(peak <= amp + 1e-6, 'peak should not exceed configured amplitude');
+    }
+  });
+
+  it('starts and ends near silence so stop() does not cut a hot sample', () => {
+    const samples = synthesizeClickSamples(sampleRate, 1500, ACCENT_AMPLITUDE);
+    assert.ok(Math.abs(samples[0]!) < 0.02);
+    assert.ok(Math.abs(samples[samples.length - 1]!) < 0.02);
+  });
+
+  it('exports secondary accent as a relative gain only (volume stays on the bus)', () => {
+    assert.equal(SECONDARY_ACCENT_GAIN, 0.75);
+    assert.ok(SECONDARY_ACCENT_GAIN < 1);
+  });
+});
 
 describe('getClickIntervalSec', () => {
   it('uses quarter-note spacing for 4/4 at 120 bpm', () => {

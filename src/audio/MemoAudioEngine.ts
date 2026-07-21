@@ -1648,7 +1648,6 @@ export class MemoAudioEngine {
     gain.gain.value = this.metronomeSettings.volume / 100;
     const source = scheduleOneMetronomeClick(context, gain, {
       accent: options.accent,
-      volume: this.metronomeSettings.volume,
     });
     this.metronomeSources.push(source);
   }
@@ -2072,8 +2071,8 @@ export class MemoAudioEngine {
             `[audio] recording start missed downbeat by ${Math.round(-remainingMs)}ms; starting now`
           );
         }
-        // Do not await rAF here — after Modal dismiss, rAF can stall indefinitely
-        // (freeze between deadlineBranch and arm). Overlay yield lives in runPrecount.
+        // Do not await rAF here — it can stall indefinitely when interactions
+        // are busy. Overlay dismiss + yield lives in runPrecount.
         startWhen = context.currentTime + RECORDING_SCHEDULE_LEAD;
         armAudibleOutput(startWhen);
       }

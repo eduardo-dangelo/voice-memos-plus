@@ -8,14 +8,26 @@ type Props = {
   visible: boolean;
   count: number | null;
   onCancel: () => void;
+  /** Fires when the Modal has finished dismissing (iOS). Used to gate monitor arm. */
+  onDismiss?: () => void;
 };
 
-export function PrecountOverlay({ visible, count, onCancel }: Props) {
+/**
+ * Full-screen Modal so count numerals always paint above the editor.
+ * Callers must wait for onDismiss (with a timeout fallback) before sync
+ * monitor-mix arm — arming while this Modal is still up freezes at "1".
+ */
+export function PrecountOverlay({ visible, count, onCancel, onDismiss }: Props) {
   const colors = useVoiceMemosColors();
   const styles = useStyles(colors);
 
   return (
-    <Modal animationType="none" transparent visible={visible} onRequestClose={onCancel}>
+    <Modal
+      animationType="none"
+      transparent
+      visible={visible}
+      onDismiss={onDismiss}
+      onRequestClose={onCancel}>
       <Pressable
         accessibilityLabel="Cancel precount"
         accessibilityRole="button"

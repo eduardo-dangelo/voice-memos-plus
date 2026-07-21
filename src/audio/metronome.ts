@@ -2,12 +2,16 @@ import type { AudioBuffer, AudioBufferSourceNode, AudioContext, GainNode } from 
 
 import type { MetronomeSettings, TimeSignaturePreset } from '@/src/storage/types';
 
-const CLICK_DURATION_SEC = 0.015;
+/** Short enough to stay clicky; long enough for a clean attack/release. */
+export const CLICK_DURATION_SEC = 0.022;
+const CLICK_ATTACK_SEC = 0.0015;
+const CLICK_RELEASE_SEC = 0.006;
 const NORMAL_CLICK_FREQ = 1000;
 const ACCENT_CLICK_FREQ = 1500;
-const NORMAL_AMPLITUDE = 0.5;
-const ACCENT_AMPLITUDE = 0.85;
-const SECONDARY_ACCENT_GAIN = 0.75;
+/** Peaks leave headphone headroom; volume is applied once on the metronome bus. */
+export const NORMAL_AMPLITUDE = 0.38;
+export const ACCENT_AMPLITUDE = 0.58;
+export const SECONDARY_ACCENT_GAIN = 0.75;
 const TIME_EPSILON = 0.0001;
 
 type BeatUnit = 'quarter' | 'eighth';
@@ -29,22 +33,46 @@ export const TIME_SIGNATURES: Record<TimeSignaturePreset, TimeSignatureConfig> =
 const normalClickCache = new WeakMap<AudioContext, AudioBuffer>();
 const accentClickCache = new WeakMap<AudioContext, AudioBuffer>();
 
+/**
+ * Synthesize a soft-edged sine click. Attack/release avoid the harsh crack
+ * that headphones exaggerate on near-instant envelopes.
+ */
+export function synthesizeClickSamples(
+  sampleRate: number,
+  frequency: number,
+  amplitude: number
+): Float32Array {
+  const length = Math.max(1, Math.ceil(sampleRate * CLICK_DURATION_SEC));
+  const data = new Float32Array(length);
+  const attackEnd = Math.min(CLICK_DURATION_SEC, CLICK_ATTACK_SEC);
+  const releaseStart = Math.max(0, CLICK_DURATION_SEC - CLICK_RELEASE_SEC);
+
+  for (let i = 0; i < length; i++) {
+    const t = i / sampleRate;
+    let envelope = Math.exp(-t * 160);
+    if (t < attackEnd && attackEnd > 0) {
+      envelope *= t / attackEnd;
+    }
+    if (t >= releaseStart && CLICK_DURATION_SEC > releaseStart) {
+      const releaseT = (t - releaseStart) / (CLICK_DURATION_SEC - releaseStart);
+      envelope *= 1 - releaseT;
+    }
+    data[i] = Math.sin(2 * Math.PI * frequency * t) * amplitude * envelope;
+  }
+
+  return data;
+}
+
 function createClickBuffer(
   context: AudioContext,
   frequency: number,
   amplitude: number
 ): AudioBuffer {
   const sampleRate = context.sampleRate;
-  const length = Math.max(1, Math.ceil(sampleRate * CLICK_DURATION_SEC));
-  const buffer = context.createBuffer(1, length, sampleRate);
+  const samples = synthesizeClickSamples(sampleRate, frequency, amplitude);
+  const buffer = context.createBuffer(1, samples.length, sampleRate);
   const data = buffer.getChannelData(0);
-
-  for (let i = 0; i < length; i++) {
-    const t = i / sampleRate;
-    const decay = Math.exp(-t * 200);
-    data[i] = Math.sin(2 * Math.PI * frequency * t) * amplitude * decay;
-  }
-
+  data.set(samples);
   return buffer;
 }
 
@@ -269,18 +297,18 @@ export function getMetronomeGridLinesInRange(
 export function playMetronomeClick(
   context: AudioContext,
   outputGain: GainNode,
-  options: { accent?: boolean; volume?: number } = {}
+  options: { accent?: boolean } = {}
 ): AudioBufferSourceNode {
   const accent = options.accent ?? false;
-  const volumeGain = Math.max(0, Math.min(1, (options.volume ?? 70) / 100));
   const buffer = accent ? getAccentClickBuffer(context) : getNormalClickBuffer(context);
   const when = context.currentTime;
 
   const source = context.createBufferSource();
   source.buffer = buffer;
 
+  // Volume is applied once on the metronome bus (outputGain), not per click.
   const clickGain = context.createGain();
-  clickGain.gain.value = volumeGain;
+  clickGain.gain.value = 1;
   source.connect(clickGain);
   clickGain.connect(outputGain);
 
@@ -304,7 +332,6 @@ export function scheduleMetronomeClicks(
   const normalBuffer = getNormalClickBuffer(context);
   const accentBuffer = getAccentClickBuffer(context);
   const sources: AudioBufferSourceNode[] = [];
-  const volumeGain = settings.volume / 100;
 
   for (const beatTime of getMetronomeBeatTimes(settings, startAt, endAt)) {
     const isPrimary = isPrimaryAccentBeat(beatTime, settings);
@@ -316,8 +343,9 @@ export function scheduleMetronomeClicks(
     const source = context.createBufferSource();
     source.buffer = buffer;
 
+    // Volume lives on the metronome bus; per-click gain only scales secondary accents.
     const clickGain = context.createGain();
-    clickGain.gain.value = volumeGain * (isSecondary ? SECONDARY_ACCENT_GAIN : 1);
+    clickGain.gain.value = isSecondary ? SECONDARY_ACCENT_GAIN : 1;
     source.connect(clickGain);
     clickGain.connect(outputGain);
 

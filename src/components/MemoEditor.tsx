@@ -309,6 +309,7 @@ export function MemoEditor({
   const editDraftRef = useRef<EditDraftSnapshot | null>(null);
   const draftGenerationRef = useRef(0);
   const precountCancelledRef = useRef(false);
+  const precountDismissResolveRef = useRef<(() => void) | null>(null);
   stackModeRef.current = stackMode;
   replaceModeRef.current = replaceMode;
   activeLayerIdRef.current = activeLayerId;
@@ -808,6 +809,31 @@ export function MemoEditor({
     setPrecountNumber(null);
   }, []);
 
+  const handlePrecountModalDismiss = useCallback(() => {
+    const resolve = precountDismissResolveRef.current;
+    precountDismissResolveRef.current = null;
+    resolve?.();
+  }, []);
+
+  /** Hide precount Modal and wait until native dismiss finishes (timeout fallback). */
+  const dismissPrecountAndWait = useCallback(async () => {
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        precountDismissResolveRef.current = null;
+        resolve();
+      };
+      precountDismissResolveRef.current = finish;
+      clearPrecountOverlay();
+      // Android may not fire Modal onDismiss; never block arm forever.
+      setTimeout(finish, 80);
+    });
+  }, [clearPrecountOverlay]);
+
   const handlePrecountCancel = useCallback(() => {
     precountCancelledRef.current = true;
     engine.abortRecordingStartCommit();
@@ -821,7 +847,8 @@ export function MemoEditor({
       precountCancelledRef.current = false;
       setPrecountNumber(null);
       setPrecountVisible(true);
-      const intervalMs = getQuarterIntervalSec(bpm) * 1000;
+      const safeBpm = Number.isFinite(bpm) && bpm > 0 ? bpm : 120;
+      const intervalMs = getQuarterIntervalSec(safeBpm) * 1000;
 
       const waitUntil = async (deadlineMs: number): Promise<boolean> => {
         while (Date.now() < deadlineMs) {
@@ -848,7 +875,7 @@ export function MemoEditor({
       // Let the modal mount before the first numeral so mount cost is outside beat 4.
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
       if (precountCancelledRef.current) {
-        clearPrecountOverlay();
+        await dismissPrecountAndWait();
         return { completed: false };
       }
 
@@ -857,7 +884,7 @@ export function MemoEditor({
       // Beats "4" → "1" — equal timing; number + click in the same turn.
       for (let i = 0; i < 4; i++) {
         if (precountCancelledRef.current) {
-          clearPrecountOverlay();
+          await dismissPrecountAndWait();
           return { completed: false };
         }
         const n = 4 - i;
@@ -870,28 +897,21 @@ export function MemoEditor({
         }
         const ok = await waitUntil(startMs + (i + 1) * intervalMs);
         if (!ok) {
-          clearPrecountOverlay();
+          await dismissPrecountAndWait();
           return { completed: false };
         }
       }
 
-      // Dismiss overlay before commit — keeping the Modal through stack/monitor
-      // arm freezes the UI at "1". Yield so React can unmount before sync arm.
-      // Use setTimeout (not rAF): after Modal dismiss, rAF can stall on device.
+      // Dismiss Modal before commit — arming monitor mix while it is still up
+      // freezes the UI at "1". Wait for onDismiss (not rAF).
       const beat1Deadline = startMs + 4 * intervalMs;
-      clearPrecountOverlay();
-      await new Promise<void>((resolve) => {
-        setTimeout(() => resolve(), 0);
-      });
-      await new Promise<void>((resolve) => {
-        setTimeout(() => resolve(), 0);
-      });
+      await dismissPrecountAndWait();
       return {
         completed: true,
         nextBeatDeadlineMs: Math.max(beat1Deadline, Date.now()),
       };
     },
-    [clearPrecountOverlay, engine]
+    [dismissPrecountAndWait, engine]
   );
 
   const handleTrackPress = useCallback(
@@ -2520,6 +2540,7 @@ export function MemoEditor({
         count={precountNumber}
         visible={precountVisible}
         onCancel={handlePrecountCancel}
+        onDismiss={handlePrecountModalDismiss}
       />
       <Modal animationType="fade" transparent visible={isExporting}>
         <View style={styles.exportOverlay}>
