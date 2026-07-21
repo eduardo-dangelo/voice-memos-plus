@@ -50,7 +50,7 @@ import {
 } from '@/src/recording/activeRecordingSession';
 import {
     endMemoLiveActivity,
-    startPlaybackLiveActivity,
+    ensurePlaybackLiveActivity,
     startRecordingLiveActivity,
 } from '@/src/widgets/recordingLiveActivityController';
 import {
@@ -191,6 +191,10 @@ export class MemoAudioEngine {
   private sources: AudioBufferSourceNode[] = [];
   private loadedLayers: LoadedLayer[] = [];
   private layerBuffers = new Map<string, AudioBuffer>();
+  /** Resampled playback buffers keyed by `${path}@${contextSampleRate}`. */
+  private resampledLayerBuffers = new Map<string, AudioBuffer>();
+  private playInFlight: Promise<void> | null = null;
+  private playRequestId = 0;
   private activeRecordingSampleRate: number | null = null;
   private recordingUsedWavFormat = false;
   private recordingTimer: ReturnType<typeof setInterval> | null = null;
@@ -221,6 +225,10 @@ export class MemoAudioEngine {
   private metronomeSources: AudioBufferSourceNode[] = [];
   private metronomeOnlyActive = false;
   private metronomeScheduledUntil = 0;
+  /** AudioContext time corresponding to `metronomeTimelineOrigin`. */
+  private metronomeAudioOrigin = 0;
+  /** Timeline time corresponding to `metronomeAudioOrigin`. */
+  private metronomeTimelineOrigin = 0;
   /** False while Phase B warmup runs so precount clicks cannot rebuild a stale graph. */
   private allowPrecountClicks = true;
   private deferredPlaybackSetup = false;
@@ -644,6 +652,8 @@ export class MemoAudioEngine {
     this.stopMetronomeSources();
     this.metronomeOnlyActive = true;
     this.metronomeScheduledUntil = startTime;
+    this.metronomeTimelineOrigin = startTime;
+    this.metronomeAudioOrigin = startWhen;
     this.playbackStartAt = startTime;
     this.playbackEndAt = startTime;
     this.playbackContextStartWhen = startWhen;
@@ -798,6 +808,8 @@ export class MemoAudioEngine {
     if (this.metronomeSettings.enabled) {
       this.metronomeOnlyActive = true;
       this.metronomeScheduledUntil = playStart;
+      this.metronomeTimelineOrigin = playStart;
+      this.metronomeAudioOrigin = startWhen;
       this.extendMetronomeOnlySchedule(playStart);
     }
   }
@@ -824,14 +836,21 @@ export class MemoAudioEngine {
       !this.metronomeOnlyActive ||
       !this.context ||
       !this.metronomeSettings.enabled ||
-      this.playbackContextStartWhen <= 0
+      this.metronomeAudioOrigin <= 0
     ) {
       return;
     }
 
     const scheduleFrom = this.metronomeScheduledUntil;
-    const scheduleTo =
+    let scheduleTo =
       Math.max(scheduleFrom, timelineNow) + METRONOME_SCHEDULE_CHUNK_SEC;
+    // Cap at playback end for monitor-mix / normal playback so long loops
+    // do not schedule an unbounded click window past the segment.
+    const capAtPlaybackEnd =
+      this.activeLayerPlayback.size > 0 || !this.state.isRecording;
+    if (capAtPlaybackEnd && this.playbackEndAt > 0) {
+      scheduleTo = Math.min(scheduleTo, this.playbackEndAt);
+    }
     if (scheduleTo <= scheduleFrom + 0.001) {
       return;
     }
@@ -840,7 +859,7 @@ export class MemoAudioEngine {
     const gain = this.ensureMetronomeGain(context);
     gain.gain.value = this.metronomeSettings.volume / 100;
     const startWhen =
-      this.playbackContextStartWhen + (scheduleFrom - this.playbackStartAt);
+      this.metronomeAudioOrigin + (scheduleFrom - this.metronomeTimelineOrigin);
     const sources = scheduleMetronomeClicks(
       context,
       gain,
@@ -852,7 +871,7 @@ export class MemoAudioEngine {
     this.metronomeSources.push(...sources);
     this.metronomeScheduledUntil = scheduleTo;
     // Keep monitor-mix end intact — only metronome-only mode extends playbackEndAt.
-    if (this.activeLayerPlayback.size === 0) {
+    if (this.activeLayerPlayback.size === 0 && this.state.isRecording) {
       this.playbackEndAt = scheduleTo;
     }
   }
@@ -860,6 +879,8 @@ export class MemoAudioEngine {
   private clearMetronomeOnlyState(): void {
     this.metronomeOnlyActive = false;
     this.metronomeScheduledUntil = 0;
+    this.metronomeAudioOrigin = 0;
+    this.metronomeTimelineOrigin = 0;
   }
 
   private refreshActiveRecordingSampleRate(): void {
@@ -1060,6 +1081,13 @@ export class MemoAudioEngine {
       }
 
       if (
+        this.metronomeOnlyActive &&
+        nextTime >= this.metronomeScheduledUntil - METRONOME_SCHEDULE_EXTEND_LEAD_SEC
+      ) {
+        this.extendMetronomeOnlySchedule(nextTime);
+      }
+
+      if (
         nextTime >= this.playbackEndAt - PLAYBACK_END_TOLERANCE &&
         this.playbackRate > PLAYBACK_RATE_EPSILON
       ) {
@@ -1151,26 +1179,24 @@ export class MemoAudioEngine {
   }
 
   private scheduleMetronome(
-    context: AudioContext,
+    _context: AudioContext,
     startAt: number,
-    endAt: number,
+    _endAt: number,
     startWhen: number
   ): void {
     this.stopMetronomeSources();
+    this.clearMetronomeOnlyState();
     if (!this.shouldPlayMetronome()) {
       return;
     }
 
-    const gain = this.ensureMetronomeGain(context);
-    gain.gain.value = this.metronomeSettings.volume / 100;
-    this.metronomeSources = scheduleMetronomeClicks(
-      context,
-      gain,
-      this.metronomeSettings,
-      startAt,
-      endAt,
-      startWhen
-    );
+    // Chunked schedule — same sliding window as recording, so long loop
+    // regions never create thousands of click nodes in one shot.
+    this.metronomeOnlyActive = true;
+    this.metronomeScheduledUntil = startAt;
+    this.metronomeTimelineOrigin = startAt;
+    this.metronomeAudioOrigin = startWhen;
+    this.extendMetronomeOnlySchedule(startAt);
   }
 
   private resyncMetronome(): void {
@@ -1389,6 +1415,7 @@ export class MemoAudioEngine {
 
   private invalidateLayerBuffers(): void {
     this.layerBuffers.clear();
+    this.resampledLayerBuffers.clear();
   }
 
   private pruneLayerBuffers(): void {
@@ -1398,6 +1425,16 @@ export class MemoAudioEngine {
         this.layerBuffers.delete(path);
       }
     }
+    for (const key of this.resampledLayerBuffers.keys()) {
+      const path = key.slice(0, key.lastIndexOf('@'));
+      if (!activePaths.has(path)) {
+        this.resampledLayerBuffers.delete(key);
+      }
+    }
+  }
+
+  private resampledBufferKey(path: string, contextRate: number): string {
+    return `${path}@${contextRate}`;
   }
 
   private async getDecodedLayerBuffer(layer: LoadedLayer): Promise<AudioBuffer> {
@@ -1419,13 +1456,26 @@ export class MemoAudioEngine {
       return decoded;
     }
 
+    const cacheKey = this.resampledBufferKey(layer.path, contextRate);
+    const cachedResampled = this.resampledLayerBuffers.get(cacheKey);
+    if (cachedResampled) {
+      return cachedResampled;
+    }
+
     if (__DEV__) {
       console.log(
         `[audio] resampling layer for playback: ${bufferRate} Hz -> ${contextRate} Hz`
       );
     }
 
-    return resampleMonoBufferFromRate(decoded, bufferRate, contextRate, context);
+    const resampled = resampleMonoBufferFromRate(
+      decoded,
+      bufferRate,
+      contextRate,
+      context
+    );
+    this.resampledLayerBuffers.set(cacheKey, resampled);
+    return resampled;
   }
 
   private buildPlaybackPlans(
@@ -1451,7 +1501,7 @@ export class MemoAudioEngine {
         this.playbackContextStartWhen = 0;
         this.resetPlaybackRateClock();
         this.emit({ currentTime: this.state.loopStart, isPlaying: true });
-        void this.play();
+        void this.play({ loopRestart: true });
         return;
       }
     }
@@ -2302,7 +2352,34 @@ export class MemoAudioEngine {
     return this.finalizeRecordingAfterStop(capture, options);
   }
 
-  async play(): Promise<void> {
+  async play(options?: { loopRestart?: boolean }): Promise<void> {
+    if (this.playInFlight && !options?.loopRestart) {
+      // Coalesce duplicate cold starts onto the in-flight play.
+      return this.playInFlight;
+    }
+
+    const requestId = ++this.playRequestId;
+
+    if (this.playInFlight) {
+      await this.playInFlight;
+      if (requestId !== this.playRequestId) {
+        // A newer play() superseded this loop restart.
+        return;
+      }
+    }
+
+    const playPromise = this.runPlay();
+    this.playInFlight = playPromise;
+    try {
+      await playPromise;
+    } finally {
+      if (this.playInFlight === playPromise) {
+        this.playInFlight = null;
+      }
+    }
+  }
+
+  private async runPlay(): Promise<void> {
     if (this.loadedLayers.length === 0) {
       return;
     }
@@ -2312,6 +2389,7 @@ export class MemoAudioEngine {
 
     try {
       const context = await this.ensureContext();
+      // Loop wrap already stopped sources; still invalidate session for a clean restart.
       this.invalidateAndStopSources();
 
       const timelineDuration = this.state.duration;
@@ -2487,7 +2565,8 @@ export class MemoAudioEngine {
         this.state.memoId &&
         this.state.memoTitle
       ) {
-        startPlaybackLiveActivity({
+        // Update-in-place on loop wraps; start only when no activity exists.
+        ensurePlaybackLiveActivity({
           memoId: this.state.memoId,
           memoTitle: this.state.memoTitle,
           playbackOffset: startAt,

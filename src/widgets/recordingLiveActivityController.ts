@@ -100,7 +100,11 @@ export function startRecordingLiveActivity(session: ActiveRecordingSession): voi
   instance = RecordingActivity.start(props, memoDeepLink(sessionWithStart.memoId));
 }
 
-export function startPlaybackLiveActivity(params: {
+/**
+ * Start playback Live Activity if none exists; otherwise update props in place.
+ * Loop wraps must not end+start — ActivityKit churn crashes after many minutes.
+ */
+export function ensurePlaybackLiveActivity(params: {
   memoId: string;
   memoTitle: string;
   playbackOffset: number;
@@ -109,10 +113,37 @@ export function startPlaybackLiveActivity(params: {
     return;
   }
 
-  void endMemoLiveActivity();
-
   const props = buildPlaybackProps(params);
+
+  if (instance) {
+    void instance.update(props).catch((error) => {
+      if (__DEV__) {
+        console.warn('[recordingLiveActivityController] update failed', error);
+      }
+    });
+    return;
+  }
+
+  const existing = RecordingActivity.getInstances()[0];
+  if (existing) {
+    instance = existing;
+    void existing.update(props).catch((error) => {
+      if (__DEV__) {
+        console.warn('[recordingLiveActivityController] update failed', error);
+      }
+    });
+    return;
+  }
+
   instance = RecordingActivity.start(props, memoDeepLink(params.memoId));
+}
+
+export function startPlaybackLiveActivity(params: {
+  memoId: string;
+  memoTitle: string;
+  playbackOffset: number;
+}): void {
+  ensurePlaybackLiveActivity(params);
 }
 
 export async function recoverMemoLiveActivity(engine: MemoAudioEngine): Promise<void> {
@@ -141,10 +172,15 @@ export async function recoverMemoLiveActivity(engine: MemoAudioEngine): Promise<
   if (state.isPlaying && state.memoId && state.memoTitle) {
     if (instances.length > 0) {
       instance = instances[0] ?? null;
+      ensurePlaybackLiveActivity({
+        memoId: state.memoId,
+        memoTitle: state.memoTitle,
+        playbackOffset: state.currentTime,
+      });
       return;
     }
 
-    startPlaybackLiveActivity({
+    ensurePlaybackLiveActivity({
       memoId: state.memoId,
       memoTitle: state.memoTitle,
       playbackOffset: state.currentTime,

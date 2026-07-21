@@ -32,6 +32,7 @@ export const TIME_SIGNATURES: Record<TimeSignaturePreset, TimeSignatureConfig> =
 
 const normalClickCache = new WeakMap<AudioContext, AudioBuffer>();
 const accentClickCache = new WeakMap<AudioContext, AudioBuffer>();
+const secondaryAccentClickCache = new WeakMap<AudioContext, AudioBuffer>();
 
 /**
  * Synthesize a soft-edged sine click. Attack/release avoid the harsh crack
@@ -90,6 +91,20 @@ function getAccentClickBuffer(context: AudioContext): AudioBuffer {
   if (!buffer) {
     buffer = createClickBuffer(context, ACCENT_CLICK_FREQ, ACCENT_AMPLITUDE);
     accentClickCache.set(context, buffer);
+  }
+  return buffer;
+}
+
+/** Accent click with secondary gain baked in — avoids per-click GainNodes. */
+function getSecondaryAccentClickBuffer(context: AudioContext): AudioBuffer {
+  let buffer = secondaryAccentClickCache.get(context);
+  if (!buffer) {
+    buffer = createClickBuffer(
+      context,
+      ACCENT_CLICK_FREQ,
+      ACCENT_AMPLITUDE * SECONDARY_ACCENT_GAIN
+    );
+    secondaryAccentClickCache.set(context, buffer);
   }
   return buffer;
 }
@@ -305,12 +320,8 @@ export function playMetronomeClick(
 
   const source = context.createBufferSource();
   source.buffer = buffer;
-
   // Volume is applied once on the metronome bus (outputGain), not per click.
-  const clickGain = context.createGain();
-  clickGain.gain.value = 1;
-  source.connect(clickGain);
-  clickGain.connect(outputGain);
+  source.connect(outputGain);
 
   source.start(when);
   source.stop(when + CLICK_DURATION_SEC);
@@ -331,23 +342,22 @@ export function scheduleMetronomeClicks(
 
   const normalBuffer = getNormalClickBuffer(context);
   const accentBuffer = getAccentClickBuffer(context);
+  const secondaryBuffer = getSecondaryAccentClickBuffer(context);
   const sources: AudioBufferSourceNode[] = [];
 
   for (const beatTime of getMetronomeBeatTimes(settings, startAt, endAt)) {
     const isPrimary = isPrimaryAccentBeat(beatTime, settings);
     const isSecondary = !isPrimary && isSecondaryAccentBeat(beatTime, settings);
-    const usesAccent = isPrimary || isSecondary;
-    const buffer = usesAccent ? accentBuffer : normalBuffer;
+    const buffer = isPrimary
+      ? accentBuffer
+      : isSecondary
+        ? secondaryBuffer
+        : normalBuffer;
     const when = startWhen + (beatTime - startAt);
 
     const source = context.createBufferSource();
     source.buffer = buffer;
-
-    // Volume lives on the metronome bus; per-click gain only scales secondary accents.
-    const clickGain = context.createGain();
-    clickGain.gain.value = isSecondary ? SECONDARY_ACCENT_GAIN : 1;
-    source.connect(clickGain);
-    clickGain.connect(outputGain);
+    source.connect(outputGain);
 
     source.start(when);
     source.stop(when + CLICK_DURATION_SEC);
