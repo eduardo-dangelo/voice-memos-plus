@@ -4,7 +4,8 @@ import { clampLayerStartTime, getLayerEffects } from '@/src/storage/types';
 
 /**
  * Skip leading recorder/file junk after JS-side record start.
- * Used as `trimIn` and as replace-splice `replacementSkipSeconds`.
+ * Included in layer `trimIn` and in replace-splice skip via
+ * `getRecordingReplacementSkipSeconds`.
  */
 export const RECORDING_WAKE_TRIM_SEC = 0.02;
 
@@ -19,6 +20,13 @@ export const RECORDING_WAKE_TRIM_SEC = 0.02;
  * start instead of hanging below 0.
  */
 export const SOFTWARE_CUE_OUTPUT_COMPENSATION_SEC = 0.1;
+
+/** Seconds to skip at the start of a replace-splice replacement buffer. */
+export function getRecordingReplacementSkipSeconds(softwareCue: boolean): number {
+  const wake = Math.max(0, RECORDING_WAKE_TRIM_SEC);
+  const cue = softwareCue ? Math.max(0, SOFTWARE_CUE_OUTPUT_COMPENSATION_SEC) : 0;
+  return wake + cue;
+}
 
 export type RecordingLatencyTrimOptions = {
   /** True when AudioContext cues (layers and/or metronome) played during the take. */

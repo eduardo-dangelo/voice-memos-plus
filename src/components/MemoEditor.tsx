@@ -877,12 +877,14 @@ export function MemoEditor({
 
       // Dismiss overlay before commit — keeping the Modal through stack/monitor
       // arm freezes the UI at "1". Yield so React can unmount before sync arm.
+      // Use setTimeout (not rAF): after Modal dismiss, rAF can stall on device.
       const beat1Deadline = startMs + 4 * intervalMs;
       clearPrecountOverlay();
       await new Promise<void>((resolve) => {
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => resolve());
-        });
+        setTimeout(() => resolve(), 0);
+      });
+      await new Promise<void>((resolve) => {
+        setTimeout(() => resolve(), 0);
       });
       return {
         completed: true,

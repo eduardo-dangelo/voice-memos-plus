@@ -187,7 +187,7 @@ export function getLayerActiveDuration(layer: Layer): number {
 export function getLayerFileOffsetAtTimeline(layer: Layer, timelineTime: number): number {
   const effects = getLayerEffects(layer);
   const activeDuration = Math.max(0, effects.trimOut - effects.trimIn);
-  const offsetInActiveRegion = timelineTime - layer.startTime;
+  const offsetInActiveRegion = timelineTime - getLayerActiveStartTime(layer);
   const clampedActiveOffset = Math.max(0, Math.min(offsetInActiveRegion, activeDuration));
   return effects.trimIn + clampedActiveOffset;
 }

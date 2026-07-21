@@ -9,7 +9,7 @@ import {
 import { renderMemoForShare } from '@/src/audio/memoExport';
 import {
   applyRecordingIoLatencyTrim,
-  RECORDING_WAKE_TRIM_SEC,
+  getRecordingReplacementSkipSeconds,
 } from '@/src/audio/recordingLatency';
 import { spliceRecording, writeAudioBufferToWavFile } from '@/src/audio/wavUtils';
 import { encodeWavToM4a } from 'audio-encode';
@@ -536,6 +536,9 @@ export async function replaceLayerFile(
     throw new Error('Layer not found');
   }
 
+  const previousEffects = getLayerEffects(layer);
+  const previousDuration = layer.duration;
+
   const source = new File(sourcePath);
   const previousFileName = layer.fileName;
   alignLayerFileNameWithSource(layer, sourcePath);
@@ -555,6 +558,24 @@ export async function replaceLayerFile(
   await source.copy(dest);
 
   await refreshLayerFromFile(memo, layer, capturedPeaks);
+
+  // refreshLayerFromFile resets effects; restore so latency trim / mix settings survive.
+  const trimOutWasFull = previousEffects.trimOut >= previousDuration - 0.001;
+  layer.effects = mergeLayerEffects(
+    getLayerEffects(layer),
+    {
+      trimIn: previousEffects.trimIn,
+      trimOut: trimOutWasFull ? layer.duration : previousEffects.trimOut,
+      volumeDb: previousEffects.volumeDb,
+      muted: previousEffects.muted,
+      solo: previousEffects.solo,
+      reverb: previousEffects.reverb,
+      delay: previousEffects.delay,
+      eq: previousEffects.eq,
+    },
+    layer.duration
+  );
+
   updateMemoTimeline(memo);
   memo.updatedAt = new Date().toISOString();
 
@@ -610,7 +631,8 @@ export async function replaceLayerSegment(
   trimEnd: number,
   replacementPath: string,
   capturedPeaks?: number[],
-  leadingPadSeconds = 0
+  leadingPadSeconds = 0,
+  options?: { softwareCue?: boolean }
 ): Promise<Memo> {
   const memo = await getMemo(memoId);
   if (!memo) {
@@ -631,7 +653,9 @@ export async function replaceLayerSegment(
 
   await spliceRecording(original.uri, trimStart, trimEnd, replacementPath, output.uri, {
     leadingPadSeconds,
-    replacementSkipSeconds: RECORDING_WAKE_TRIM_SEC,
+    replacementSkipSeconds: getRecordingReplacementSkipSeconds(
+      options?.softwareCue === true
+    ),
   });
   await replaceLayerFile(memoId, layerId, output.uri, capturedPeaks);
   return (await getMemo(memoId))!;

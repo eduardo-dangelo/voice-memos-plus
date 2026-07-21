@@ -44,10 +44,25 @@ describe('getReplaceSpliceParams', () => {
       duration: 15,
       effects: { trimIn: 1, trimOut: 9 },
     });
+    // activeStart = 3; at timeline 7 → file offset = trimIn + 4 = 5
     const result = getReplaceSpliceParams(layer, 7, 1.5);
     assert.deepEqual(result, {
-      trimStart: 6,
-      trimEnd: 7.5,
+      trimStart: 5,
+      trimEnd: 6.5,
+      leadingPadSeconds: 0,
+    });
+  });
+
+  it('maps timeline 0 to trimIn for latency-folded layers', () => {
+    const layer = makeLayer({
+      startTime: -0.12,
+      duration: 8,
+      effects: { trimIn: 0.12, trimOut: 8 },
+    });
+    const result = getReplaceSpliceParams(layer, 0, 2);
+    assert.deepEqual(result, {
+      trimStart: 0.12,
+      trimEnd: 2.12,
       leadingPadSeconds: 0,
     });
   });

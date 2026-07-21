@@ -2035,17 +2035,6 @@ export class MemoAudioEngine {
       }
     };
 
-    /** Let React paint (e.g. precount Modal dismiss) before sync monitor-mix arm. */
-    const yieldBeforeMonitorArm = async () => {
-      if (!monitorMix) {
-        return;
-      }
-      await new Promise<void>((resolve) => {
-        requestAnimationFrame(() => resolve());
-      });
-      throwIfAborted();
-    };
-
     let startWhen: number;
 
     if (deadlineMs != null) {
@@ -2083,13 +2072,12 @@ export class MemoAudioEngine {
             `[audio] recording start missed downbeat by ${Math.round(-remainingMs)}ms; starting now`
           );
         }
-        // Yield before computing startWhen so arm time is not stale after the frame.
-        await yieldBeforeMonitorArm();
+        // Do not await rAF here — after Modal dismiss, rAF can stall indefinitely
+        // (freeze between deadlineBranch and arm). Overlay yield lives in runPrecount.
         startWhen = context.currentTime + RECORDING_SCHEDULE_LEAD;
         armAudibleOutput(startWhen);
       }
     } else {
-      await yieldBeforeMonitorArm();
       startWhen = context.currentTime + RECORDING_SCHEDULE_LEAD;
       armAudibleOutput(startWhen);
     }

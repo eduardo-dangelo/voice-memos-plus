@@ -213,7 +213,6 @@ export async function stopAndSave(
         }
         const { trimStart: fileTrimStart, trimEnd: fileTrimEnd, leadingPadSeconds } =
           getReplaceSpliceParams(replaceLayer, capturedStartTime, duration);
-        // Replace splice uses wake skip only (no cue startTime shift on the whole layer).
         updated = await replaceLayerSegment(
           currentMemo.id,
           replaceLayer.id,
@@ -221,7 +220,8 @@ export async function stopAndSave(
           fileTrimEnd,
           path,
           peaks,
-          leadingPadSeconds
+          leadingPadSeconds,
+          { softwareCue }
         );
       } else {
         updated = await saveRecording(currentMemo.id, path, duration, peaks, {
