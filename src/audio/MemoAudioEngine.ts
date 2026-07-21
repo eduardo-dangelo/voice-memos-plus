@@ -67,9 +67,27 @@ const MAX_RECORDING_PEAKS = 150;
 const RECORDING_BAR_STEP = WAVEFORM_BAR_WIDTH + WAVEFORM_BAR_GAP;
 const RECORDING_SAMPLE_RATE = 44100;
 const PLAYBACK_SCHEDULE_LEAD = 0.01;
+/**
+ * Recording-only schedule lead. Kept small so clicks stay near the recorder
+ * clock / grid; large enough to build the first metronome/monitor nodes.
+ * Do not reuse PLAYBACK_SCHEDULE_LEAD here — playback scrub/resync stays separate.
+ */
+const RECORDING_SCHEDULE_LEAD = 0.015;
+/** Let the precount "1" click finish before arming replaces metronome sources. */
+const PRECOUNT_ONE_TAIL_MS = 40;
+/** Start the recorder this close to the audio downbeat after metro is already armed. */
+const RECORDING_RECORDER_WAKE_LEAD_SEC = 0.005;
 /** How far ahead to schedule metronome clicks while recording without monitor mix. */
 const METRONOME_SCHEDULE_CHUNK_SEC = 12;
 const METRONOME_SCHEDULE_EXTEND_LEAD_SEC = 2;
+
+/** Thrown when precount cancel aborts commit during the downbeat wait. */
+export class RecordingStartAbortedError extends Error {
+  constructor() {
+    super('Recording start aborted');
+    this.name = 'RecordingStartAbortedError';
+  }
+}
 const PLAYBACK_UI_UPDATE_MS = 50;
 /** Soft clamp for DJ scrub (library allows -3…3). */
 const MIN_SCRUB_PLAYBACK_RATE = -2;
@@ -121,6 +139,8 @@ export type RecordingCaptureResult = {
   duration: number;
   peaks: number[];
   wasMonitorMix: boolean;
+  /** Monitor mix and/or metronome played from AudioContext during the take. */
+  wasSoftwareMonitoredCue: boolean;
   recorderDuration: number;
 };
 
@@ -214,6 +234,8 @@ export class MemoAudioEngine {
   private recordingPrepared = false;
   private recordingWarmupFinalized = false;
   private preparedMonitorMix = false;
+  /** Set by abortRecordingStartCommit() to interrupt the precount downbeat wait. */
+  private recordingStartAborted = false;
   /** Resampled/ready buffers for monitor-mix atomic start (path → buffer). */
   private recordingPlaybackBuffers = new Map<string, AudioBuffer>();
 
@@ -1932,6 +1954,14 @@ export class MemoAudioEngine {
   }
 
   /**
+   * Abort an in-flight commitRecordingStart wait (e.g. precount overlay cancel
+   * after 4→1 but before capture starts).
+   */
+  abortRecordingStartCommit(): void {
+    this.recordingStartAborted = true;
+  }
+
+  /**
    * Finalize warmup if needed, optionally wait for a precount downbeat, then
    * start metronome/monitor and recorder together (no heavy work between them).
    */
@@ -1968,21 +1998,15 @@ export class MemoAudioEngine {
       return;
     }
 
+    this.recordingStartAborted = false;
+
     const monitorMix = options?.monitorMix ?? this.preparedMonitorMix;
     const monitorStartTime = options?.monitorStartTime ?? 0;
 
     await this.finalizeRecordingWarmup({ monitorMix });
 
-    const deadlineMs = options?.nextBeatDeadlineMs;
-    if (deadlineMs != null) {
-      const delayMs = deadlineMs - Date.now();
-      if (delayMs > 0) {
-        await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
-      } else if (__DEV__ && delayMs < -50) {
-        console.log(
-          `[audio] recording start missed downbeat by ${Math.round(-delayMs)}ms; starting now`
-        );
-      }
+    if (this.recordingStartAborted) {
+      throw new RecordingStartAbortedError();
     }
 
     if (!this.recorder || !this.context) {
@@ -1991,19 +2015,89 @@ export class MemoAudioEngine {
       throw new Error('Recording warmup incomplete');
     }
 
-    // End precount click gate before atomic arm + capture.
-    // Do not stopMetronomeSources here — arm/monitor mix stops when replacing;
-    // stopping immediately would mute the just-played "1" click (speaker I/O lag).
-    this.allowPrecountClicks = false;
-
     const context = this.context;
-    const startWhen = context.currentTime + PLAYBACK_SCHEDULE_LEAD;
+    const deadlineMs = options?.nextBeatDeadlineMs;
+    const throwIfAborted = () => {
+      if (this.recordingStartAborted) {
+        this.invalidateAndStopSources();
+        throw new RecordingStartAbortedError();
+      }
+    };
 
-    // Atomic: schedule audible output, then start capture — no awaits in between.
-    if (monitorMix) {
-      this.startMonitorMixAt(monitorStartTime, startWhen);
-    } else if (this.metronomeSettings.enabled) {
-      this.armMetronomeForRecording(monitorStartTime, startWhen);
+    const armAudibleOutput = (startWhen: number) => {
+      // End precount click gate before arm. Arm/monitor mix stopMetronomeSources
+      // themselves; do not stop earlier or the trailing "1" click is muted.
+      this.allowPrecountClicks = false;
+      if (monitorMix) {
+        this.startMonitorMixAt(monitorStartTime, startWhen);
+      } else if (this.metronomeSettings.enabled) {
+        this.armMetronomeForRecording(monitorStartTime, startWhen);
+      }
+    };
+
+    /** Let React paint (e.g. precount Modal dismiss) before sync monitor-mix arm. */
+    const yieldBeforeMonitorArm = async () => {
+      if (!monitorMix) {
+        return;
+      }
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => resolve());
+      });
+      throwIfAborted();
+    };
+
+    let startWhen: number;
+
+    if (deadlineMs != null) {
+      const remainingMs = deadlineMs - Date.now();
+      if (remainingMs > 0) {
+        // Precompute audio-clock downbeat, arm early so beat 0 cannot be dropped,
+        // then start the recorder on the downbeat (not at arm time).
+        const targetWhen = context.currentTime + remainingMs / 1000;
+        startWhen = targetWhen;
+
+        const oneTailDeadline = Date.now() + PRECOUNT_ONE_TAIL_MS;
+        while (Date.now() < oneTailDeadline) {
+          throwIfAborted();
+          const remaining = oneTailDeadline - Date.now();
+          await new Promise<void>((resolve) =>
+            setTimeout(resolve, Math.min(20, Math.max(1, remaining)))
+          );
+        }
+        throwIfAborted();
+
+        armAudibleOutput(startWhen);
+
+        const recorderWakeAtMs = deadlineMs - RECORDING_RECORDER_WAKE_LEAD_SEC * 1000;
+        while (Date.now() < recorderWakeAtMs) {
+          throwIfAborted();
+          const remaining = recorderWakeAtMs - Date.now();
+          await new Promise<void>((resolve) =>
+            setTimeout(resolve, Math.min(20, Math.max(1, remaining)))
+          );
+        }
+        throwIfAborted();
+      } else {
+        if (__DEV__ && remainingMs < -50) {
+          console.log(
+            `[audio] recording start missed downbeat by ${Math.round(-remainingMs)}ms; starting now`
+          );
+        }
+        // Yield before computing startWhen so arm time is not stale after the frame.
+        await yieldBeforeMonitorArm();
+        startWhen = context.currentTime + RECORDING_SCHEDULE_LEAD;
+        armAudibleOutput(startWhen);
+      }
+    } else {
+      await yieldBeforeMonitorArm();
+      startWhen = context.currentTime + RECORDING_SCHEDULE_LEAD;
+      armAudibleOutput(startWhen);
+    }
+
+    throwIfAborted();
+    if (!this.recorder) {
+      this.invalidateAndStopSources();
+      throw new RecordingStartAbortedError();
     }
 
     const startResult = this.recorder.start();
@@ -2046,9 +2140,14 @@ export class MemoAudioEngine {
   }
 
   async cancelPreparedRecording(): Promise<void> {
+    this.recordingStartAborted = true;
+
     if (this.state.isRecording) {
       return;
     }
+
+    // Do not await recordingStartInFlight here — abort flag lets commit reject;
+    // awaiting can nest/deadlock when callers cancel from commit error paths.
 
     if (this.recordingPrepareInFlight) {
       try {
@@ -2130,6 +2229,8 @@ export class MemoAudioEngine {
       this.recordingPeaksBuffer = [];
 
       const wasMonitorMix = this.state.monitorMixActive;
+      // Capture before clearMetronomeOnlyState — metro-only first takes need cue compensation.
+      const wasSoftwareMonitoredCue = wasMonitorMix || this.metronomeOnlyActive;
       this.stopMetronomeSources();
       this.stopActiveSources();
       this.clearMetronomeOnlyState();
@@ -2159,6 +2260,7 @@ export class MemoAudioEngine {
         duration: result.duration,
         peaks,
         wasMonitorMix,
+        wasSoftwareMonitoredCue,
         recorderDuration: result.duration,
       };
     } finally {

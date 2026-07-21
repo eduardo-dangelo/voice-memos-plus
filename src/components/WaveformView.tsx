@@ -850,8 +850,23 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
     <View
       style={[
         styles.waveformBand,
-        { width: bandWidth, height: trackHeight, backgroundColor: bandBackground },
+        { width: bandWidth, height: trackHeight },
       ]}>
+      {/* Active lane fill only for t >= 0 — left padding stays empty/dimmed. */}
+      {contentWidth > 0 ? (
+        <View
+          pointerEvents="none"
+          style={[
+            styles.trackContentBackground,
+            {
+              left: sidePadding,
+              width: contentWidth,
+              height: trackHeight,
+              backgroundColor: bandBackground,
+            },
+          ]}
+        />
+      ) : null}
       <TimelineDimRegions
         bandWidth={bandWidth}
         contentWidth={contentWidth}
@@ -2091,6 +2106,10 @@ function createWaveformStyles(colors: VoiceMemosColorScheme) {
   waveformBand: {
     position: 'relative',
     justifyContent: 'center',
+  },
+  trackContentBackground: {
+    position: 'absolute',
+    top: 0,
   },
   trackLabel: {
     position: 'absolute',

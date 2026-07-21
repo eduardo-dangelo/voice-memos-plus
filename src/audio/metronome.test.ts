@@ -91,6 +91,13 @@ describe('getMetronomeBeatTimes', () => {
     );
   });
 
+  it('includes beat 0 when recording starts on a grid boundary', () => {
+    assert.deepEqual(
+      getMetronomeBeatTimes(makeSettings({ bpm: 120, timeSignature: '4/4' }), 0, 1),
+      [0, 0.5]
+    );
+  });
+
   it('respects playback end boundary', () => {
     const beats = getMetronomeBeatTimes(
       makeSettings({ bpm: 120, timeSignature: '4/4' }),

@@ -191,13 +191,16 @@ export async function stopAndSave(
       let updated: Memo;
       let activeLayerId: string | null = layerId;
 
+      const softwareCue = capture.wasSoftwareMonitoredCue;
+
       if (wasStackMode) {
         updated = await addStackedLayer(
           currentMemo.id,
           capturedStartTime,
           path,
           peaks,
-          currentSession.trackColor ?? undefined
+          currentSession.trackColor ?? undefined,
+          { softwareCue }
         );
         activeLayerId = updated.layers[updated.layers.length - 1]?.id ?? layerId;
       } else if (wasReplaceMode) {
@@ -210,6 +213,7 @@ export async function stopAndSave(
         }
         const { trimStart: fileTrimStart, trimEnd: fileTrimEnd, leadingPadSeconds } =
           getReplaceSpliceParams(replaceLayer, capturedStartTime, duration);
+        // Replace splice uses wake skip only (no cue startTime shift on the whole layer).
         updated = await replaceLayerSegment(
           currentMemo.id,
           replaceLayer.id,
@@ -220,7 +224,9 @@ export async function stopAndSave(
           leadingPadSeconds
         );
       } else {
-        updated = await saveRecording(currentMemo.id, path, duration, peaks);
+        updated = await saveRecording(currentMemo.id, path, duration, peaks, {
+          softwareCue,
+        });
         activeLayerId = updated.layers[0]?.id ?? null;
       }
 

@@ -20,7 +20,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { DEFAULT_TRACK_COLOR, pickRandomTrackColor } from '@/constants/VoiceMemosColors';
 import { shareMemo } from '@/src/actions/shareMemo';
 import { useAudioEngine, useAudioEngineSelector } from '@/src/audio/AudioEngineContext';
-import type { EngineState } from '@/src/audio/MemoAudioEngine';
+import { RecordingStartAbortedError, type EngineState } from '@/src/audio/MemoAudioEngine';
 import {
   isHeadphonesConnected,
   needsMonitorMix,
@@ -803,9 +803,15 @@ export function MemoEditor({
     void updatePrecountMode(memo.id, next);
   }, [memo]);
 
+  const clearPrecountOverlay = useCallback(() => {
+    setPrecountVisible(false);
+    setPrecountNumber(null);
+  }, []);
+
   const handlePrecountCancel = useCallback(() => {
     precountCancelledRef.current = true;
-  }, []);
+    engine.abortRecordingStartCommit();
+  }, [engine]);
 
   const runPrecount = useCallback(
     async (
@@ -830,60 +836,61 @@ export function MemoEditor({
         return !precountCancelledRef.current;
       };
 
-      try {
-        // Caller must finalizeRecordingWarmup first so clicks use the recording context.
-        if (mode === 'sound') {
-          try {
-            await engine.primeMetronomeOutput();
-          } catch {
-            // Best-effort; clicks may still fail later.
-          }
+      // Caller must finalizeRecordingWarmup first so clicks use the recording context.
+      if (mode === 'sound') {
+        try {
+          await engine.primeMetronomeOutput();
+        } catch {
+          // Best-effort; clicks may still fail later.
         }
+      }
 
-        // Let the modal mount before the first numeral so mount cost is outside beat 4.
-        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      // Let the modal mount before the first numeral so mount cost is outside beat 4.
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      if (precountCancelledRef.current) {
+        clearPrecountOverlay();
+        return { completed: false };
+      }
+
+      const startMs = Date.now();
+
+      // Beats "4" → "1" — equal timing; number + click in the same turn.
+      for (let i = 0; i < 4; i++) {
         if (precountCancelledRef.current) {
+          clearPrecountOverlay();
           return { completed: false };
         }
-
-        const startMs = Date.now();
-
-        // Beats "4" → "1" — equal timing; number + click in the same turn.
-        for (let i = 0; i < 4; i++) {
-          if (precountCancelledRef.current) {
-            return { completed: false };
-          }
-          const n = 4 - i;
-          setPrecountNumber(n);
-          void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-          if (mode === 'sound') {
-            void engine.playMetronomeClick({ accent: n === 4 }).catch(() => {
-              // Click is best-effort during precount.
-            });
-          }
-          const ok = await waitUntil(startMs + (i + 1) * intervalMs);
-          if (!ok) {
-            return { completed: false };
-          }
+        const n = 4 - i;
+        setPrecountNumber(n);
+        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        if (mode === 'sound') {
+          void engine.playMetronomeClick({ accent: n === 4 }).catch(() => {
+            // Click is best-effort during precount.
+          });
         }
-
-        const beat1Deadline = startMs + 4 * intervalMs;
-        return {
-          completed: true,
-          nextBeatDeadlineMs: Math.max(beat1Deadline, Date.now()),
-        };
-      } finally {
-        setPrecountVisible(false);
-        setPrecountNumber(null);
+        const ok = await waitUntil(startMs + (i + 1) * intervalMs);
+        if (!ok) {
+          clearPrecountOverlay();
+          return { completed: false };
+        }
       }
-    },
-    [engine]
-  );
 
-  const clearPrecountOverlay = useCallback(() => {
-    setPrecountVisible(false);
-    setPrecountNumber(null);
-  }, []);
+      // Dismiss overlay before commit — keeping the Modal through stack/monitor
+      // arm freezes the UI at "1". Yield so React can unmount before sync arm.
+      const beat1Deadline = startMs + 4 * intervalMs;
+      clearPrecountOverlay();
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => resolve());
+        });
+      });
+      return {
+        completed: true,
+        nextBeatDeadlineMs: Math.max(beat1Deadline, Date.now()),
+      };
+    },
+    [clearPrecountOverlay, engine]
+  );
 
   const handleTrackPress = useCallback(
     (trackId: string) => {
@@ -1159,6 +1166,9 @@ export function MemoEditor({
         await loadMemoIntoEngine(engine, loaded);
       } else {
         engine.unload();
+        // unload() resets engine metronome to defaults; restore memo settings so
+        // brand-new recordings still arm clicks when the UI shows metro on.
+        engine.setMetronome(getMemoMetronomeSettings(loaded));
       }
     }
     setLoading(false);
@@ -1243,6 +1253,17 @@ export function MemoEditor({
     void (async () => {
       let nextBeatDeadlineMs: number | undefined;
       try {
+        recordingStartTime.current = 0;
+        setRecordingArmed(true);
+        beginSession({
+          memoId,
+          memoTitle,
+          mode: 'new',
+          layerId: null,
+          startTime: 0,
+          trackColor: null,
+        });
+
         if (precountMode !== 'off') {
           await engine.prepareRecordingStart();
           await engine.finalizeRecordingWarmup();
@@ -1250,6 +1271,8 @@ export function MemoEditor({
           if (!precountResult.completed) {
             await engine.cancelPreparedRecording();
             clearPrecountOverlay();
+            setRecordingArmed(false);
+            clearSession();
             pendingLocationNamingRef.current = false;
             onDismiss();
             void deleteMemo(memoId);
@@ -1260,26 +1283,24 @@ export function MemoEditor({
             return;
           }
           nextBeatDeadlineMs = precountResult.nextBeatDeadlineMs;
-        }
-
-        beginSession({
-          memoId,
-          memoTitle,
-          mode: 'new',
-          layerId: null,
-          startTime: 0,
-          trackColor: null,
-        });
-
-        if (precountMode === 'off') {
+        } else {
           await engine.prepareRecordingStart();
           await engine.finalizeRecordingWarmup();
         }
+
         await engine.commitRecordingStart({ nextBeatDeadlineMs });
+        clearPrecountOverlay();
       } catch (error) {
         await engine.cancelPreparedRecording();
         clearPrecountOverlay();
+        setRecordingArmed(false);
         clearSession();
+        if (error instanceof RecordingStartAbortedError || precountCancelledRef.current) {
+          pendingLocationNamingRef.current = false;
+          onDismiss();
+          void deleteMemo(memoId);
+          return;
+        }
         Alert.alert(
           'Recording failed',
           error instanceof Error ? error.message : 'Unknown error'
@@ -1902,6 +1923,7 @@ export function MemoEditor({
           monitorStartTime: startTime,
           nextBeatDeadlineMs,
         });
+        clearPrecountOverlay();
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       } catch (error) {
         await engine.cancelPreparedRecording();
@@ -1914,6 +1936,9 @@ export function MemoEditor({
         pendingRecordingColor.current = null;
         liveRecordingSnapshot.current = null;
         clearSession();
+        if (error instanceof RecordingStartAbortedError || precountCancelledRef.current) {
+          return;
+        }
         Alert.alert('Recording failed', error instanceof Error ? error.message : 'Unknown error');
       }
     } finally {

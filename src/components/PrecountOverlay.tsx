@@ -15,7 +15,7 @@ export function PrecountOverlay({ visible, count, onCancel }: Props) {
   const styles = useStyles(colors);
 
   return (
-    <Modal animationType="fade" transparent visible={visible} onRequestClose={onCancel}>
+    <Modal animationType="none" transparent visible={visible} onRequestClose={onCancel}>
       <Pressable
         accessibilityLabel="Cancel precount"
         accessibilityRole="button"
