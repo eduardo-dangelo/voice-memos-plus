@@ -45,6 +45,8 @@ export type MetronomeSettings = {
   timeSignature: TimeSignaturePreset;
   accentEnabled: boolean;
   showGrid: boolean;
+  /** When true, metronome toggle also sets showGrid to match enabled. */
+  showGridFollowsMetronome: boolean;
   volume: number;
 };
 
@@ -61,6 +63,7 @@ export const DEFAULT_METRONOME_SETTINGS: MetronomeSettings = {
   timeSignature: '4/4',
   accentEnabled: true,
   showGrid: true,
+  showGridFollowsMetronome: true,
   volume: 70,
 };
 
@@ -83,8 +86,21 @@ export function normalizeMetronomeSettings(
     timeSignature,
     accentEnabled: metronome?.accentEnabled ?? defaults.accentEnabled,
     showGrid: metronome?.showGrid ?? defaults.showGrid,
+    showGridFollowsMetronome:
+      metronome?.showGridFollowsMetronome ?? defaults.showGridFollowsMetronome,
     volume: Math.max(0, Math.min(100, metronome?.volume ?? defaults.volume)),
   };
+}
+
+/** Partial update for flipping metronome enabled (and optionally showGrid). */
+export function withMetronomeEnabledToggled(
+  settings: MetronomeSettings
+): Pick<MetronomeSettings, 'enabled' | 'showGrid'> {
+  const enabled = !settings.enabled;
+  if (!settings.showGridFollowsMetronome) {
+    return { enabled };
+  }
+  return { enabled, showGrid: enabled };
 }
 
 export function getMemoMetronomeSettings(memo: Pick<Memo, 'metronome'>): MetronomeSettings {

@@ -77,7 +77,9 @@ export function MetronomeSettingsSheet({ visible, settings, onChange, onClose }:
             <PresetPills
               options={ACCENT_OPTIONS}
               selectedId={settings.showGrid ? 'on' : 'off'}
-              onSelect={(value) => onChange({ showGrid: value === 'on' })}
+              onSelect={(value) =>
+                onChange({ showGrid: value === 'on', showGridFollowsMetronome: false })
+              }
             />
           </View>
 

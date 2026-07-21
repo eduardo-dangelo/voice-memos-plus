@@ -91,6 +91,7 @@ import {
   hasRecording,
   nextPrecountMode,
   normalizeMetronomeSettings,
+  withMetronomeEnabledToggled,
 } from '@/src/storage/types';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 import { formatDurationWithTenths } from '@/src/utils/format';
@@ -792,7 +793,7 @@ export function MemoEditor({
     if (!memo) {
       return;
     }
-    handleMetronomeChange({ enabled: !getMemoMetronomeSettings(memo).enabled });
+    handleMetronomeChange(withMetronomeEnabledToggled(getMemoMetronomeSettings(memo)));
   }, [handleMetronomeChange, memo]);
 
   const handlePrecountCycle = useCallback(() => {

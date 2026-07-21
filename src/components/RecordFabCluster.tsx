@@ -13,6 +13,7 @@ import {
 import {
   DEFAULT_METRONOME_SETTINGS,
   nextPrecountMode,
+  withMetronomeEnabledToggled,
   type MetronomeSettings,
   type PrecountMode,
 } from '@/src/storage/types';
@@ -39,6 +40,7 @@ function metronomeFromDefaults(): MetronomeSettings {
     enabled: defaults.metronomeEnabled,
     bpm: defaults.bpm,
     showGrid: defaults.metronomeEnabled,
+    showGridFollowsMetronome: true,
   };
 }
 
@@ -80,8 +82,7 @@ export function RecordFabCluster({ disabled, bottomOffset = 32, onRecord }: Prop
         return;
       }
       setMetronome((current) => {
-        const enabled = !current.enabled;
-        const next = { ...current, enabled, showGrid: enabled };
+        const next = { ...current, ...withMetronomeEnabledToggled(current) };
         persistSettings(precount, next);
         return next;
       });

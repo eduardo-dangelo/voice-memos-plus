@@ -20,6 +20,7 @@ import {
 import {
   DEFAULT_METRONOME_SETTINGS,
   normalizeMetronomeSettings,
+  withMetronomeEnabledToggled,
   type MetronomeSettings,
 } from '@/src/storage/types';
 
@@ -220,6 +221,10 @@ describe('normalizeMetronomeSettings', () => {
     assert.equal(normalizeMetronomeSettings({}).showGrid, true);
   });
 
+  it('defaults showGridFollowsMetronome to true', () => {
+    assert.equal(normalizeMetronomeSettings({}).showGridFollowsMetronome, true);
+  });
+
   it('preserves a valid time signature preset', () => {
     assert.equal(normalizeMetronomeSettings({ timeSignature: '3/4' }).timeSignature, '3/4');
   });
@@ -235,5 +240,32 @@ describe('normalizeMetronomeSettings', () => {
         .timeSignature,
       '4/4'
     );
+  });
+});
+
+describe('withMetronomeEnabledToggled', () => {
+  it('syncs showGrid to enabled when following', () => {
+    const settings = makeSettings({
+      enabled: false,
+      showGrid: false,
+      showGridFollowsMetronome: true,
+    });
+    assert.deepEqual(withMetronomeEnabledToggled(settings), {
+      enabled: true,
+      showGrid: true,
+    });
+    assert.deepEqual(
+      withMetronomeEnabledToggled({ ...settings, enabled: true, showGrid: true }),
+      { enabled: false, showGrid: false }
+    );
+  });
+
+  it('leaves showGrid unchanged when follow is locked', () => {
+    const settings = makeSettings({
+      enabled: false,
+      showGrid: true,
+      showGridFollowsMetronome: false,
+    });
+    assert.deepEqual(withMetronomeEnabledToggled(settings), { enabled: true });
   });
 });
