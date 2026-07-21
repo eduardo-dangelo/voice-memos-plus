@@ -2118,7 +2118,8 @@ export function MemoEditor({
   }, [activeLayerId, memo]);
 
   const blockSheetGesture =
-    activeEditor === 'eq' && activeLayerEffects?.eq.preset === 'custom';
+    isRecording ||
+    (activeEditor === 'eq' && activeLayerEffects?.eq.preset === 'custom');
 
   useLayoutEffect(() => {
     if (isPane) {
