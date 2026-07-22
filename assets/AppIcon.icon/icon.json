@@ -1,0 +1,101 @@
+{
+  "fill" : {
+    "linear-gradient" : [
+      "srgb:1.00000,1.00000,1.00000,1.00000",
+      "srgb:0.66422,0.66424,0.66423,1.00000"
+    ],
+    "orientation" : {
+      "start" : {
+        "x" : 0.5,
+        "y" : 0
+      },
+      "stop" : {
+        "x" : 0.5,
+        "y" : 0.7
+      }
+    }
+  },
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "fill" : {
+            "solid" : "srgb:1.00000,0.14913,0.00000,1.00000"
+          },
+          "glass" : false,
+          "image-name" : "Union.svg",
+          "name" : "Union",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              0,
+              -168
+            ]
+          }
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    },
+    {
+      "layers" : [
+        {
+          "fill" : {
+            "solid" : "extended-srgb:0.00000,0.53333,1.00000,1.00000"
+          },
+          "glass" : true,
+          "image-name" : "Union (2).svg",
+          "name" : "Union (2)"
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    },
+    {
+      "layers" : [
+        {
+          "blend-mode" : "normal",
+          "fill" : {
+            "solid" : "srgb:0.00000,0.32852,0.57488,1.00000"
+          },
+          "glass" : false,
+          "image-name" : "Union (1).svg",
+          "name" : "Union (1)",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              0,
+              166
+            ]
+          }
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}

@@ -11,6 +11,7 @@
       "ios"
     ],
     "ios": {
+      "icon": "./assets/AppIcon.icon",
       "supportsTablet": true,
       "bundleIdentifier": "com.voicememosplus.app",
       "userInterfaceStyle": "automatic",
