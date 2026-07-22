@@ -28,9 +28,8 @@ import {
   TIMELINE_DEFAULT_PIXELS_PER_SECOND,
 } from '@/src/audio/timelineZoom';
 import {
-  getPeaksForMemo,
+  normalizePeaksForBarCount,
   peakToAbsoluteScale,
-  resamplePeaks,
   WAVEFORM_BAR_GAP,
   WAVEFORM_BAR_WIDTH,
 } from '@/src/audio/waveform';
@@ -793,13 +792,10 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
   const trackOffset = track.startTime * pixelsPerSecond;
   const trackWidth = barCount * BAR_STEP;
 
-  const normalizedPeaks = useMemo(() => {
-    const source =
-      track.peaks && track.peaks.length > 0
-        ? track.peaks.slice(0, barCount)
-        : getPeaksForMemo(track.peaks, barCount);
-    return barCount > 0 ? resamplePeaks(source, barCount) : [];
-  }, [barCount, track.peaks]);
+  const normalizedPeaks = useMemo(
+    () => normalizePeaksForBarCount(track.peaks, barCount),
+    [barCount, track.peaks]
+  );
 
   const visibleBars = useMemo(() => {
     if (visibleTimeEnd <= visibleTimeStart) {
@@ -826,11 +822,7 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
     if (!liveRecording || liveBarCount <= 0) {
       return [];
     }
-    const source =
-      liveRecording.peaks && liveRecording.peaks.length > 0
-        ? liveRecording.peaks.slice(0, liveBarCount)
-        : getPeaksForMemo(liveRecording.peaks, liveBarCount);
-    return resamplePeaks(source, liveBarCount);
+    return normalizePeaksForBarCount(liveRecording.peaks, liveBarCount);
   }, [liveBarCount, liveRecording]);
 
   const visibleLiveBars = useMemo(() => {

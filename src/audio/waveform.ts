@@ -94,6 +94,17 @@ export function getPeaksForMemo(memoPeaks: number[] | undefined, fallbackCount =
   return Array.from({ length: fallbackCount }, () => 0.05);
 }
 
+/** Resample the full peak array to barCount — never slice first (that crops zoom-out). */
+export function normalizePeaksForBarCount(
+  peaks: number[] | undefined,
+  barCount: number
+): number[] {
+  if (barCount <= 0) {
+    return [];
+  }
+  return resamplePeaks(getPeaksForMemo(peaks, barCount), barCount);
+}
+
 export function slicePeaksForTrim(
   peaks: number[] | undefined,
   duration: number,
