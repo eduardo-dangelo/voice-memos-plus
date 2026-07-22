@@ -5,6 +5,7 @@ import { widgetsDirectory } from 'expo-widgets';
 
 import { loadMemoIntoEngine } from '@/src/audio/loadMemoIntoEngine';
 import type { MemoAudioEngine } from '@/src/audio/MemoAudioEngine';
+import { getRecordingReplacementSkipSeconds } from '@/src/audio/recordingLatency';
 import {
   addStackedLayer,
   getMemo,
@@ -12,7 +13,10 @@ import {
   saveRecording,
 } from '@/src/storage/memoStore';
 import type { Memo } from '@/src/storage/types';
-import { getReplaceSpliceParams } from '@/src/storage/types';
+import {
+  getReplaceSpliceParams,
+  MIN_REPLACE_EFFECTIVE_DURATION_SEC,
+} from '@/src/storage/types';
 
 export type RecordingSessionMode = 'new' | 'stack' | 'replace';
 
@@ -211,18 +215,66 @@ export async function stopAndSave(
         if (!replaceLayer || replaceLayer.duration <= 0) {
           throw new Error('No active layer');
         }
+        const replacementSkipSeconds = getRecordingReplacementSkipSeconds(softwareCue);
         const { trimStart: fileTrimStart, trimEnd: fileTrimEnd, leadingPadSeconds } =
-          getReplaceSpliceParams(replaceLayer, capturedStartTime, duration);
-        updated = await replaceLayerSegment(
+          getReplaceSpliceParams(
+            replaceLayer,
+            capturedStartTime,
+            duration,
+            replacementSkipSeconds
+          );
+        if (
+          leadingPadSeconds <= 0 &&
+          fileTrimEnd - fileTrimStart < MIN_REPLACE_EFFECTIVE_DURATION_SEC
+        ) {
+          throw new Error('Replacement too short');
+        }
+        // Full-file peaks come from splice PCM inside replaceLayerSegment.
+        const replaceResult = await replaceLayerSegment(
           currentMemo.id,
           replaceLayer.id,
           fileTrimStart,
           fileTrimEnd,
           path,
-          peaks,
           leadingPadSeconds,
           { softwareCue }
         );
+        updated = replaceResult.memo;
+
+        const result: RecordingSaveResult = {
+          memo: updated,
+          activeLayerId,
+          seekTime: capturedStartTime,
+          wasStackMode,
+          wasReplaceMode,
+        };
+
+        clearSession();
+
+        if (isBackground) {
+          engine.scheduleDeferredEngineReload(updated, result.seekTime);
+        } else if (reloadEngine) {
+          await loadMemoIntoEngine(engine, updated, result.seekTime);
+          if (replaceResult.prime) {
+            try {
+              const buffer = await engine.createBufferFromSamples(
+                replaceResult.prime.samples,
+                replaceResult.prime.sampleRate
+              );
+              engine.primeLayerBuffer(replaceResult.prime.path, buffer);
+            } catch (error) {
+              if (__DEV__) {
+                console.warn(
+                  '[activeRecordingSession] prime replace buffer failed',
+                  error
+                );
+              }
+            }
+          }
+        }
+
+        notifyListeners(result);
+        return result;
       } else {
         updated = await saveRecording(currentMemo.id, path, duration, peaks, {
           softwareCue,

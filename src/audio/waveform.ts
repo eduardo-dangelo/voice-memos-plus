@@ -5,6 +5,13 @@ export const WAVEFORM_ABSOLUTE_PEAK_MAX = 1;
 
 const DEFAULT_PEAK_COUNT = 150;
 
+/**
+ * capturedPeaks must describe the ENTIRE file at design density (~16 bars/s).
+ * Reject clearly under-dense captures (e.g. a replace segment stretched over a
+ * full layer) so we decode the file instead of upsampling sparse bars.
+ */
+export const CAPTURED_PEAKS_MIN_DENSITY = 0.5;
+
 export function peakToAbsoluteScale(peak: number): number {
   return Math.max(0, Math.min(1, peak / WAVEFORM_ABSOLUTE_PEAK_MAX));
 }
@@ -14,15 +21,27 @@ export function peakCountForDuration(duration: number): number {
   return Math.max(1, Math.floor(duration * WAVEFORM_PIXELS_PER_SECOND / barStep));
 }
 
+/** True when capturedPeaks look dense enough to represent the full file duration. */
+export function shouldUseCapturedPeaks(
+  capturedPeaks: number[] | undefined,
+  duration?: number
+): boolean {
+  if (!capturedPeaks || capturedPeaks.length === 0) {
+    return false;
+  }
+  if (duration == null || !(duration > 0)) {
+    return true;
+  }
+  const expected = peakCountForDuration(duration);
+  return capturedPeaks.length >= expected * CAPTURED_PEAKS_MIN_DENSITY;
+}
+
 export { accumulatePeaksFromSamples, getBarIndexForTime } from './recordingWaveformPeaks';
 
-export async function computeWaveformPeaks(
-  filePath: string,
+export function computeWaveformPeaksFromChannelData(
+  channelData: ArrayLike<number>,
   peakCount = DEFAULT_PEAK_COUNT
-): Promise<number[]> {
-  const { decodeAudioData } = await import('react-native-audio-api');
-  const buffer = await decodeAudioData(filePath);
-  const channelData = buffer.getChannelData(0);
+): number[] {
   const samplesPerPeak = Math.max(1, Math.floor(channelData.length / peakCount));
   const peaks: number[] = [];
 
@@ -31,12 +50,21 @@ export async function computeWaveformPeaks(
     const end = Math.min(start + samplesPerPeak, channelData.length);
     let max = 0;
     for (let j = start; j < end; j++) {
-      max = Math.max(max, Math.abs(channelData[j]));
+      max = Math.max(max, Math.abs(channelData[j] ?? 0));
     }
     peaks.push(peakToAbsoluteScale(max));
   }
 
   return peaks;
+}
+
+export async function computeWaveformPeaks(
+  filePath: string,
+  peakCount = DEFAULT_PEAK_COUNT
+): Promise<number[]> {
+  const { decodeAudioData } = await import('react-native-audio-api');
+  const buffer = await decodeAudioData(filePath);
+  return computeWaveformPeaksFromChannelData(buffer.getChannelData(0), peakCount);
 }
 
 export function resamplePeaks(peaks: number[], peakCount = DEFAULT_PEAK_COUNT): number[] {
@@ -72,15 +100,20 @@ export function resamplePeaks(peaks: number[], peakCount = DEFAULT_PEAK_COUNT): 
 export async function resolveWaveformPeaks(
   filePath: string,
   duration?: number,
-  capturedPeaks?: number[]
+  capturedPeaks?: number[],
+  decodedChannelData?: ArrayLike<number>
 ): Promise<number[] | undefined> {
-  if (capturedPeaks && capturedPeaks.length > 0) {
-    const peakCount = duration ? peakCountForDuration(duration) : capturedPeaks.length;
-    return resamplePeaks(capturedPeaks.map(peakToAbsoluteScale), peakCount);
+  // Prefer live peaks only when they span the full file at design density.
+  if (shouldUseCapturedPeaks(capturedPeaks, duration)) {
+    const peakCount = duration ? peakCountForDuration(duration) : capturedPeaks!.length;
+    return resamplePeaks(capturedPeaks!.map(peakToAbsoluteScale), peakCount);
   }
 
   try {
     const peakCount = duration ? peakCountForDuration(duration) : DEFAULT_PEAK_COUNT;
+    if (decodedChannelData) {
+      return computeWaveformPeaksFromChannelData(decodedChannelData, peakCount);
+    }
     return await computeWaveformPeaks(filePath, peakCount);
   } catch {
     return undefined;

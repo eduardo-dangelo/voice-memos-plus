@@ -47,6 +47,8 @@ import {
   buildMetronomeGridLines,
   getMetronomeGridBufferRange,
   isMetronomeGridBufferValid,
+  METRONOME_GRID_BUFFER_VIEWPORTS,
+  METRONOME_GRID_PLAYBACK_BUFFER_VIEWPORTS,
   MetronomeTrackGrid,
   type MetronomeGridBuffer,
 } from '@/src/components/MetronomeGridOverlay';
@@ -1325,18 +1327,37 @@ function WaveformViewComponent({
   layoutDurationRef.current = layoutDuration;
 
   const syncViewportBuffersRef = useRef((_scrollX: number, _force = false) => {});
+  const autoScrollingRef = useRef(false);
+  autoScrollingRef.current = isPlaying || followRecordingScroll;
   syncViewportBuffersRef.current = (nextScrollX: number, force = false) => {
     const settings = metronomeRef.current;
     const pps = layoutPixelsPerSecondRef.current;
     const vpWidth = viewportWidthRef.current;
     const gridDuration = Math.max(durationRef.current, layoutDurationRef.current);
+    const bufferViewports = autoScrollingRef.current
+      ? METRONOME_GRID_PLAYBACK_BUFFER_VIEWPORTS
+      : METRONOME_GRID_BUFFER_VIEWPORTS;
+    // Wider validity margin while auto-scrolling so React bar remounts are rare.
+    const validityMarginViewports = autoScrollingRef.current ? 1.5 : 0.5;
 
     const viewportBufferValid =
       !force &&
-      isMetronomeGridBufferValid(viewportTimeBufferRef.current, nextScrollX, vpWidth, pps);
+      isMetronomeGridBufferValid(
+        viewportTimeBufferRef.current,
+        nextScrollX,
+        vpWidth,
+        pps,
+        validityMarginViewports
+      );
 
     if (!viewportBufferValid && vpWidth > 0 && pps > 0 && gridDuration > 0) {
-      const buffer = getMetronomeGridBufferRange(nextScrollX, vpWidth, pps, gridDuration);
+      const buffer = getMetronomeGridBufferRange(
+        nextScrollX,
+        vpWidth,
+        pps,
+        gridDuration,
+        bufferViewports
+      );
       viewportTimeBufferRef.current = buffer;
       setViewportTimeBuffer((prev) =>
         prev.start === buffer.start && prev.end === buffer.end ? prev : buffer
@@ -1356,12 +1377,24 @@ function WaveformViewComponent({
 
     if (
       !force &&
-      isMetronomeGridBufferValid(metronomeGridBufferRef.current, nextScrollX, vpWidth, pps)
+      isMetronomeGridBufferValid(
+        metronomeGridBufferRef.current,
+        nextScrollX,
+        vpWidth,
+        pps,
+        validityMarginViewports
+      )
     ) {
       return;
     }
 
-    const buffer = getMetronomeGridBufferRange(nextScrollX, vpWidth, pps, gridDuration);
+    const buffer = getMetronomeGridBufferRange(
+      nextScrollX,
+      vpWidth,
+      pps,
+      gridDuration,
+      bufferViewports
+    );
     metronomeGridBufferRef.current = buffer;
     const nextLines = buildMetronomeGridLines(settings, buffer, pps);
     setMetronomeGridLines((prev) => {
@@ -1411,12 +1444,12 @@ function WaveformViewComponent({
   }, [followRecordingScroll, pixelsPerSecond, trackZoom]);
 
   useEffect(() => {
-    if (followRecordingScroll) {
+    if (followRecordingScroll || isPlaying) {
       return;
     }
     setPixelsPerSecond((current) => clampTimelinePixelsPerSecond(current, zoomBounds));
     setTrackZoom((current) => clampTimelineTrackZoom(current, zoomBounds));
-  }, [zoomBounds, followRecordingScroll]);
+  }, [zoomBounds, followRecordingScroll, isPlaying]);
 
   const handleLayout = (event: LayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout;
@@ -1902,20 +1935,35 @@ function WaveformViewComponent({
     }
 
     let raf = 0;
+    let bufferSyncRaf = 0;
+    let pendingBufferScrollX = 0;
     const tick = () => {
       const time = getPlaybackTimeRef.current?.() ?? currentTimeRef.current;
       const x = timeToScrollX(time, contentWidth, layoutPixelsPerSecond);
       scrollOffsetRef.current = x;
-      syncMetronomeGridRef.current(x);
+      // Scroll first; coalesce React viewport/grid updates onto the next frame so
+      // bar remounts never land in the same frame as scrollTo (reads as shake).
       scrollRef.current?.scrollTo({
         x,
         animated: false,
       });
+      pendingBufferScrollX = x;
+      if (bufferSyncRaf === 0) {
+        bufferSyncRaf = requestAnimationFrame(() => {
+          bufferSyncRaf = 0;
+          syncMetronomeGridRef.current(pendingBufferScrollX);
+        });
+      }
       raf = requestAnimationFrame(tick);
     };
 
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelAnimationFrame(raf);
+      if (bufferSyncRaf !== 0) {
+        cancelAnimationFrame(bufferSyncRaf);
+      }
+    };
   }, [isPlaying, followRecordingScroll, duration, contentWidth, viewportWidth, layoutPixelsPerSecond]);
 
   useEffect(() => {
@@ -1956,6 +2004,8 @@ function WaveformViewComponent({
     }
 
     let raf = 0;
+    let bufferSyncRaf = 0;
+    let pendingBufferScrollX = 0;
     const tick = () => {
       if (isUserScrollingRef.current) {
         raf = requestAnimationFrame(tick);
@@ -1965,20 +2015,32 @@ function WaveformViewComponent({
       const width = contentWidthRef.current;
       const x = recordingTimeToScrollX(time, width, layoutPixelsPerSecond);
       scrollOffsetRef.current = x;
-      syncMetronomeGridRef.current(x);
       scrollRef.current?.scrollTo({
         x,
         animated: false,
       });
+      pendingBufferScrollX = x;
+      if (bufferSyncRaf === 0) {
+        bufferSyncRaf = requestAnimationFrame(() => {
+          bufferSyncRaf = 0;
+          syncMetronomeGridRef.current(pendingBufferScrollX);
+        });
+      }
       raf = requestAnimationFrame(tick);
     };
 
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelAnimationFrame(raf);
+      if (bufferSyncRaf !== 0) {
+        cancelAnimationFrame(bufferSyncRaf);
+      }
+    };
   }, [followRecordingScroll, contentWidth, viewportWidth, layoutPixelsPerSecond]);
 
-  // While playing, use RN ScrollView so gesture-handler cannot steal DJ scrub pans.
-  const HorizontalScrollView = scrubEnabled ? RNScrollView : GHScrollView;
+  // Keep a stable ScrollView host — swapping RN/GH on play remounts the timeline and shakes.
+  // Prefer RN whenever scrub is available so gesture-handler cannot steal DJ scrub pans.
+  const HorizontalScrollView = onScrubRate ? RNScrollView : GHScrollView;
 
   return (
     <WaveformThemeContext.Provider value={theme}>

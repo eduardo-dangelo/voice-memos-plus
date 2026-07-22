@@ -1454,6 +1454,33 @@ export class MemoAudioEngine {
     return buffer;
   }
 
+  /**
+   * Seed the decoded-layer cache after loadMemo (which clears buffers).
+   * Path must be the final layer file URI. Sample rate is the file rate;
+   * getLayerBuffer still resamples to the context rate when needed.
+   */
+  primeLayerBuffer(path: string, buffer: AudioBuffer): void {
+    if (!path || buffer.length <= 0) {
+      return;
+    }
+    this.layerBuffers.set(path, buffer);
+  }
+
+  async createBufferFromSamples(
+    samples: Float32Array,
+    sampleRate: number
+  ): Promise<AudioBuffer> {
+    const context = await this.ensureContext();
+    const rate = Math.round(sampleRate);
+    const buffer = context.createBuffer(1, Math.max(1, samples.length), rate);
+    // copyToChannel may require a plain Float32Array backed by its own buffer.
+    const channel = samples.buffer.byteLength === samples.length * 4 && samples.byteOffset === 0
+      ? samples
+      : new Float32Array(samples);
+    buffer.copyToChannel(channel, 0);
+    return buffer;
+  }
+
   private async getLayerBuffer(context: AudioContext, layer: LoadedLayer): Promise<AudioBuffer> {
     const decoded = await this.getDecodedLayerBuffer(layer);
     const bufferRate = Math.round(decoded.sampleRate);

@@ -1,6 +1,11 @@
 import { Directory, File, Paths } from 'expo-file-system';
 
-import { computeWaveformPeaks, peakCountForDuration, resolveWaveformPeaks } from '@/src/audio/waveform';
+import {
+  computeWaveformPeaks,
+  computeWaveformPeaksFromChannelData,
+  peakCountForDuration,
+  resolveWaveformPeaks,
+} from '@/src/audio/waveform';
 import {
   createDefaultLayerEffects,
   mergeLayerEffects,
@@ -155,16 +160,30 @@ function updateMemoTimeline(memo: Memo): void {
 async function refreshLayerFromFile(
   memo: Memo,
   layer: Layer,
-  capturedPeaks?: number[]
+  capturedPeaks?: number[],
+  precomputed?: { duration: number; waveformPeaks: number[] }
 ): Promise<void> {
+  if (
+    precomputed &&
+    precomputed.duration > 0 &&
+    precomputed.waveformPeaks.length > 0
+  ) {
+    layer.duration = precomputed.duration;
+    layer.waveformPeaks = precomputed.waveformPeaks;
+    layer.effects = createDefaultLayerEffects(layer.duration);
+    return;
+  }
+
   const file = requireLayerFile(memo.id, layer.fileName);
   const { decodeAudioData } = await import('react-native-audio-api');
   const buffer = await decodeAudioData(file.uri);
   layer.duration = buffer.duration;
+  // Pass channel data so file-peak fallback does not decode a second time.
   layer.waveformPeaks = await resolveWaveformPeaks(
     file.uri,
     buffer.duration,
-    capturedPeaks
+    capturedPeaks,
+    buffer.getChannelData(0)
   );
   layer.effects = createDefaultLayerEffects(layer.duration);
 }
@@ -528,7 +547,8 @@ export async function replaceLayerFile(
   memoId: string,
   layerId: string,
   sourcePath: string,
-  capturedPeaks?: number[]
+  capturedPeaks?: number[],
+  precomputed?: { duration: number; waveformPeaks: number[] }
 ): Promise<Memo> {
   const memo = await getMemo(memoId);
   if (!memo) {
@@ -561,7 +581,7 @@ export async function replaceLayerFile(
   }
   await source.copy(dest);
 
-  await refreshLayerFromFile(memo, layer, capturedPeaks);
+  await refreshLayerFromFile(memo, layer, capturedPeaks, precomputed);
 
   // refreshLayerFromFile resets effects; restore so latency trim / mix settings survive.
   const trimOutWasFull = previousEffects.trimOut >= previousDuration - 0.001;
@@ -628,16 +648,25 @@ export async function addStackedLayer(
   return memo;
 }
 
+export type ReplaceLayerSegmentResult = {
+  memo: Memo;
+  /** PCM for warm playback cache — use final layer path after replace. */
+  prime?: {
+    path: string;
+    samples: Float32Array;
+    sampleRate: number;
+  };
+};
+
 export async function replaceLayerSegment(
   memoId: string,
   layerId: string,
   trimStart: number,
   trimEnd: number,
   replacementPath: string,
-  capturedPeaks?: number[],
   leadingPadSeconds = 0,
   options?: { softwareCue?: boolean }
-): Promise<Memo> {
+): Promise<ReplaceLayerSegmentResult> {
   const memo = await getMemo(memoId);
   if (!memo) {
     throw new Error('Memo not found');
@@ -655,14 +684,46 @@ export async function replaceLayerSegment(
     output.delete();
   }
 
-  await spliceRecording(original.uri, trimStart, trimEnd, replacementPath, output.uri, {
-    leadingPadSeconds,
-    replacementSkipSeconds: getRecordingReplacementSkipSeconds(
-      options?.softwareCue === true
-    ),
+  const splice = await spliceRecording(
+    original.uri,
+    trimStart,
+    trimEnd,
+    replacementPath,
+    output.uri,
+    {
+      leadingPadSeconds,
+      replacementSkipSeconds: getRecordingReplacementSkipSeconds(
+        options?.softwareCue === true
+      ),
+    }
+  );
+
+  // Peaks from splice PCM — full-file density, no extra decode/scan.
+  const waveformPeaks = computeWaveformPeaksFromChannelData(
+    splice.samples,
+    peakCountForDuration(splice.duration)
+  );
+
+  const updated = await replaceLayerFile(memoId, layerId, output.uri, undefined, {
+    duration: splice.duration,
+    waveformPeaks,
   });
-  await replaceLayerFile(memoId, layerId, output.uri, capturedPeaks);
-  return (await getMemo(memoId))!;
+
+  const updatedLayer = updated.layers.find((entry) => entry.id === layerId);
+  const destPath = updatedLayer
+    ? requireLayerFile(memoId, updatedLayer.fileName).uri
+    : undefined;
+
+  return {
+    memo: updated,
+    prime: destPath
+      ? {
+          path: destPath,
+          samples: splice.samples,
+          sampleRate: splice.sampleRate,
+        }
+      : undefined,
+  };
 }
 
 export async function moveMemoToFolder(

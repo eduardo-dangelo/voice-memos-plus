@@ -11,12 +11,20 @@ import {
   recordingNeedsNormalize,
   TARGET_SAMPLE_RATE,
 } from '@/src/audio/normalizeRecordingLogic';
+import {
+  applySpliceEdgeFades,
+} from '@/src/audio/spliceEdgeFades';
 
 export {
   computeNormalizeFromRate,
   recordingNeedsNormalize,
   TARGET_SAMPLE_RATE,
 } from '@/src/audio/normalizeRecordingLogic';
+
+export {
+  applySpliceEdgeFades,
+  SPLICE_EDGE_FADE_SECONDS,
+} from '@/src/audio/spliceEdgeFades';
 
 function getTrimSampleRange(
   buffer: AudioBuffer,
@@ -279,6 +287,12 @@ function deleteLegacySpliceSidecars(originalPath: string): void {
   }
 }
 
+export type SpliceRecordingResult = {
+  duration: number;
+  sampleRate: number;
+  samples: Float32Array;
+};
+
 export async function spliceRecording(
   originalPath: string,
   trimStart: number,
@@ -286,7 +300,7 @@ export async function spliceRecording(
   replacementPath: string,
   outputPath: string,
   options?: { leadingPadSeconds?: number; replacementSkipSeconds?: number }
-): Promise<number> {
+): Promise<SpliceRecordingResult> {
   deleteLegacySpliceSidecars(originalPath);
 
   const original = await decodeAudioData(originalPath);
@@ -327,8 +341,18 @@ export async function spliceRecording(
     parts.push(sliceBufferChannel(original, clampedTrimEnd, duration));
   }
 
-  const merged = concatFloat32Parts(parts);
-  return exportMonoSamplesToPath(merged, targetSampleRate, outputPath);
+  const fadedParts = applySpliceEdgeFades(parts, targetSampleRate);
+  const merged = concatFloat32Parts(fadedParts);
+  const writtenDuration = await exportMonoSamplesToPath(
+    merged,
+    targetSampleRate,
+    outputPath
+  );
+  return {
+    duration: writtenDuration,
+    sampleRate: targetSampleRate,
+    samples: merged,
+  };
 }
 
 export function writeAudioBufferToWavFile(buffer: AudioBuffer, outputPath: string): void {

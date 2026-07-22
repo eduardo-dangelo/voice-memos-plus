@@ -13,6 +13,9 @@ import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 /** Viewport widths of overscan on each side of the visible range. */
 export const METRONOME_GRID_BUFFER_VIEWPORTS = 2;
 
+/** Extra overscan while the timeline is auto-scrolling (play / live record). */
+export const METRONOME_GRID_PLAYBACK_BUFFER_VIEWPORTS = 6;
+
 export type MetronomeGridBuffer = {
   start: number;
   end: number;
@@ -35,10 +38,11 @@ export function getMetronomeGridBufferRange(
   scrollX: number,
   viewportWidth: number,
   pixelsPerSecond: number,
-  duration: number
+  duration: number,
+  bufferViewports = METRONOME_GRID_BUFFER_VIEWPORTS
 ): MetronomeGridBuffer {
   const visible = getVisibleTimeRange(scrollX, viewportWidth, pixelsPerSecond);
-  const pad = (viewportWidth / Math.max(pixelsPerSecond, 1)) * METRONOME_GRID_BUFFER_VIEWPORTS;
+  const pad = (viewportWidth / Math.max(pixelsPerSecond, 1)) * bufferViewports;
   return {
     start: Math.max(0, visible.start - pad),
     end: Math.max(0, Math.min(Math.max(0, duration), visible.end + pad)),
@@ -50,13 +54,14 @@ export function isMetronomeGridBufferValid(
   buffer: MetronomeGridBuffer | null,
   scrollX: number,
   viewportWidth: number,
-  pixelsPerSecond: number
+  pixelsPerSecond: number,
+  validityMarginViewports = 0.5
 ): boolean {
   if (!buffer || viewportWidth <= 0 || pixelsPerSecond <= 0) {
     return false;
   }
   const visible = getVisibleTimeRange(scrollX, viewportWidth, pixelsPerSecond);
-  const margin = (viewportWidth / pixelsPerSecond) * 0.5;
+  const margin = (viewportWidth / pixelsPerSecond) * validityMarginViewports;
   return visible.start >= buffer.start + margin && visible.end <= buffer.end - margin;
 }
 

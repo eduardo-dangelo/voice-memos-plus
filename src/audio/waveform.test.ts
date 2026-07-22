@@ -2,10 +2,13 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
+  CAPTURED_PEAKS_MIN_DENSITY,
+  computeWaveformPeaksFromChannelData,
   normalizePeaksForBarCount,
   peakCountForDuration,
   peakToAbsoluteScale,
   resamplePeaks,
+  shouldUseCapturedPeaks,
   WAVEFORM_BAR_GAP,
   WAVEFORM_BAR_WIDTH,
   WAVEFORM_PIXELS_PER_SECOND,
@@ -13,7 +16,7 @@ import {
 
 const BAR_STEP = WAVEFORM_BAR_WIDTH + WAVEFORM_BAR_GAP;
 
-/** Mirrors resolveWaveformPeaks when capturedPeaks are present. */
+/** Mirrors resolveWaveformPeaks when capturedPeaks pass the density guard. */
 function resolveCapturedPeaks(duration: number, capturedPeaks: number[]): number[] {
   return resamplePeaks(
     capturedPeaks.map(peakToAbsoluteScale),
@@ -69,4 +72,39 @@ test('normalizePeaksForBarCount upsamples when zoomed in past stored density', (
 test('normalizePeaksForBarCount returns empty for non-positive barCount', () => {
   assert.deepEqual(normalizePeaksForBarCount([0.5, 0.6], 0), []);
   assert.deepEqual(normalizePeaksForBarCount([0.5, 0.6], -1), []);
+});
+
+test('shouldUseCapturedPeaks rejects replace-segment density on a long layer', () => {
+  // 2s live replace (~32 bars) into a 30s layer (~480 bars) must not be trusted.
+  const segmentPeaks = Array.from({ length: 32 }, () => 0.5);
+  assert.equal(shouldUseCapturedPeaks(segmentPeaks, 30), false);
+  assert.ok(32 < peakCountForDuration(30) * CAPTURED_PEAKS_MIN_DENSITY);
+});
+
+test('shouldUseCapturedPeaks accepts full-file live peaks and mild duration skew', () => {
+  const full = Array.from({ length: 480 }, () => 0.4);
+  assert.equal(shouldUseCapturedPeaks(full, 30), true);
+
+  // Recorder duration slightly shorter than decoded file duration.
+  const slightlyShort = Array.from({ length: 460 }, () => 0.4);
+  assert.equal(shouldUseCapturedPeaks(slightlyShort, 30), true);
+
+  assert.equal(shouldUseCapturedPeaks(undefined, 30), false);
+  assert.equal(shouldUseCapturedPeaks([], 30), false);
+  assert.equal(shouldUseCapturedPeaks([0.5, 0.6]), true);
+});
+
+test('computeWaveformPeaksFromChannelData matches peakCount and finds loud samples', () => {
+  const peakCount = 4;
+  const samplesPerPeak = 10;
+  const channelData = new Float32Array(peakCount * samplesPerPeak);
+  channelData[5] = 0.8;
+  channelData[25] = -0.6;
+
+  const peaks = computeWaveformPeaksFromChannelData(channelData, peakCount);
+  assert.equal(peaks.length, peakCount);
+  assert.ok(Math.abs(peaks[0]! - 0.8) < 1e-6);
+  assert.equal(peaks[1], 0);
+  assert.ok(Math.abs(peaks[2]! - 0.6) < 1e-6);
+  assert.equal(peaks[3], 0);
 });

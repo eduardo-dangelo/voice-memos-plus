@@ -210,10 +210,14 @@ export function getLayerFileOffsetAtTimeline(layer: Layer, timelineTime: number)
   return effects.trimIn + clampedActiveOffset;
 }
 
+/** Reject in-track replaces shorter than this after latency skip. */
+export const MIN_REPLACE_EFFECTIVE_DURATION_SEC = 0.05;
+
 export function getReplaceSpliceParams(
   layer: Layer,
   timelineStart: number,
-  recordingDuration: number
+  recordingDuration: number,
+  replacementSkipSeconds = 0
 ): { trimStart: number; trimEnd: number; leadingPadSeconds: number } {
   const effects = getLayerEffects(layer);
   const activeEnd = getLayerActiveEndTime(layer);
@@ -228,8 +232,11 @@ export function getReplaceSpliceParams(
   }
 
   const trimStart = getLayerFileOffsetAtTimeline(layer, timelineStart);
+  // Hole must match skip-trimmed fill so post-punch audio is not pulled early.
+  const skip = Math.max(0, replacementSkipSeconds);
+  const effectiveDuration = Math.max(0, recordingDuration - skip);
   const trimEnd = Math.min(
-    trimStart + recordingDuration,
+    trimStart + effectiveDuration,
     effects.trimOut,
     layer.duration
   );
