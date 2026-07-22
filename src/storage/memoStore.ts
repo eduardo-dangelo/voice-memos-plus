@@ -348,7 +348,8 @@ export async function updateLoopRegion(
   memoId: string,
   loopStart: number,
   loopEnd: number,
-  loopEnabled: boolean
+  loopEnabled: boolean,
+  loopSnapToGrid?: boolean
 ): Promise<Memo> {
   const memo = await getMemo(memoId);
   if (!memo) {
@@ -357,6 +358,9 @@ export async function updateLoopRegion(
   memo.loopStart = loopStart;
   memo.loopEnd = loopEnd;
   memo.loopEnabled = loopEnabled;
+  if (loopSnapToGrid !== undefined) {
+    memo.loopSnapToGrid = loopSnapToGrid;
+  }
   normalizeLoopRegion(memo, getMemoTimelineDuration(memo));
   memo.updatedAt = new Date().toISOString();
   writeManifest(memo);

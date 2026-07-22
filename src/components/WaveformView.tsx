@@ -15,6 +15,7 @@ import {
   type PanResponderGestureState,
 } from 'react-native';
 import { ScrollView as GHScrollView } from 'react-native-gesture-handler';
+import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 
 import { colorWithAlpha, type VoiceMemosColorScheme } from '@/constants/VoiceMemosColors';
 import { clampTrimValues, dbToLinear } from '@/src/audio/layerEffects';
@@ -34,7 +35,15 @@ import {
   WAVEFORM_BAR_WIDTH,
 } from '@/src/audio/waveform';
 import { LoopColumnOverlay } from '@/src/components/LoopColumnOverlay';
-import { LOOP_ROW_HEIGHT, LoopRegionBar, type LoopOverlayConfig } from '@/src/components/LoopRegionBar';
+import {
+  LOOP_EXPAND_DURATION_MS,
+  LOOP_EXPAND_EASING,
+  LOOP_ROW_HEIGHT,
+  LOOP_ROW_HEIGHT_EXPANDED,
+  LoopRegionBar,
+  type LoopOverlayConfig,
+  type LoopPreviewState,
+} from '@/src/components/LoopRegionBar';
 import {
   buildMetronomeGridLines,
   getMetronomeGridBufferRange,
@@ -1230,6 +1239,17 @@ function WaveformViewComponent({
   const containerPageOffsetRef = useRef<PageOffset>({ x: 0, y: 0 });
   const loopOverlayRef = useRef(loopOverlay);
   loopOverlayRef.current = loopOverlay;
+  const [loopRowExpanded, setLoopRowExpanded] = useState(false);
+  const [loopPreview, setLoopPreview] = useState<LoopPreviewState | null>(null);
+  /** Layout budget always uses the collapsed row; expand extra is animated separately. */
+  const loopRowHeight = loopOverlay ? LOOP_ROW_HEIGHT : 0;
+  const loopRowHeightRef = useRef(loopRowHeight);
+  loopRowHeightRef.current = loopOverlay
+    ? loopRowExpanded
+      ? LOOP_ROW_HEIGHT_EXPANDED
+      : LOOP_ROW_HEIGHT
+    : 0;
+  const loopExpandExtraSV = useSharedValue(0);
   const lastDoubleTapAtRef = useRef(0);
   const frozenZoomRef = useRef<FrozenTimelineZoom | null>(null);
   const prevFollowRecordingScrollRef = useRef(false);
@@ -1270,9 +1290,9 @@ function WaveformViewComponent({
   const bandWidth = sidePadding * 2 + contentWidth;
   const waveformAreaHeight = Math.max(
     1,
-    viewportHeight > 0 ? viewportHeight - MARKER_ROW_HEIGHT - LOOP_ROW_HEIGHT : 1
+    viewportHeight > 0 ? viewportHeight - MARKER_ROW_HEIGHT - loopRowHeight : 1
   );
-  const playheadHeight = waveformAreaHeight + LOOP_ROW_HEIGHT;
+  const playheadHeight = waveformAreaHeight + loopRowHeight;
   const baseTrackHeight = waveformAreaHeight / Math.max(1, tracks.length);
   const trackHeight = baseTrackHeight * layoutTrackZoom;
   const tracksContentHeight = trackHeight * Math.max(1, tracks.length);
@@ -1509,7 +1529,7 @@ function WaveformViewComponent({
     if (!span) {
       return;
     }
-    const loopOffset = loopOverlayRef.current ? LOOP_ROW_HEIGHT : 0;
+    const loopOffset = loopOverlayRef.current ? loopRowHeightRef.current : 0;
     zoomGestureStartRef.current = {
       ...span,
       pixelsPerSecond: pixelsPerSecondRef.current,
@@ -1794,6 +1814,48 @@ function WaveformViewComponent({
     };
   }, [trimScrollHelpers]);
 
+  const handleLoopExpandedChange = useCallback((nextExpanded: boolean) => {
+    setLoopRowExpanded(nextExpanded);
+    loopExpandExtraSV.value = withTiming(
+      nextExpanded ? LOOP_ROW_HEIGHT_EXPANDED - LOOP_ROW_HEIGHT : 0,
+      {
+        duration: LOOP_EXPAND_DURATION_MS,
+        easing: LOOP_EXPAND_EASING,
+      }
+    );
+  }, [loopExpandExtraSV]);
+
+  const handleLoopPreviewChange = useCallback((preview: LoopPreviewState | null) => {
+    setLoopPreview(preview);
+  }, []);
+
+  const loopBarConfig = useMemo((): LoopOverlayConfig | undefined => {
+    if (!loopOverlay) {
+      return undefined;
+    }
+    return {
+      ...loopOverlay,
+      onPreviewChange: handleLoopPreviewChange,
+      onExpandedChange: handleLoopExpandedChange,
+    };
+  }, [handleLoopExpandedChange, handleLoopPreviewChange, loopOverlay]);
+
+  useEffect(() => {
+    if (!loopOverlay) {
+      setLoopRowExpanded(false);
+      setLoopPreview(null);
+      loopExpandExtraSV.value = 0;
+    }
+  }, [loopExpandExtraSV, loopOverlay]);
+
+  const animatedTracksViewportStyle = useAnimatedStyle(() => ({
+    height: Math.max(1, waveformAreaHeight - loopExpandExtraSV.value),
+  }));
+
+  const overlayLoopStart = loopPreview?.start ?? loopOverlay?.loopStart ?? 0;
+  const overlayLoopEnd = loopPreview?.end ?? loopOverlay?.loopEnd ?? 0;
+  const overlayLoopEnabled = loopPreview?.enabled ?? loopOverlay?.loopEnabled ?? false;
+
   const handleScrollEndDrag = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const velocity = event.nativeEvent.velocity?.x ?? 0;
     if (Math.abs(velocity) < 0.1) {
@@ -1952,10 +2014,10 @@ function WaveformViewComponent({
         onMomentumScrollEnd={handleMomentumScrollEnd}
         style={styles.scrollView}>
         <View style={[styles.scrollContent, { width: totalContentWidth || viewportWidth }]}>
-          {loopOverlay && loopScrollHelpers ? (
+          {loopBarConfig && loopScrollHelpers ? (
             <LoopRegionBar
               bandWidth={bandWidth}
-              config={loopOverlay}
+              config={loopBarConfig}
               disabled={isRecording}
               editDisabled={isPlaying}
               gridLines={metronomeGridLines}
@@ -1964,65 +2026,67 @@ function WaveformViewComponent({
               sidePadding={sidePadding}
             />
           ) : null}
-          <GHScrollView
-            ref={verticalScrollRef}
-            bounces={false}
-            nestedScrollEnabled
-            scrollEnabled={verticalScrollEnabled && !trimGestureActive && !zoomGestureActive}
-            scrollEventThrottle={16}
-            showsVerticalScrollIndicator={false}
-            style={{ height: waveformAreaHeight }}
-            onScroll={handleVerticalScroll}>
-            <View style={{ height: tracksContentHeight, position: 'relative' }}>
-              {tracks.map((track, index) => (
-                <TrackWaveformRow
-                  key={track.id}
-                  bandWidth={bandWidth}
-                  contentWidth={contentWidth}
-                  pixelsPerSecond={layoutPixelsPerSecond}
-                  showBottomDivider={index < tracks.length - 1}
-                  sidePadding={sidePadding}
-                  track={track}
-                  trackHeight={trackHeight}
-                  visibleTimeEnd={viewportTimeBuffer.end}
-                  visibleTimeStart={viewportTimeBuffer.start}
-                  scrollPriority={Boolean(
-                    isPlaying ||
-                    followRecordingScroll ||
-                    (gestureOverlay && gestureOverlay.layerId !== track.id)
-                  )}
-                  moveOverlay={moveOverlay}
-                  trimOverlay={trimOverlay}
-                  trimScrollHelpers={trimScrollHelpers}
-                  volumeVisualDb={volumeVisualDb}
-                  onLongPress={
-                    onTrackLongPressRef.current &&
-                    track.id !== '__recording__' &&
-                    track.id !== 'empty'
-                      ? () => onTrackLongPressRef.current?.(track.id)
-                      : undefined
-                  }
-                  onPress={(locationX) => handleTrackPress(track.id, locationX)}
-                />
-              ))}
-              <MetronomeTrackGrid
-                height={tracksContentHeight}
-                lines={metronomeGridLines}
-                pixelsPerSecond={layoutPixelsPerSecond}
-                sidePadding={sidePadding}
-              />
-              {loopOverlay ? (
-                <LoopColumnOverlay
+          <Animated.View style={animatedTracksViewportStyle}>
+            <GHScrollView
+              ref={verticalScrollRef}
+              bounces={false}
+              nestedScrollEnabled
+              scrollEnabled={verticalScrollEnabled && !trimGestureActive && !zoomGestureActive}
+              scrollEventThrottle={16}
+              showsVerticalScrollIndicator={false}
+              style={{ flex: 1 }}
+              onScroll={handleVerticalScroll}>
+              <View style={{ height: tracksContentHeight, position: 'relative' }}>
+                {tracks.map((track, index) => (
+                  <TrackWaveformRow
+                    key={track.id}
+                    bandWidth={bandWidth}
+                    contentWidth={contentWidth}
+                    pixelsPerSecond={layoutPixelsPerSecond}
+                    showBottomDivider={index < tracks.length - 1}
+                    sidePadding={sidePadding}
+                    track={track}
+                    trackHeight={trackHeight}
+                    visibleTimeEnd={viewportTimeBuffer.end}
+                    visibleTimeStart={viewportTimeBuffer.start}
+                    scrollPriority={Boolean(
+                      isPlaying ||
+                      followRecordingScroll ||
+                      (gestureOverlay && gestureOverlay.layerId !== track.id)
+                    )}
+                    moveOverlay={moveOverlay}
+                    trimOverlay={trimOverlay}
+                    trimScrollHelpers={trimScrollHelpers}
+                    volumeVisualDb={volumeVisualDb}
+                    onLongPress={
+                      onTrackLongPressRef.current &&
+                      track.id !== '__recording__' &&
+                      track.id !== 'empty'
+                        ? () => onTrackLongPressRef.current?.(track.id)
+                        : undefined
+                    }
+                    onPress={(locationX) => handleTrackPress(track.id, locationX)}
+                  />
+                ))}
+                <MetronomeTrackGrid
                   height={tracksContentHeight}
-                  loopEnabled={loopOverlay.loopEnabled}
-                  loopEnd={loopOverlay.loopEnd}
-                  loopStart={loopOverlay.loopStart}
+                  lines={metronomeGridLines}
                   pixelsPerSecond={layoutPixelsPerSecond}
                   sidePadding={sidePadding}
                 />
-              ) : null}
-            </View>
-          </GHScrollView>
+                {loopOverlay ? (
+                  <LoopColumnOverlay
+                    height={tracksContentHeight}
+                    loopEnabled={overlayLoopEnabled}
+                    loopEnd={overlayLoopEnd}
+                    loopStart={overlayLoopStart}
+                    pixelsPerSecond={layoutPixelsPerSecond}
+                    sidePadding={sidePadding}
+                  />
+                ) : null}
+              </View>
+            </GHScrollView>
+          </Animated.View>
           <View
             pointerEvents="none"
             style={[styles.markerBand, { width: bandWidth }]}>
@@ -2155,7 +2219,10 @@ function areWaveformViewPropsEqual(prev: Props, next: Props): boolean {
       prevLoop.loopEnd !== nextLoop.loopEnd ||
       prevLoop.loopEnabled !== nextLoop.loopEnabled ||
       prevLoop.duration !== nextLoop.duration ||
-      prevLoop.onChange !== nextLoop.onChange
+      prevLoop.onChange !== nextLoop.onChange ||
+      prevLoop.onOpenSettings !== nextLoop.onOpenSettings ||
+      prevLoop.holdExpanded !== nextLoop.holdExpanded ||
+      prevLoop.snapIntervalSec !== nextLoop.snapIntervalSec
     ) {
       return false;
     }

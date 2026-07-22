@@ -144,6 +144,8 @@ export type Memo = {
   loopStart?: number;
   loopEnd?: number;
   loopEnabled?: boolean;
+  /** When false, loop edges do not snap to the metronome grid even if the metronome is on. Default: true. */
+  loopSnapToGrid?: boolean;
   metronome?: MetronomeSettings;
   /** Count-in before recording: off → silent → sound */
   precount?: PrecountMode;

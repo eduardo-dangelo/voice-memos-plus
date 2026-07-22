@@ -27,7 +27,7 @@ import {
   requiresHeadphones,
   subscribeHeadphoneDisconnect,
 } from '@/src/audio/headphoneDetection';
-import { getQuarterIntervalSec } from '@/src/audio/metronome';
+import { getClickIntervalSec, getQuarterIntervalSec } from '@/src/audio/metronome';
 import type { LayerEffects, LayerEffectsChange } from '@/src/audio/layerEffects';
 import { hasAnySoloActive, isLayerSelectable, mergeLayerEffects } from '@/src/audio/layerEffects';
 import { loadMemoIntoEngine } from '@/src/audio/loadMemoIntoEngine';
@@ -41,6 +41,7 @@ import { IconActionSheet, type IconActionSheetItem } from '@/src/components/Icon
 import { MemoOptionsMenu } from '@/src/components/MemoOptionsMenu';
 import { MetronomeButton } from '@/src/components/MetronomeButton';
 import { MetronomeSettingsSheet } from '@/src/components/MetronomeSettingsSheet';
+import { LoopSettingsSheet } from '@/src/components/LoopSettingsSheet';
 import { PlaybackControls } from '@/src/components/PlaybackControls';
 import { PrecountButton } from '@/src/components/PrecountButton';
 import { PrecountOverlay } from '@/src/components/PrecountOverlay';
@@ -327,6 +328,7 @@ export function MemoEditor({
   const [colorPickerLayerId, setColorPickerLayerId] = useState<string | null>(null);
   const [trackMenuLayerId, setTrackMenuLayerId] = useState<string | null>(null);
   const [metronomeSettingsVisible, setMetronomeSettingsVisible] = useState(false);
+  const [loopSettingsVisible, setLoopSettingsVisible] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [layoutReady, setLayoutReady] = useState(false);
   const [precountVisible, setPrecountVisible] = useState(false);
@@ -772,21 +774,47 @@ export function MemoEditor({
   );
 
   const handleLoopChange = useCallback(
-    (loopStart: number, loopEnd: number, loopEnabled: boolean) => {
+    (loopStart: number, loopEnd: number, loopEnabled: boolean, loopSnapToGrid?: boolean) => {
       if (!memo) {
         return;
       }
-      setMemo({ ...memo, loopStart, loopEnd, loopEnabled });
+      const nextSnap =
+        loopSnapToGrid !== undefined ? loopSnapToGrid : memo.loopSnapToGrid;
+      setMemo({ ...memo, loopStart, loopEnd, loopEnabled, loopSnapToGrid: nextSnap });
       engine.setLoopRegion(loopStart, loopEnd, loopEnabled);
 
       if (persistLoopTimeout.current) {
         clearTimeout(persistLoopTimeout.current);
       }
       persistLoopTimeout.current = setTimeout(() => {
-        void updateLoopRegion(memo.id, loopStart, loopEnd, loopEnabled);
+        void updateLoopRegion(memo.id, loopStart, loopEnd, loopEnabled, nextSnap);
       }, 300);
     },
     [engine, memo]
+  );
+
+  const handleLoopSettingsChange = useCallback(
+    (
+      partial: Partial<{
+        loopStart: number;
+        loopEnd: number;
+        loopEnabled: boolean;
+        loopSnapToGrid: boolean;
+      }>
+    ) => {
+      if (!memo) {
+        return;
+      }
+      const loopStart = partial.loopStart ?? memo.loopStart ?? 0;
+      const loopEnd = partial.loopEnd ?? memo.loopEnd ?? 0;
+      const loopEnabled = partial.loopEnabled ?? memo.loopEnabled ?? false;
+      const loopSnapToGrid =
+        partial.loopSnapToGrid !== undefined
+          ? partial.loopSnapToGrid
+          : memo.loopSnapToGrid !== false;
+      handleLoopChange(loopStart, loopEnd, loopEnabled, loopSnapToGrid);
+    },
+    [handleLoopChange, memo]
   );
 
   const flushMetronomePersist = useCallback(() => {
@@ -2438,14 +2466,39 @@ export function MemoEditor({
     if (!memo || waveformDuration <= 0) {
       return undefined;
     }
+    const snapEnabled =
+      metronomeSettings.enabled && memo.loopSnapToGrid !== false;
     return {
       loopStart: memo.loopStart ?? 0,
       loopEnd: memo.loopEnd ?? 0,
       loopEnabled: memo.loopEnabled ?? false,
       duration: waveformDuration,
       onChange: handleLoopChange,
+      onOpenSettings: () => setLoopSettingsVisible(true),
+      holdExpanded: loopSettingsVisible,
+      snapIntervalSec: snapEnabled ? getClickIntervalSec(metronomeSettings) : null,
     };
-  }, [handleLoopChange, memo, waveformDuration]);
+  }, [handleLoopChange, loopSettingsVisible, memo, metronomeSettings, waveformDuration]);
+
+  const loopSettingsValues = useMemo(() => {
+    if (!memo) {
+      return null;
+    }
+    return {
+      loopStart: memo.loopStart ?? 0,
+      loopEnd: memo.loopEnd ?? 0,
+      loopEnabled: memo.loopEnabled ?? false,
+      loopSnapToGrid: memo.loopSnapToGrid !== false,
+      duration: waveformDuration,
+    };
+  }, [memo, waveformDuration]);
+
+  const loopSheetSnapInterval = useMemo(() => {
+    if (!metronomeSettings.enabled) {
+      return null;
+    }
+    return getClickIntervalSec(metronomeSettings);
+  }, [metronomeSettings]);
 
   const volumeVisualDb =
     activeEditor === 'volume' && activeLayerEffects
@@ -2568,6 +2621,17 @@ export function MemoEditor({
         onChange={handleMetronomeChange}
         onClose={() => setMetronomeSettingsVisible(false)}
       />
+      {loopSettingsValues ? (
+        <LoopSettingsSheet
+          snapIntervalSec={
+            loopSettingsValues.loopSnapToGrid ? loopSheetSnapInterval : null
+          }
+          values={loopSettingsValues}
+          visible={loopSettingsVisible}
+          onChange={handleLoopSettingsChange}
+          onClose={() => setLoopSettingsVisible(false)}
+        />
+      ) : null}
       <PrecountOverlay
         count={precountNumber}
         visible={precountVisible}
