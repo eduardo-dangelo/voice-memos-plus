@@ -227,9 +227,11 @@ type Props = {
   volumeVisualDb?: number;
 };
 
-/** Scrub rate follows finger speed; 1× ≈ scrolling at layoutPixelsPerSecond. */
-const SCRUB_RATE_MIN = -2;
-const SCRUB_RATE_MAX = 2;
+/** Scrub rate follows finger speed; sensitivity scales how fast 1× is reached. */
+const SCRUB_RATE_MIN = -3;
+const SCRUB_RATE_MAX = 3;
+/** Amplifies velocity→rate so moderate drags reach useful rates sooner. */
+const SCRUB_RATE_SENSITIVITY = 3;
 const SCRUB_RATE_EPSILON = 0.02;
 /** No move samples for this long while scrubbing → treat as hold (rate 0). */
 const SCRUB_HOLD_IDLE_MS = 48;
@@ -1751,8 +1753,9 @@ function WaveformViewComponent({
           emitScrubRateRef.current(0);
           return;
         }
-        // Finger right → reverse; rate 1 ≈ dragging at pixelsPerSecond. Hold → idle → pause.
-        emitScrubRateRef.current(-vx / pps);
+        // Finger right → reverse; rate 1 ≈ dragging at pixelsPerSecond / sensitivity.
+        // Hold → idle → pause.
+        emitScrubRateRef.current((-vx / pps) * SCRUB_RATE_SENSITIVITY);
         scheduleScrubHoldIdleRef.current();
       },
       onPanResponderRelease: () => endScrubGestureRef.current(),

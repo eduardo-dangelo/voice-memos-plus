@@ -91,8 +91,8 @@ export class RecordingStartAbortedError extends Error {
 }
 const PLAYBACK_UI_UPDATE_MS = 50;
 /** Soft clamp for DJ scrub (library allows -3…3). */
-const MIN_SCRUB_PLAYBACK_RATE = -2;
-const MAX_SCRUB_PLAYBACK_RATE = 2;
+const MIN_SCRUB_PLAYBACK_RATE = -3;
+const MAX_SCRUB_PLAYBACK_RATE = 3;
 const PLAYBACK_RATE_EPSILON = 0.02;
 /** Extend scheduled source stops while rate ≠ 1 so context-time stops do not cut early. */
 const SCRUB_STOP_EXTENSION_SEC = 3600;
