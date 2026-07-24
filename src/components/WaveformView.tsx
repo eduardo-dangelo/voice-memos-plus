@@ -6,7 +6,6 @@ import {
   NativeScrollEvent,
   NativeSyntheticEvent,
   PanResponder,
-  Pressable,
   ScrollView as RNScrollView,
   StyleSheet,
   Text,
@@ -69,6 +68,8 @@ const PLAYHEAD_CAP_SIZE = 6;
 const MIN_LABEL_SPACING = 48;
 const TIMELINE_HEADROOM_SECONDS = 30;
 const LAYOUT_DURATION_STEP_SECONDS = 30;
+/** Min interval between React viewport/grid commits while auto-scrolling. */
+const VIEWPORT_COMMIT_MIN_MS = 100;
 const TRIM_SIDE_BORDER = 6;
 const TRIM_EDGE_BORDER = 2;
 const TRIM_HANDLE_TOUCH = 56;
@@ -717,7 +718,6 @@ type TrackWaveformRowProps = {
   moveOverlay?: MoveOverlayConfig;
   volumeVisualDb?: number;
   trimScrollHelpers?: TrimScrollHelpers;
-  scrollPriority?: boolean;
   showBottomDivider?: boolean;
 };
 
@@ -726,19 +726,45 @@ function areTrackWaveformRowPropsEqual(
   next: TrackWaveformRowProps
 ): boolean {
   if (
-    prev.bandWidth !== next.bandWidth ||
-    prev.contentWidth !== next.contentWidth ||
     prev.sidePadding !== next.sidePadding ||
     prev.trackHeight !== next.trackHeight ||
     prev.pixelsPerSecond !== next.pixelsPerSecond ||
     prev.visibleTimeStart !== next.visibleTimeStart ||
     prev.visibleTimeEnd !== next.visibleTimeEnd ||
-    prev.scrollPriority !== next.scrollPriority ||
     prev.showBottomDivider !== next.showBottomDivider ||
     prev.volumeVisualDb !== next.volumeVisualDb ||
     prev.trimScrollHelpers !== next.trimScrollHelpers
   ) {
     return false;
+  }
+  // contentWidth/bandWidth grow with layout headroom; ignore when bar counts are unchanged.
+  if (prev.contentWidth !== next.contentWidth || prev.bandWidth !== next.bandWidth) {
+    const prevBars = getTrackBarCount(
+      prev.track.duration,
+      prev.contentWidth,
+      prev.pixelsPerSecond
+    );
+    const nextBars = getTrackBarCount(
+      next.track.duration,
+      next.contentWidth,
+      next.pixelsPerSecond
+    );
+    if (prevBars !== nextBars) {
+      return false;
+    }
+    const prevLive = prev.track.liveRecording;
+    const nextLive = next.track.liveRecording;
+    if (prevLive || nextLive) {
+      if (!prevLive || !nextLive) {
+        return false;
+      }
+      if (
+        getTrackBarCount(prevLive.duration, prev.contentWidth, prev.pixelsPerSecond) !==
+        getTrackBarCount(nextLive.duration, next.contentWidth, next.pixelsPerSecond)
+      ) {
+        return false;
+      }
+    }
   }
   if (
     prev.trimOverlay?.layerId !== next.trimOverlay?.layerId ||
@@ -772,7 +798,6 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
   moveOverlay,
   volumeVisualDb,
   trimScrollHelpers,
-  scrollPriority = false,
   showBottomDivider = false,
 }: TrackWaveformRowProps) {
   const { styles, colors } = useWaveformTheme();
@@ -1112,54 +1137,42 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
 
   const rowSizeStyle = { width: bandWidth, height: trackHeight };
 
-  if (scrollPriority) {
-    return (
-      <View
-        style={[styles.trackRow, rowSizeStyle]}
-        onTouchStart={(event) => {
-          touchDraggedRef.current = false;
-          longPressTriggeredRef.current = false;
-          touchStartRef.current = {
-            x: event.nativeEvent.pageX,
-            y: event.nativeEvent.pageY,
-          };
-          clearLongPressTimer();
-          if (onLongPressRef.current) {
-            longPressTimerRef.current = setTimeout(() => {
-              longPressTriggeredRef.current = true;
-              onLongPressRef.current?.();
-            }, LONG_PRESS_DELAY_MS);
-          }
-        }}
-        onTouchMove={(event) => {
-          const dx = Math.abs(event.nativeEvent.pageX - touchStartRef.current.x);
-          const dy = Math.abs(event.nativeEvent.pageY - touchStartRef.current.y);
-          if (dx > TAP_DRAG_THRESHOLD || dy > TAP_DRAG_THRESHOLD) {
-            touchDraggedRef.current = true;
-            clearLongPressTimer();
-          }
-        }}
-        onTouchEnd={(event) => {
-          clearLongPressTimer();
-          if (!touchDraggedRef.current && !longPressTriggeredRef.current) {
-            onPressRef.current(event.nativeEvent.locationX);
-          }
-        }}>
-        {rowContent}
-        {bottomDivider}
-      </View>
-    );
-  }
-
+  // Single host for idle + play/record so toggling never remounts the bar subtree.
   return (
-    <Pressable
-      delayLongPress={LONG_PRESS_DELAY_MS}
-      onLongPress={onLongPress}
-      onPress={(event) => onPress(event.nativeEvent.locationX)}
-      style={[styles.trackRow, rowSizeStyle]}>
+    <View
+      style={[styles.trackRow, rowSizeStyle]}
+      onTouchStart={(event) => {
+        touchDraggedRef.current = false;
+        longPressTriggeredRef.current = false;
+        touchStartRef.current = {
+          x: event.nativeEvent.pageX,
+          y: event.nativeEvent.pageY,
+        };
+        clearLongPressTimer();
+        if (onLongPressRef.current) {
+          longPressTimerRef.current = setTimeout(() => {
+            longPressTriggeredRef.current = true;
+            onLongPressRef.current?.();
+          }, LONG_PRESS_DELAY_MS);
+        }
+      }}
+      onTouchMove={(event) => {
+        const dx = Math.abs(event.nativeEvent.pageX - touchStartRef.current.x);
+        const dy = Math.abs(event.nativeEvent.pageY - touchStartRef.current.y);
+        if (dx > TAP_DRAG_THRESHOLD || dy > TAP_DRAG_THRESHOLD) {
+          touchDraggedRef.current = true;
+          clearLongPressTimer();
+        }
+      }}
+      onTouchEnd={(event) => {
+        clearLongPressTimer();
+        if (!touchDraggedRef.current && !longPressTriggeredRef.current) {
+          onPressRef.current(event.nativeEvent.locationX);
+        }
+      }}>
       {rowContent}
       {bottomDivider}
-    </Pressable>
+    </View>
   );
 }, areTrackWaveformRowPropsEqual);
 
@@ -1254,6 +1267,8 @@ function WaveformViewComponent({
   const followRecordingScroll = recordingLayoutActive || isRecording;
   const followRecordingScrollRef = useRef(followRecordingScroll);
   followRecordingScrollRef.current = followRecordingScroll;
+  const [followLayoutDuration, setFollowLayoutDuration] = useState(0);
+  const followLayoutDurationRef = useRef(0);
   const zoomBounds = useMemo(
     () => getTimelineZoomBounds(viewportWidth, duration, tracks.length),
     [viewportWidth, duration, tracks.length]
@@ -1263,13 +1278,16 @@ function WaveformViewComponent({
   const layoutPixelsPerSecond = frozenZoom?.pixelsPerSecond ?? pixelsPerSecond;
   const layoutTrackZoom = frozenZoom?.trackZoom ?? trackZoom;
 
-  const layoutDuration = getLayoutDuration(
+  const baseLayoutDuration = getLayoutDuration(
     duration,
     currentTime,
     viewportWidth,
     followRecordingScroll,
     layoutPixelsPerSecond
   );
+  const layoutDuration = followRecordingScroll
+    ? Math.max(baseLayoutDuration, followLayoutDuration)
+    : baseLayoutDuration;
   const targetWidth = layoutDuration > 0 ? layoutDuration * layoutPixelsPerSecond : 0;
   const barCount =
     targetWidth > 0
@@ -1310,9 +1328,10 @@ function WaveformViewComponent({
       getVisibleMarkerSeconds(
         viewportTimeBuffer.start,
         viewportTimeBuffer.end,
-        layoutDuration
+        layoutDuration,
+        markerInterval
       ),
-    [layoutDuration, viewportTimeBuffer.end, viewportTimeBuffer.start]
+    [layoutDuration, markerInterval, viewportTimeBuffer.end, viewportTimeBuffer.start]
   );
 
   const [metronomeGridLines, setMetronomeGridLines] = useState<MetronomeGridLine[]>([]);
@@ -1327,6 +1346,7 @@ function WaveformViewComponent({
   durationRef.current = duration;
   const layoutDurationRef = useRef(layoutDuration);
   layoutDurationRef.current = layoutDuration;
+  const lastViewportCommitMsRef = useRef(0);
 
   const syncViewportBuffersRef = useRef((_scrollX: number, _force = false) => {});
   const autoScrollingRef = useRef(false);
@@ -1341,6 +1361,11 @@ function WaveformViewComponent({
       : METRONOME_GRID_BUFFER_VIEWPORTS;
     // Wider validity margin while auto-scrolling so React bar remounts are rare.
     const validityMarginViewports = autoScrollingRef.current ? 1.5 : 0.5;
+    const now = Date.now();
+    const throttleCommits =
+      autoScrollingRef.current &&
+      !force &&
+      now - lastViewportCommitMsRef.current < VIEWPORT_COMMIT_MIN_MS;
 
     const viewportBufferValid =
       !force &&
@@ -1349,7 +1374,8 @@ function WaveformViewComponent({
         nextScrollX,
         vpWidth,
         pps,
-        validityMarginViewports
+        validityMarginViewports,
+        gridDuration
       );
 
     if (!viewportBufferValid && vpWidth > 0 && pps > 0 && gridDuration > 0) {
@@ -1360,10 +1386,13 @@ function WaveformViewComponent({
         gridDuration,
         bufferViewports
       );
-      viewportTimeBufferRef.current = buffer;
-      setViewportTimeBuffer((prev) =>
-        prev.start === buffer.start && prev.end === buffer.end ? prev : buffer
-      );
+      if (!throttleCommits) {
+        viewportTimeBufferRef.current = buffer;
+        lastViewportCommitMsRef.current = now;
+        setViewportTimeBuffer((prev) =>
+          prev.start === buffer.start && prev.end === buffer.end ? prev : buffer
+        );
+      }
     } else if (vpWidth <= 0 || pps <= 0 || gridDuration <= 0) {
       viewportTimeBufferRef.current = null;
       setViewportTimeBuffer((prev) =>
@@ -1384,9 +1413,14 @@ function WaveformViewComponent({
         nextScrollX,
         vpWidth,
         pps,
-        validityMarginViewports
+        validityMarginViewports,
+        gridDuration
       )
     ) {
+      return;
+    }
+
+    if (throttleCommits) {
       return;
     }
 
@@ -1398,6 +1432,7 @@ function WaveformViewComponent({
       bufferViewports
     );
     metronomeGridBufferRef.current = buffer;
+    lastViewportCommitMsRef.current = now;
     const nextLines = buildMetronomeGridLines(settings, buffer, pps);
     setMetronomeGridLines((prev) => {
       if (
@@ -1425,8 +1460,6 @@ function WaveformViewComponent({
     metronome?.showGrid,
     layoutPixelsPerSecond,
     viewportWidth,
-    duration,
-    layoutDuration,
   ]);
 
   useLayoutEffect(() => {
@@ -1773,7 +1806,10 @@ function WaveformViewComponent({
   const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const x = event.nativeEvent.contentOffset.x;
     scrollOffsetRef.current = x;
-    syncMetronomeGridRef.current(x);
+    // RAF already syncs viewport buffers while auto-following; skip duplicate setState.
+    if (!autoScrollingRef.current) {
+      syncMetronomeGridRef.current(x);
+    }
     if (trimGestureActiveRef.current) {
       return;
     }
@@ -2015,6 +2051,17 @@ function WaveformViewComponent({
         return;
       }
       const time = getRecordingTimeRef.current?.() ?? currentTimeRef.current;
+      const nextLayoutDuration = getLayoutDuration(
+        Math.max(durationRef.current, time),
+        time,
+        viewportWidthRef.current,
+        true,
+        layoutPixelsPerSecond
+      );
+      if (nextLayoutDuration !== followLayoutDurationRef.current) {
+        followLayoutDurationRef.current = nextLayoutDuration;
+        setFollowLayoutDuration(nextLayoutDuration);
+      }
       const width = contentWidthRef.current;
       const x = recordingTimeToScrollX(time, width, layoutPixelsPerSecond);
       scrollOffsetRef.current = x;
@@ -2040,6 +2087,14 @@ function WaveformViewComponent({
       }
     };
   }, [followRecordingScroll, contentWidth, viewportWidth, layoutPixelsPerSecond]);
+
+  useEffect(() => {
+    if (followRecordingScroll) {
+      return;
+    }
+    followLayoutDurationRef.current = 0;
+    setFollowLayoutDuration(0);
+  }, [followRecordingScroll]);
 
   // Keep a stable ScrollView host — swapping RN/GH on play remounts the timeline and shakes.
   // Prefer RN whenever scrub is available so gesture-handler cannot steal DJ scrub pans.
@@ -2106,11 +2161,6 @@ function WaveformViewComponent({
                     trackHeight={trackHeight}
                     visibleTimeEnd={viewportTimeBuffer.end}
                     visibleTimeStart={viewportTimeBuffer.start}
-                    scrollPriority={Boolean(
-                      isPlaying ||
-                      followRecordingScroll ||
-                      (gestureOverlay && gestureOverlay.layerId !== track.id)
-                    )}
                     moveOverlay={moveOverlay}
                     trimOverlay={trimOverlay}
                     trimScrollHelpers={trimScrollHelpers}
@@ -2205,12 +2255,16 @@ function areWaveformViewPropsEqual(prev: Props, next: Props): boolean {
   }
 
   const playing = next.isPlaying && !next.recordingLayoutActive;
-  if (!playing && prev.currentTime !== next.currentTime) {
+  const followTimeFromRefs = playing || next.recordingLayoutActive;
+  if (!followTimeFromRefs && prev.currentTime !== next.currentTime) {
+    return false;
+  }
+  // During live recording layout, duration is driven by RAF/refs + LiveRecordingWaveform.
+  if (!next.recordingLayoutActive && prev.duration !== next.duration) {
     return false;
   }
 
   if (
-    prev.duration !== next.duration ||
     prev.isRecording !== next.isRecording ||
     prev.recordingLayoutActive !== next.recordingLayoutActive ||
     prev.isPlaying !== next.isPlaying ||

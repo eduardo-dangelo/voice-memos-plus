@@ -48,3 +48,7 @@ test('getVisibleMarkerSeconds returns empty for invalid ranges', () => {
   assert.deepEqual(getVisibleMarkerSeconds(5, 4, 10), []);
   assert.deepEqual(getVisibleMarkerSeconds(0, 5, 0), []);
 });
+
+test('getVisibleMarkerSeconds steps by interval', () => {
+  assert.deepEqual(getVisibleMarkerSeconds(0, 12, 60, 5), [0, 5, 10]);
+});

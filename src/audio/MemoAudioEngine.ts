@@ -201,6 +201,7 @@ export class MemoAudioEngine {
   private recordingUsedWavFormat = false;
   private recordingTimer: ReturnType<typeof setInterval> | null = null;
   private playbackRafId: number | null = null;
+  private playbackEndTimeoutId: ReturnType<typeof setTimeout> | null = null;
   private playbackSessionId = 0;
   private activePlaybackSessionId = 0;
   private playbackStartAt = 0;
@@ -876,6 +877,14 @@ export class MemoAudioEngine {
       startWhen
     );
     this.metronomeSources.push(...sources);
+    for (const source of sources) {
+      source.onEnded = () => {
+        const index = this.metronomeSources.indexOf(source);
+        if (index >= 0) {
+          this.metronomeSources.splice(index, 1);
+        }
+      };
+    }
     this.metronomeScheduledUntil = scheduleTo;
     // Keep monitor-mix end intact — only metronome-only mode extends playbackEndAt.
     if (this.activeLayerPlayback.size === 0 && this.state.isRecording) {
@@ -972,6 +981,10 @@ export class MemoAudioEngine {
       cancelAnimationFrame(this.playbackRafId);
       this.playbackRafId = null;
     }
+    if (this.playbackEndTimeoutId !== null) {
+      clearTimeout(this.playbackEndTimeoutId);
+      this.playbackEndTimeoutId = null;
+    }
   }
 
   private getElapsedPlaybackTime(context: AudioContext): number {
@@ -1059,8 +1072,34 @@ export class MemoAudioEngine {
     }
   }
 
+  private releaseMonitorMixPlayback(): void {
+    this.stopActiveSources();
+    this.recordingPlaybackBuffers.clear();
+  }
+
   private startPlaybackTimer(sessionId: number, context: AudioContext): void {
     this.clearPlaybackTimer();
+
+    // During stack/replace monitor mix, UI time comes from the recording timer.
+    // Only need a one-shot to tear down finished layer playback at playbackEndAt.
+    if (this.state.isRecording) {
+      const remainingSec = Math.max(
+        0,
+        this.playbackEndAt - this.getElapsedPlaybackTime(context) - PLAYBACK_END_TOLERANCE
+      );
+      const rate = Math.max(Math.abs(this.playbackRate), PLAYBACK_RATE_EPSILON);
+      this.playbackEndTimeoutId = setTimeout(() => {
+        this.playbackEndTimeoutId = null;
+        if (sessionId !== this.activePlaybackSessionId || !this.state.isRecording) {
+          return;
+        }
+        // Monitor range ended while still recording — keep the live recording
+        // graph; chunked metronome keeps extending via progress.
+        this.releaseMonitorMixPlayback();
+      }, (remainingSec / rate) * 1000);
+      return;
+    }
+
     let lastUiUpdateMs = 0;
 
     const tick = (frameMs: number) => {
@@ -1082,9 +1121,7 @@ export class MemoAudioEngine {
 
       if (frameMs - lastUiUpdateMs >= PLAYBACK_UI_UPDATE_MS) {
         lastUiUpdateMs = frameMs;
-        if (!this.state.isRecording) {
-          this.emit({ currentTime: nextTime, isPlaying: true });
-        }
+        this.emit({ currentTime: nextTime, isPlaying: true });
       }
 
       if (
@@ -1098,12 +1135,6 @@ export class MemoAudioEngine {
         nextTime >= this.playbackEndAt - PLAYBACK_END_TOLERANCE &&
         this.playbackRate > PLAYBACK_RATE_EPSILON
       ) {
-        if (this.state.isRecording) {
-          // Monitor range ended while still recording — do not tear down the
-          // live recording graph; chunked metronome keeps extending via progress.
-          this.clearPlaybackTimer();
-          return;
-        }
         this.finishPlaybackNaturally(this.playbackEndAt, sessionId);
         return;
       }
@@ -1111,9 +1142,7 @@ export class MemoAudioEngine {
       this.playbackRafId = requestAnimationFrame(tick);
     };
 
-    if (!this.state.isRecording) {
-      this.emit({ currentTime: this.playbackStartAt, isPlaying: true });
-    }
+    this.emit({ currentTime: this.playbackStartAt, isPlaying: true });
     this.playbackRafId = requestAnimationFrame(tick);
   }
 
@@ -1728,6 +1757,12 @@ export class MemoAudioEngine {
       accent: options.accent,
     });
     this.metronomeSources.push(source);
+    source.onEnded = () => {
+      const index = this.metronomeSources.indexOf(source);
+      if (index >= 0) {
+        this.metronomeSources.splice(index, 1);
+      }
+    };
   }
 
   /**
@@ -2305,9 +2340,11 @@ export class MemoAudioEngine {
       const wasSoftwareMonitoredCue = wasMonitorMix || this.metronomeOnlyActive;
       this.stopMetronomeSources();
       this.stopActiveSources();
+      this.recordingPlaybackBuffers.clear();
       this.clearMetronomeOnlyState();
       this.playbackContextStartWhen = 0;
       this.resetPlaybackRateClock();
+      this.clearPlaybackTimer();
       this.clearRecordingSampleRateState();
       this.monitorSilentLayerId = null;
       this.allowPrecountClicks = true;

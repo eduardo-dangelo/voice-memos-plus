@@ -26,18 +26,20 @@ export function getVisibleBarIndexRange(
 export function getVisibleMarkerSeconds(
   bufferStartSec: number,
   bufferEndSec: number,
-  layoutDuration: number
+  layoutDuration: number,
+  intervalSec = 1
 ): number[] {
   if (layoutDuration <= 0 || bufferEndSec < bufferStartSec) {
     return [];
   }
-  const start = Math.max(0, Math.floor(bufferStartSec));
+  const step = Math.max(1, Math.floor(intervalSec));
+  const start = Math.max(0, Math.floor(bufferStartSec / step) * step);
   const end = Math.min(Math.ceil(layoutDuration), Math.ceil(bufferEndSec));
   if (end < start) {
     return [];
   }
   const ticks: number[] = [];
-  for (let second = start; second <= end; second += 1) {
+  for (let second = start; second <= end; second += step) {
     ticks.push(second);
   }
   return ticks;

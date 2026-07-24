@@ -35,7 +35,12 @@ import {
   maybeShowPerformanceWarning,
   resetPerformanceWarningState,
 } from '@/src/audio/performanceWarning';
-import { slicePeaksForTrim } from '@/src/audio/waveform';
+import {
+  slicePeaksForTrim,
+  WAVEFORM_BAR_GAP,
+  WAVEFORM_BAR_WIDTH,
+  WAVEFORM_PIXELS_PER_SECOND,
+} from '@/src/audio/waveform';
 import { FloatingHeaderButton, FloatingHeaderIconFace } from '@/src/components/FloatingHeaderButton';
 import { IconActionSheet, type IconActionSheetItem } from '@/src/components/IconActionSheet';
 import { MemoOptionsMenu } from '@/src/components/MemoOptionsMenu';
@@ -152,14 +157,19 @@ function injectLiveRecordingPeaks(tracks: TrackData[], peaks: number[]): TrackDa
   if (peaks.length === 0) {
     return tracks;
   }
+  // Derive duration from peak density so shell can omit recordingDuration ticks.
+  const duration = Math.max(
+    0.01,
+    (peaks.length * (WAVEFORM_BAR_WIDTH + WAVEFORM_BAR_GAP)) / WAVEFORM_PIXELS_PER_SECOND
+  );
   return tracks.map((track) => {
     if (track.id === '__recording__') {
-      return { ...track, peaks };
+      return { ...track, peaks, duration };
     }
     if (track.liveRecording) {
       return {
         ...track,
-        liveRecording: { ...track.liveRecording, peaks },
+        liveRecording: { ...track.liveRecording, peaks, duration },
       };
     }
     return track;
@@ -2329,8 +2339,8 @@ export function MemoEditor({
       let recordingColor: string | undefined;
 
       if (isRecording) {
-        recordingDuration = Math.max(engineState.recordingDuration, 0.01);
-        // Live peaks are injected by LiveRecordingWaveform; keep shell tracks peak-free.
+        // Placeholder; LiveRecordingWaveform injects live duration + peaks.
+        recordingDuration = 0.01;
         recordingPeaks = undefined;
         recordingColor = isStackLayout
           ? (pendingRecordingColor.current ?? undefined)
@@ -2419,7 +2429,6 @@ export function MemoEditor({
   }, [
     activeLayerId,
     duration,
-    engineState.recordingDuration,
     inactivePlayableById,
     inactivePlayableTracks,
     isRecording,

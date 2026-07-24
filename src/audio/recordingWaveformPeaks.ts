@@ -4,7 +4,7 @@ const WAVEFORM_PIXELS_PER_SECOND = 48;
 const BAR_STEP = WAVEFORM_BAR_WIDTH + WAVEFORM_BAR_GAP;
 
 export function getBarIndexForTime(timeSec: number): number {
-  return Math.floor(timeSec * WAVEFORM_PIXELS_PER_SECOND / BAR_STEP);
+  return Math.floor((timeSec * WAVEFORM_PIXELS_PER_SECOND) / BAR_STEP);
 }
 
 export function accumulatePeaksFromSamples(
@@ -19,19 +19,33 @@ export function accumulatePeaksFromSamples(
 
   // Mutate in place — the engine owns this buffer for the recording session.
   const peaks = existingPeaks;
+  const lastSampleTime = bufferStartSec + (channelData.length - 1) / sampleRate;
+  const startBar = Math.max(0, getBarIndexForTime(bufferStartSec));
+  const endBar = Math.max(0, getBarIndexForTime(lastSampleTime));
 
-  for (let i = 0; i < channelData.length; i++) {
-    const sampleTime = bufferStartSec + i / sampleRate;
-    const barIndex = Math.floor(sampleTime * WAVEFORM_PIXELS_PER_SECOND / BAR_STEP);
-    if (barIndex < 0) {
-      continue;
-    }
+  while (peaks.length <= endBar) {
+    peaks.push(0);
+  }
 
-    const samplePeak = Math.abs(channelData[i] ?? 0);
-    while (peaks.length <= barIndex) {
-      peaks.push(0);
+  for (let barIndex = startBar; barIndex <= endBar; barIndex++) {
+    const barStartSec = (barIndex * BAR_STEP) / WAVEFORM_PIXELS_PER_SECOND;
+    const barEndSec = ((barIndex + 1) * BAR_STEP) / WAVEFORM_PIXELS_PER_SECOND;
+    const sampleStart = Math.max(
+      0,
+      Math.floor((barStartSec - bufferStartSec) * sampleRate)
+    );
+    const sampleEnd = Math.min(
+      channelData.length,
+      Math.floor((barEndSec - bufferStartSec) * sampleRate)
+    );
+    let max = peaks[barIndex] ?? 0;
+    for (let i = sampleStart; i < sampleEnd; i++) {
+      const samplePeak = Math.abs(channelData[i] ?? 0);
+      if (samplePeak > max) {
+        max = samplePeak;
+      }
     }
-    peaks[barIndex] = Math.max(peaks[barIndex] ?? 0, samplePeak);
+    peaks[barIndex] = max;
   }
 
   return peaks;
