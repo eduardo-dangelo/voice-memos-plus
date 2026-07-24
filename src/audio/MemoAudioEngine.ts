@@ -275,12 +275,16 @@ export class MemoAudioEngine {
         return;
       }
 
+      // Unlock / route churn often fails asserts transiently. Never discard a live take.
       try {
         await pinBuiltInMicrophone();
         const routeSnapshot = await assertRecordingRouteOk();
         logRouteSnapshot('recording-route-change', routeSnapshot);
-      } catch {
-        await this.cancelRecording();
+        this.refreshActiveRecordingSampleRate();
+      } catch (error) {
+        if (__DEV__) {
+          console.warn('[MemoAudioEngine] recording route re-pin failed; continuing', error);
+        }
       }
       return;
     }

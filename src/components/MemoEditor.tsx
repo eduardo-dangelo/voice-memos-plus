@@ -1250,21 +1250,48 @@ export function MemoEditor({
     const loaded = next && hasRecording(next) ? await ensureWaveformPeaks(next) : next;
     setMemo(loaded);
     if (loaded) {
-      const anySoloActive = hasAnySoloActive(
-        loaded.layers.map((entry) => getLayerEffects(entry))
-      );
-      const defaultLayer = loaded.layers.find(
-        (layer) =>
-          layer.duration > 0 && isLayerSelectable(getLayerEffects(layer), anySoloActive)
-      );
-      setActiveLayerId(defaultLayer?.id ?? null);
-      if (hasRecording(loaded)) {
-        await loadMemoIntoEngine(engine, loaded);
+      const liveSession = getSession();
+      const isLiveRecordingForMemo =
+        engine.getState().isRecording && liveSession?.memoId === id;
+
+      if (isLiveRecordingForMemo && liveSession) {
+        // Remount mid-take must not unload() — that clears isRecording without
+        // stopping the native recorder and would lose the take on stop/save.
+        recordingStartTime.current = liveSession.startTime;
+        setRecordingArmed(true);
+        setReplaceMode(liveSession.mode === 'replace');
+        setStackMode(liveSession.mode === 'stack');
+        pendingRecordingColor.current = liveSession.trackColor;
+        if (liveSession.layerId) {
+          setActiveLayerId(liveSession.layerId);
+        } else {
+          const anySoloActive = hasAnySoloActive(
+            loaded.layers.map((entry) => getLayerEffects(entry))
+          );
+          const defaultLayer = loaded.layers.find(
+            (layer) =>
+              layer.duration > 0 &&
+              isLayerSelectable(getLayerEffects(layer), anySoloActive)
+          );
+          setActiveLayerId(defaultLayer?.id ?? null);
+        }
       } else {
-        engine.unload();
-        // unload() resets engine metronome to defaults; restore memo settings so
-        // brand-new recordings still arm clicks when the UI shows metro on.
-        engine.setMetronome(getMemoMetronomeSettings(loaded));
+        const anySoloActive = hasAnySoloActive(
+          loaded.layers.map((entry) => getLayerEffects(entry))
+        );
+        const defaultLayer = loaded.layers.find(
+          (layer) =>
+            layer.duration > 0 && isLayerSelectable(getLayerEffects(layer), anySoloActive)
+        );
+        setActiveLayerId(defaultLayer?.id ?? null);
+        if (hasRecording(loaded)) {
+          await loadMemoIntoEngine(engine, loaded);
+        } else {
+          engine.unload();
+          // unload() resets engine metronome to defaults; restore memo settings so
+          // brand-new recordings still arm clicks when the UI shows metro on.
+          engine.setMetronome(getMemoMetronomeSettings(loaded));
+        }
       }
     }
     setLoading(false);

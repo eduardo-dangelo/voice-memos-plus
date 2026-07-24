@@ -2,6 +2,7 @@ import type { LiveActivity } from 'expo-widgets';
 
 import {
   beginSession,
+  clearSession,
   getSession,
   hydrateSessionFromStorage,
   type ActiveRecordingSession,
@@ -190,4 +191,9 @@ export async function recoverMemoLiveActivity(engine: MemoAudioEngine): Promise<
 
   await endAllInstances();
   instance = null;
+
+  // Stale metadata after process death — capture cannot resume.
+  if (getSession()) {
+    clearSession();
+  }
 }

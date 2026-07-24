@@ -1,6 +1,7 @@
-import { Stack } from 'expo-router';
+import { Stack, useRootNavigationState } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useMemo } from 'react';
+import { AppState } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import 'react-native-reanimated';
@@ -14,6 +15,7 @@ import {
   awaitSaveInFlight,
   hydrateSessionFromStorage,
 } from '@/src/recording/activeRecordingSession';
+import { maybeNavigateToActiveRecording } from '@/src/recording/resumeActiveRecording';
 import { getThemePreferenceSync } from '@/src/settings/appSettings';
 import { purgeExpiredTrash } from '@/src/storage/memoStore';
 import { applyThemePreference } from '@/src/theme/applyThemePreference';
@@ -81,6 +83,7 @@ function RootNavigator() {
   return (
     <>
       <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
+      <ActiveRecordingResume />
       <Stack screenOptions={screenOptions}>
         <Stack.Screen
           name="index"
@@ -113,6 +116,30 @@ function RootNavigator() {
       </Stack>
     </>
   );
+}
+
+function ActiveRecordingResume() {
+  const navigationState = useRootNavigationState();
+
+  useEffect(() => {
+    if (!navigationState?.key) {
+      return;
+    }
+
+    const tryResume = () => {
+      maybeNavigateToActiveRecording(memoAudioEngine);
+    };
+
+    tryResume();
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        tryResume();
+      }
+    });
+    return () => subscription.remove();
+  }, [navigationState?.key]);
+
+  return null;
 }
 
 export default function RootLayout() {
