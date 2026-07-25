@@ -214,6 +214,12 @@ export function syncReverbConvolver(
   assignReverbImpulse(convolver, preset, decay, context);
 }
 
+/** Replace live gain without filling the 64-event automation queue. */
+function setAudioParamValue(param: GainNode['gain'], value: number, time: number): void {
+  param.cancelScheduledValues(time);
+  param.setValueAtTime(value, time);
+}
+
 export function applyPathInputEffects(
   path: LayerEffectPathNodes,
   effects: LayerEffects,
@@ -221,12 +227,13 @@ export function applyPathInputEffects(
   anySoloActive: boolean
 ): void {
   const now = context.currentTime;
-  path.gain.gain.setValueAtTime(
+  setAudioParamValue(
+    path.gain.gain,
     isLayerAudible(effects, anySoloActive) ? dbToLinear(effects.volumeDb) : 0,
     now
   );
   effects.eq.bands.forEach((bandDb, index) => {
-    path.eqFilters[index].gain.setValueAtTime(bandDb, now);
+    setAudioParamValue(path.eqFilters[index].gain, bandDb, now);
   });
 }
 

@@ -388,56 +388,40 @@ export function MemoEditor({
         editDraftRef.current?.tool === 'trim' &&
         (partial.trimIn !== undefined || partial.trimOut !== undefined);
 
-      let nextEffects: ReturnType<typeof mergeLayerEffects> | null = null;
-      let layerStartTimes: Record<string, number> | undefined;
-      let memoId: string | null = null;
-      let applied = false;
-
-      setMemo((prev) => {
-        if (!prev) {
-          return prev;
-        }
-
-        if (isDraftTrimUpdate && !isDraftGenerationCurrent(draftGeneration)) {
-          return prev;
-        }
-
-        const layer = prev.layers.find((entry) => entry.id === layerId);
-        if (!layer) {
-          return prev;
-        }
-
-        const mergedEffects = mergeLayerEffects(getLayerEffects(layer), partial, layer.duration);
-        const trimInChanged = partial.trimIn !== undefined;
-        const timelineDelta = trimInChanged
-          ? getEarliestTrimInTimelineDelta(layer, prev.layers, mergedEffects.trimIn)
-          : 0;
-        const shiftedLayers = applyTimelineDeltaToLayers(prev.layers, timelineDelta);
-        const nextLayers = shiftedLayers.map((entry) =>
-          entry.id === layerId ? { ...entry, effects: mergedEffects } : entry
-        );
-
-        applied = true;
-        nextEffects = mergedEffects;
-        memoId = prev.id;
-        layerStartTimes =
-          timelineDelta !== 0
-            ? Object.fromEntries(nextLayers.map((entry) => [entry.id, entry.startTime]))
-            : undefined;
-
-        return {
-          ...prev,
-          layers: nextLayers,
-        };
-      });
-
-      if (!applied || !nextEffects || !memoId) {
+      // Compute from memoRef — React 19 may defer setState updaters, so side effects
+      // must not depend on the updater running synchronously.
+      const prev = memoRef.current;
+      if (!prev) {
         return;
       }
 
       if (isDraftTrimUpdate && !isDraftGenerationCurrent(draftGeneration)) {
         return;
       }
+
+      const layer = prev.layers.find((entry) => entry.id === layerId);
+      if (!layer) {
+        return;
+      }
+
+      const nextEffects = mergeLayerEffects(getLayerEffects(layer), partial, layer.duration);
+      const trimInChanged = partial.trimIn !== undefined;
+      const timelineDelta = trimInChanged
+        ? getEarliestTrimInTimelineDelta(layer, prev.layers, nextEffects.trimIn)
+        : 0;
+      const shiftedLayers = applyTimelineDeltaToLayers(prev.layers, timelineDelta);
+      const nextLayers = shiftedLayers.map((entry) =>
+        entry.id === layerId ? { ...entry, effects: nextEffects } : entry
+      );
+      const layerStartTimes =
+        timelineDelta !== 0
+          ? Object.fromEntries(nextLayers.map((entry) => [entry.id, entry.startTime]))
+          : undefined;
+      const memoId = prev.id;
+      const nextMemo = { ...prev, layers: nextLayers };
+
+      memoRef.current = nextMemo;
+      setMemo(nextMemo);
 
       if (partial.muted === true && activeLayerIdRef.current === layerId) {
         setActiveLayerId(null);
@@ -464,18 +448,18 @@ export function MemoEditor({
         clearTimeout(persistEffectsTimeout.current);
       }
       persistEffectsTimeout.current = setTimeout(() => {
-        void updateLayerEffects(memoId!, layerId, {
-          trimIn: nextEffects!.trimIn,
-          trimOut: nextEffects!.trimOut,
-          volumeDb: nextEffects!.volumeDb,
-          muted: nextEffects!.muted,
-          solo: nextEffects!.solo,
-          reverb: nextEffects!.reverb,
-          delay: nextEffects!.delay,
-          eq: nextEffects!.eq,
+        void updateLayerEffects(memoId, layerId, {
+          trimIn: nextEffects.trimIn,
+          trimOut: nextEffects.trimOut,
+          volumeDb: nextEffects.volumeDb,
+          muted: nextEffects.muted,
+          solo: nextEffects.solo,
+          reverb: nextEffects.reverb,
+          delay: nextEffects.delay,
+          eq: nextEffects.eq,
         });
         if (layerStartTimes) {
-          void updateLayerStartTimes(memoId!, layerStartTimes);
+          void updateLayerStartTimes(memoId, layerStartTimes);
         }
       }, 300);
     },
@@ -2287,6 +2271,7 @@ export function MemoEditor({
             isMuted: effects.muted,
             isSoloed: effects.solo,
             isSoloedOut: anySoloActive && !effects.solo,
+            volumeDb: effects.volumeDb,
             ...trackMeta,
           };
         }
@@ -2310,6 +2295,7 @@ export function MemoEditor({
             isMuted: effects.muted,
             isSoloed: effects.solo,
             isSoloedOut: anySoloActive && !effects.solo,
+            volumeDb: effects.volumeDb,
             ...trackMeta,
           };
         }
@@ -2332,6 +2318,7 @@ export function MemoEditor({
           isMuted: effects.muted,
           isSoloed: effects.solo,
           isSoloedOut: anySoloActive && !effects.solo,
+          volumeDb: effects.volumeDb,
           ...trackMeta,
         };
       });
@@ -2536,11 +2523,6 @@ export function MemoEditor({
     return getClickIntervalSec(metronomeSettings);
   }, [metronomeSettings]);
 
-  const volumeVisualDb =
-    activeEditor === 'volume' && activeLayerEffects
-      ? activeLayerEffects.volumeDb
-      : undefined;
-
   return (
     <SafeAreaView edges={['bottom']} style={styles.screen}>
       {isPane ? <View style={styles.paneHeader}>{headerBar}</View> : null}
@@ -2558,7 +2540,6 @@ export function MemoEditor({
               tracks={waveformTracks}
               trimOverlay={trimOverlay}
               moveOverlay={moveOverlay}
-              volumeVisualDb={volumeVisualDb}
               loopOverlay={loopOverlay}
               metronome={metronomeSettings}
               onSeek={handleWaveformSeek}

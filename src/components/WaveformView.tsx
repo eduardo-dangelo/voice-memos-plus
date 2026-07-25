@@ -198,6 +198,8 @@ export type TrackData = {
   isMuted?: boolean;
   isSoloed?: boolean;
   isSoloedOut?: boolean;
+  /** Layer volume in dB; scales waveform bars for every track. */
+  volumeDb?: number;
   label?: string;
   showLabel?: boolean;
   color?: string;
@@ -229,7 +231,6 @@ type Props = {
   moveOverlay?: MoveOverlayConfig;
   loopOverlay?: LoopOverlayConfig;
   metronome?: MetronomeSettings;
-  volumeVisualDb?: number;
 };
 
 /** Scrub rate follows finger speed; sensitivity scales how fast 1× is reached. */
@@ -797,6 +798,9 @@ function areTrackDataEqual(a: TrackData, b: TrackData): boolean {
   if (a.isSoloedOut !== b.isSoloedOut) {
     return false;
   }
+  if (a.volumeDb !== b.volumeDb) {
+    return false;
+  }
   if (a.color !== b.color) {
     return false;
   }
@@ -835,7 +839,6 @@ type TrackWaveformRowProps = {
   onLongPress?: () => void;
   trimOverlay?: TrimOverlayConfig;
   moveOverlay?: MoveOverlayConfig;
-  volumeVisualDb?: number;
   trimScrollHelpers?: TrimScrollHelpers;
   showBottomDivider?: boolean;
 };
@@ -851,7 +854,6 @@ function areTrackWaveformRowPropsEqual(
     prev.visibleTimeStart !== next.visibleTimeStart ||
     prev.visibleTimeEnd !== next.visibleTimeEnd ||
     prev.showBottomDivider !== next.showBottomDivider ||
-    prev.volumeVisualDb !== next.volumeVisualDb ||
     prev.trimScrollHelpers !== next.trimScrollHelpers
   ) {
     return false;
@@ -915,7 +917,6 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
   onLongPress,
   trimOverlay,
   moveOverlay,
-  volumeVisualDb,
   trimScrollHelpers,
   showBottomDivider = false,
 }: TrackWaveformRowProps) {
@@ -1008,10 +1009,7 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
         )
       : 0;
 
-  const volumeScale =
-    track.isActive && volumeVisualDb !== undefined
-      ? dbToLinear(volumeVisualDb)
-      : 1;
+  const volumeScale = dbToLinear(track.volumeDb ?? 0);
   const showTrimOverlay = trimOverlay?.layerId === track.id;
   const showMoveOverlay = moveOverlay?.layerId === track.id;
   const barColor = getTrackBarColor(track, colors);
@@ -1314,7 +1312,6 @@ function WaveformViewComponent({
   moveOverlay,
   loopOverlay,
   metronome,
-  volumeVisualDb,
 }: Props) {
   const colors = useVoiceMemosColors();
   const styles = useMemo(() => createWaveformStyles(colors), [colors]);
@@ -2287,7 +2284,6 @@ function WaveformViewComponent({
                     moveOverlay={moveOverlay}
                     trimOverlay={trimOverlay}
                     trimScrollHelpers={trimScrollHelpers}
-                    volumeVisualDb={volumeVisualDb}
                     onLongPress={
                       onTrackLongPressRef.current &&
                       track.id !== '__recording__' &&
@@ -2398,8 +2394,7 @@ function areWaveformViewPropsEqual(prev: Props, next: Props): boolean {
     prev.onTrackPress !== next.onTrackPress ||
     prev.onTrackDeselect !== next.onTrackDeselect ||
     prev.onTrackLongPress !== next.onTrackLongPress ||
-    prev.onWidthChange !== next.onWidthChange ||
-    prev.volumeVisualDb !== next.volumeVisualDb
+    prev.onWidthChange !== next.onWidthChange
   ) {
     return false;
   }

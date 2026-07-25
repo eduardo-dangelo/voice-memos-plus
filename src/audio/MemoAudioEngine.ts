@@ -1816,16 +1816,14 @@ export class MemoAudioEngine {
         this.syncAllLayerGains(this.context);
         return;
       }
-      if (this.mixGraph.getChannel(layerId)) {
-        this.mixGraph.applyLayerEffects(
-          this.context,
-          layerId,
-          nextEffects,
-          this.getAnySoloActive()
-        );
-        if (active) {
-          active.playbackEffects = nextEffects;
-        }
+      this.mixGraph.applyLayerEffects(
+        this.context,
+        layerId,
+        nextEffects,
+        this.getAnySoloActive()
+      );
+      if (active) {
+        active.playbackEffects = nextEffects;
       }
     }
   }
