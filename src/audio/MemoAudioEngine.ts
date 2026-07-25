@@ -43,7 +43,7 @@ import {
 import {
     normalizeRecordingFile,
     recordingNeedsNormalize,
-    resampleMonoBufferFromRate,
+    resampleMonoBufferFromRateAsync,
 } from '@/src/audio/wavUtils';
 import {
     awaitSaveInFlight,
@@ -1535,7 +1535,7 @@ export class MemoAudioEngine {
       );
     }
 
-    const resampled = resampleMonoBufferFromRate(
+    const resampled = await resampleMonoBufferFromRateAsync(
       decoded,
       bufferRate,
       contextRate,

@@ -170,6 +170,32 @@ export function resampleMonoBufferFromRate(
   return out;
 }
 
+/**
+ * Same as `resampleMonoBufferFromRate`, but yields periodically so stack
+ * monitor-mix warmup does not freeze the JS thread on long layers.
+ */
+export async function resampleMonoBufferFromRateAsync(
+  buffer: AudioBuffer,
+  fromRate: number,
+  targetRate: number,
+  context: AudioContext
+): Promise<AudioBuffer> {
+  const roundedFrom = Math.round(fromRate);
+  const roundedTarget = Math.round(targetRate);
+  if (roundedFrom === roundedTarget) {
+    return buffer;
+  }
+
+  const resampled = await resampleChannelDataAsync(
+    buffer.getChannelData(0),
+    roundedFrom,
+    roundedTarget
+  );
+  const out = context.createBuffer(1, resampled.length, roundedTarget);
+  out.copyToChannel(resampled, 0);
+  return out;
+}
+
 export type NormalizeRecordingOptions = {
   recordedDuration?: number;
 };
@@ -240,6 +266,9 @@ export async function normalizeRecordingFile(
   };
 }
 
+/** Yield about once per second of output audio during async resample. */
+const RESAMPLE_YIELD_OUTPUT_SAMPLES = 48000;
+
 function resampleChannelData(
   data: Float32Array,
   fromRate: number,
@@ -258,6 +287,31 @@ function resampleChannelData(
     const a = data[idx] ?? 0;
     const b = data[Math.min(idx + 1, data.length - 1)] ?? 0;
     out[i] = a + frac * (b - a);
+  }
+  return out;
+}
+
+async function resampleChannelDataAsync(
+  data: Float32Array,
+  fromRate: number,
+  toRate: number
+): Promise<Float32Array> {
+  if (fromRate === toRate) {
+    return data;
+  }
+
+  const outLength = Math.max(1, Math.round((data.length * toRate) / fromRate));
+  const out = new Float32Array(outLength);
+  for (let i = 0; i < outLength; i += 1) {
+    const srcIndex = (i * fromRate) / toRate;
+    const idx = Math.floor(srcIndex);
+    const frac = srcIndex - idx;
+    const a = data[idx] ?? 0;
+    const b = data[Math.min(idx + 1, data.length - 1)] ?? 0;
+    out[i] = a + frac * (b - a);
+    if (i > 0 && i % RESAMPLE_YIELD_OUTPUT_SAMPLES === 0) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
   }
   return out;
 }

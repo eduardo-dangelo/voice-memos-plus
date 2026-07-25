@@ -45,6 +45,7 @@ import {
 import {
   buildMetronomeGridLines,
   getMetronomeGridBufferRange,
+  getVisibleTimeRange,
   isMetronomeGridBufferValid,
   METRONOME_GRID_BUFFER_VIEWPORTS,
   METRONOME_GRID_PLAYBACK_BUFFER_VIEWPORTS,
@@ -947,8 +948,9 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
   );
 
   const visibleBars = useMemo(() => {
+    // Invalid / unset viewport must not mount every bar (stack arm remount freeze).
     if (visibleTimeEnd <= visibleTimeStart) {
-      return { startIndex: 0, endIndex: barCount };
+      return { startIndex: 0, endIndex: 0 };
     }
     return getVisibleBarIndexRange(
       visibleTimeStart,
@@ -979,7 +981,7 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
       return { startIndex: 0, endIndex: 0 };
     }
     if (visibleTimeEnd <= visibleTimeStart) {
-      return { startIndex: 0, endIndex: liveBarCount };
+      return { startIndex: 0, endIndex: 0 };
     }
     return getVisibleBarIndexRange(
       visibleTimeStart,
@@ -1380,7 +1382,12 @@ function WaveformViewComponent({
   const prevFollowRecordingScrollRef = useRef(false);
   const wasFollowingRecordingScrollRef = useRef(false);
 
-  const followRecordingScroll = recordingLayoutActive || isRecording;
+  // Follow-scroll RAF only while capturing — not during armed/warmup (avoids
+  // fighting prepare/finalize/commit and freezing at 00:00).
+  const followRecordingScroll = isRecording;
+  // Still grow timeline headroom while armed/precount so the lane doesn't
+  // collapse to a solid viewport-width block that looks like fake audio.
+  const recordingLayoutHeadroom = recordingLayoutActive || isRecording;
   const followRecordingScrollRef = useRef(followRecordingScroll);
   followRecordingScrollRef.current = followRecordingScroll;
   const [followLayoutDuration, setFollowLayoutDuration] = useState(0);
@@ -1398,10 +1405,10 @@ function WaveformViewComponent({
     duration,
     currentTime,
     viewportWidth,
-    followRecordingScroll,
+    recordingLayoutHeadroom,
     layoutPixelsPerSecond
   );
-  const layoutDuration = followRecordingScroll
+  const layoutDuration = recordingLayoutHeadroom
     ? Math.max(baseLayoutDuration, followLayoutDuration)
     : baseLayoutDuration;
   const targetWidth = layoutDuration > 0 ? layoutDuration * layoutPixelsPerSecond : 0;
@@ -1502,7 +1509,13 @@ function WaveformViewComponent({
         gridDuration,
         bufferViewports
       );
-      if (!throttleCommits) {
+      // Always seed an invalid/empty viewport. Throttling only skips redundant
+      // refreshes of an already-valid buffer — otherwise stack/follow-scroll
+      // can paint with {0,0} and hitch (or used to mount every bar).
+      const viewportUninitialized =
+        viewportTimeBufferRef.current == null ||
+        viewportTimeBufferRef.current.end <= viewportTimeBufferRef.current.start;
+      if (!throttleCommits || viewportUninitialized || force) {
         viewportTimeBufferRef.current = buffer;
         lastViewportCommitMsRef.current = now;
         setViewportTimeBuffer((prev) =>
@@ -1581,9 +1594,11 @@ function WaveformViewComponent({
   useLayoutEffect(() => {
     const wasFollowing = prevFollowRecordingScrollRef.current;
     if (followRecordingScroll && !wasFollowing) {
+      const bounds = zoomBoundsRef.current;
       const snapshot: FrozenTimelineZoom = {
-        pixelsPerSecond,
-        trackZoom,
+        // Clamp at freeze time so a bad armed-state pps cannot lock the take.
+        pixelsPerSecond: clampTimelinePixelsPerSecond(pixelsPerSecond, bounds),
+        trackZoom: clampTimelineTrackZoom(trackZoom, bounds),
         verticalScrollY: verticalScrollOffsetRef.current,
       };
       frozenZoomRef.current = snapshot;
@@ -2220,6 +2235,20 @@ function WaveformViewComponent({
   // Prefer RN whenever scrub is available so gesture-handler cannot steal DJ scrub pans.
   const HorizontalScrollView = onScrubRate ? RNScrollView : GHScrollView;
 
+  // During capture, paint only the visible viewport (not 3× overscan) so peak
+  // emits remount far fewer bar Views on the live / stacked tracks.
+  const barPaintTimeRange =
+    isRecording && viewportWidth > 0 && layoutPixelsPerSecond > 0
+      ? getVisibleTimeRange(
+          Math.max(
+            0,
+            (getRecordingTimeRef.current?.() ?? currentTime) * layoutPixelsPerSecond
+          ),
+          viewportWidth,
+          layoutPixelsPerSecond
+        )
+      : viewportTimeBuffer;
+
   return (
     <WaveformThemeContext.Provider value={theme}>
     <View
@@ -2279,8 +2308,8 @@ function WaveformViewComponent({
                     sidePadding={sidePadding}
                     track={track}
                     trackHeight={trackHeight}
-                    visibleTimeEnd={viewportTimeBuffer.end}
-                    visibleTimeStart={viewportTimeBuffer.start}
+                    visibleTimeEnd={barPaintTimeRange.end}
+                    visibleTimeStart={barPaintTimeRange.start}
                     moveOverlay={moveOverlay}
                     trimOverlay={trimOverlay}
                     trimScrollHelpers={trimScrollHelpers}

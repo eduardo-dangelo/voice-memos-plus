@@ -148,7 +148,36 @@ export function slicePeaksForTrim(
     return peaks;
   }
 
-  const startIndex = Math.floor((trimIn / duration) * peaks.length);
-  const endIndex = Math.max(startIndex + 1, Math.ceil((trimOut / duration) * peaks.length));
+  const barStep = WAVEFORM_BAR_WIDTH + WAVEFORM_BAR_GAP;
+  const safeTrimIn = Math.max(0, Math.min(trimIn, duration));
+  const safeTrimOut = Math.max(safeTrimIn, Math.min(trimOut, duration));
+  const designCount = peakCountForDuration(duration);
+  const denseEnough =
+    peaks.length >= Math.max(1, Math.floor(designCount * CAPTURED_PEAKS_MIN_DENSITY));
+
+  let startIndex: number;
+  let endIndex: number;
+  if (denseEnough) {
+    // Design-density bars (~16/s) — same mapping as live latency preview.
+    // Proportional floor() under-sliced (e.g. 0.17s → 2 bars / 125ms) and left a
+    // quiet lead gap that pushed accents late vs the metronome grid.
+    startIndex = Math.max(
+      0,
+      Math.round((safeTrimIn * WAVEFORM_PIXELS_PER_SECOND) / barStep)
+    );
+    endIndex = Math.min(
+      peaks.length,
+      Math.max(
+        startIndex + 1,
+        Math.round((safeTrimOut * WAVEFORM_PIXELS_PER_SECOND) / barStep)
+      )
+    );
+  } else {
+    startIndex = Math.max(0, Math.round((safeTrimIn / duration) * peaks.length));
+    endIndex = Math.min(
+      peaks.length,
+      Math.max(startIndex + 1, Math.round((safeTrimOut / duration) * peaks.length))
+    );
+  }
   return peaks.slice(startIndex, endIndex);
 }

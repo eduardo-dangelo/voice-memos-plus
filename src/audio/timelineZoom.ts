@@ -16,10 +16,9 @@ export function getTimelineZoomBounds(
   duration: number,
   trackCount: number
 ): TimelineZoomBounds {
-  const pixelsPerSecondMin =
-    viewportWidth > 0 && duration > 0
-      ? Math.max(TIMELINE_MIN_PIXELS_PER_SECOND, viewportWidth / duration)
-      : TIMELINE_MIN_PIXELS_PER_SECOND;
+  // Cap max first. Never let a tiny placeholder duration (e.g. 0.01s while
+  // arming a new recording) inflate min above max — that froze live zoom at
+  // tens of thousands of px/s and blanked the recording timeline.
   const pixelsPerSecondMax =
     viewportWidth > 0
       ? Math.min(
@@ -27,6 +26,11 @@ export function getTimelineZoomBounds(
           viewportWidth / TIMELINE_VISIBLE_SECONDS_AT_MAX_ZOOM
         )
       : TIMELINE_MAX_PIXELS_PER_SECOND;
+  const rawMin =
+    viewportWidth > 0 && duration > 0
+      ? Math.max(TIMELINE_MIN_PIXELS_PER_SECOND, viewportWidth / duration)
+      : TIMELINE_MIN_PIXELS_PER_SECOND;
+  const pixelsPerSecondMin = Math.min(rawMin, pixelsPerSecondMax);
   const pixelsPerSecondDefault = Math.max(
     TIMELINE_DEFAULT_PIXELS_PER_SECOND,
     pixelsPerSecondMin
@@ -34,8 +38,8 @@ export function getTimelineZoomBounds(
 
   return {
     pixelsPerSecondMin,
-    pixelsPerSecondMax: Math.max(pixelsPerSecondMin, pixelsPerSecondMax),
-    pixelsPerSecondDefault,
+    pixelsPerSecondMax,
+    pixelsPerSecondDefault: Math.min(pixelsPerSecondDefault, pixelsPerSecondMax),
     trackZoomMin: 1,
     trackZoomMax: Math.max(1, trackCount),
   };

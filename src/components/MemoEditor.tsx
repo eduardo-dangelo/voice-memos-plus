@@ -35,6 +35,7 @@ import {
   maybeShowPerformanceWarning,
   resetPerformanceWarningState,
 } from '@/src/audio/performanceWarning';
+import { getRecordingReplacementSkipSeconds } from '@/src/audio/recordingLatency';
 import {
   slicePeaksForTrim,
   WAVEFORM_BAR_GAP,
@@ -153,23 +154,78 @@ function areMemoEditorEngineSlicesEqual(
   return a.currentTime === b.currentTime;
 }
 
-function injectLiveRecordingPeaks(tracks: TrackData[], peaks: number[]): TrackData[] {
+const LIVE_PEAK_BAR_STEP = WAVEFORM_BAR_WIDTH + WAVEFORM_BAR_GAP;
+
+/**
+ * Preview post-save latency trim during capture by dropping leading peaks.
+ * Keeps startTime on the session (no pre-zero paint). Never returns an empty
+ * peaks array — that triggers fake placeholder bars in normalizePeaksForBarCount.
+ */
+function previewLivePeaksForLatency(
+  peaks: number[],
+  leadSec: number
+): { peaks: number[]; duration: number } | null {
   if (peaks.length === 0) {
-    return tracks;
+    return null;
   }
-  // Derive duration from peak density so shell can omit recordingDuration ticks.
-  const duration = Math.max(
-    0.01,
-    (peaks.length * (WAVEFORM_BAR_WIDTH + WAVEFORM_BAR_GAP)) / WAVEFORM_PIXELS_PER_SECOND
+  // Round to nearest bar so 0.17s (~2.72 bars) becomes 3 bars ≈ 0.1875s,
+  // not floor→2 bars ≈ 0.125s which under-compensates vs post-save trim.
+  const leadBars = Math.max(
+    0,
+    Math.round((Math.max(0, leadSec) * WAVEFORM_PIXELS_PER_SECOND) / LIVE_PEAK_BAR_STEP)
   );
+  if (leadBars > 0 && peaks.length <= leadBars) {
+    // Still inside the trimmed lead — no audible/post-trim content yet.
+    return null;
+  }
+  const previewPeaks = leadBars > 0 ? peaks.slice(leadBars) : peaks;
+  return {
+    peaks: previewPeaks,
+    duration: Math.max(
+      0.01,
+      (previewPeaks.length * LIVE_PEAK_BAR_STEP) / WAVEFORM_PIXELS_PER_SECOND
+    ),
+  };
+}
+
+function injectLiveRecordingPeaks(
+  tracks: TrackData[],
+  peaks: number[],
+  leadSec: number
+): TrackData[] {
+  const preview = previewLivePeaksForLatency(peaks, leadSec);
+  if (!preview) {
+    // Still in latency lead — clear duration so WaveformView cannot synthesize
+    // fake bars from the shell's 0.01s placeholder + undefined peaks.
+    return tracks.map((track) => {
+      if (track.id === '__recording__') {
+        return { ...track, peaks: undefined, duration: 0 };
+      }
+      if (track.liveRecording) {
+        return {
+          ...track,
+          liveRecording: {
+            ...track.liveRecording,
+            peaks: undefined,
+            duration: 0,
+          },
+        };
+      }
+      return track;
+    });
+  }
   return tracks.map((track) => {
     if (track.id === '__recording__') {
-      return { ...track, peaks, duration };
+      return { ...track, peaks: preview.peaks, duration: preview.duration };
     }
     if (track.liveRecording) {
       return {
         ...track,
-        liveRecording: { ...track.liveRecording, peaks, duration },
+        liveRecording: {
+          ...track.liveRecording,
+          peaks: preview.peaks,
+          duration: preview.duration,
+        },
       };
     }
     return track;
@@ -178,11 +234,14 @@ function injectLiveRecordingPeaks(tracks: TrackData[], peaks: number[]): TrackDa
 
 type LiveRecordingWaveformProps = {
   isRecording: boolean;
+  /** Matching post-save wake(+cue) trim, for live grid alignment. */
+  latencyLeadSec?: number;
   tracks: TrackData[];
 } & Omit<ComponentProps<typeof WaveformView>, 'tracks'>;
 /** Subscribes only to live peaks so MemoEditor shell can ignore peak identity. */
 function LiveRecordingWaveform({
   isRecording,
+  latencyLeadSec = 0,
   tracks,
   ...waveformProps
 }: LiveRecordingWaveformProps) {
@@ -191,8 +250,8 @@ function LiveRecordingWaveform({
     if (!isRecording) {
       return tracks;
     }
-    return injectLiveRecordingPeaks(tracks, recordingPeaks);
-  }, [isRecording, recordingPeaks, tracks]);
+    return injectLiveRecordingPeaks(tracks, recordingPeaks, latencyLeadSec);
+  }, [isRecording, latencyLeadSec, recordingPeaks, tracks]);
 
   return <WaveformView {...waveformProps} isRecording={isRecording} tracks={tracksWithPeaks} />;
 }
@@ -1358,8 +1417,15 @@ export function MemoEditor({
     const bpm = getMemoMetronomeSettings(memo).bpm;
 
     void (async () => {
+      if (beginRecordingInFlight.current || engine.getState().isRecording) {
+        return;
+      }
+      beginRecordingInFlight.current = true;
       let nextBeatDeadlineMs: number | undefined;
       try {
+        await cancelEditDraft();
+        setActiveEditor(null);
+
         recordingStartTime.current = 0;
         setRecordingArmed(true);
         beginSession({
@@ -1412,9 +1478,12 @@ export function MemoEditor({
           'Recording failed',
           error instanceof Error ? error.message : 'Unknown error'
         );
+      } finally {
+        beginRecordingInFlight.current = false;
       }
     })();
   }, [
+    cancelEditDraft,
     clearPrecountOverlay,
     engine,
     memo,
@@ -1959,6 +2028,11 @@ export function MemoEditor({
       const useMonitorMix = needsMonitorMix(memo, mode);
       monitorMixRef.current = useMonitorMix;
 
+      // Cancel trim/move drafts before arming so loadMemoIntoEngine cannot race
+      // prepare/finalize/commit (stack monitor-mix warmup hang).
+      await cancelEditDraft();
+      setActiveEditor(null);
+
       engine.pause();
       let startTime = engine.getPlaybackTime();
       if (mode === 'replace' && activeLayerId) {
@@ -2128,7 +2202,7 @@ export function MemoEditor({
   }, [engine, isRecording, engineState.recordingDuration]);
 
   useEffect(() => {
-    if (!pendingRecordingLayout) {
+    if (!pendingRecordingLayout || beginRecordingInFlight.current) {
       return;
     }
     void (async () => {
@@ -2232,6 +2306,14 @@ export function MemoEditor({
     () => (memo ? getMemoMetronomeSettings(memo) : normalizeMetronomeSettings()),
     [memo]
   );
+  /** Match post-save `wasSoftwareMonitoredCue` (monitor mix and/or metro clicks). */
+  const liveLatencyLeadSec = useMemo(
+    () =>
+      getRecordingReplacementSkipSeconds(
+        engineState.monitorMixActive || metronomeSettings.enabled
+      ),
+    [engineState.monitorMixActive, metronomeSettings.enabled]
+  );
   const precountMode = useMemo(
     () => (memo ? getMemoPrecountMode(memo) : 'off'),
     [memo]
@@ -2303,7 +2385,6 @@ export function MemoEditor({
         const effects = getLayerEffects(layer);
         const activeDuration = getLayerActiveDuration(layer);
         const selectable = isLayerSelectable(effects, anySoloActive);
-
         return {
           id: layer.id,
           peaks: slicePeaksForTrim(
@@ -2366,17 +2447,21 @@ export function MemoEditor({
           ? (snapshot.color ?? undefined)
           : resolveTrackColor(memo.layers[0]?.color);
       } else {
-        recordingDuration = 0.01;
+        // Armed / precount — no audio yet. duration 0 avoids fake placeholder bars.
+        recordingDuration = 0;
         recordingPeaks = undefined;
         recordingColor = isStackLayout
           ? (pendingRecordingColor.current ?? undefined)
           : resolveTrackColor(memo.layers[0]?.color);
       }
 
+      const sessionStart =
+        isReplaceLayout || isStackLayout ? recordingStartTime.current : 0;
+
       const recordingTrack: TrackData = {
         id: '__recording__',
         peaks: recordingPeaks,
-        startTime: isReplaceLayout || isStackLayout ? recordingStartTime.current : 0,
+        startTime: sessionStart,
         duration: recordingDuration,
         isActive: true,
         color: recordingColor,
@@ -2413,7 +2498,7 @@ export function MemoEditor({
               ? {
                   liveRecording: {
                     peaks: recordingPeaks,
-                    startTime: replaceStart,
+                    startTime: sessionStart,
                     duration: recordingDuration,
                   },
                 }
@@ -2536,6 +2621,7 @@ export function MemoEditor({
               getRecordingTime={getRecordingTime}
               isPlaying={engineState.isPlaying && !monitorMixPreparing}
               isRecording={isRecording}
+              latencyLeadSec={liveLatencyLeadSec}
               recordingLayoutActive={pendingRecordingLayout}
               tracks={waveformTracks}
               trimOverlay={trimOverlay}

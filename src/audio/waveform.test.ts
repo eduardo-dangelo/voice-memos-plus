@@ -9,6 +9,7 @@ import {
   peakToAbsoluteScale,
   resamplePeaks,
   shouldUseCapturedPeaks,
+  slicePeaksForTrim,
   WAVEFORM_BAR_GAP,
   WAVEFORM_BAR_WIDTH,
   WAVEFORM_PIXELS_PER_SECOND,
@@ -92,6 +93,20 @@ test('shouldUseCapturedPeaks accepts full-file live peaks and mild duration skew
   assert.equal(shouldUseCapturedPeaks(undefined, 30), false);
   assert.equal(shouldUseCapturedPeaks([], 30), false);
   assert.equal(shouldUseCapturedPeaks([0.5, 0.6]), true);
+});
+
+test('slicePeaksForTrim uses design-density bar time for latency trimIn', () => {
+  const duration = 13;
+  const peaks = Array.from({ length: peakCountForDuration(duration) }, (_, i) =>
+    i < 3 ? 0.01 : i === 8 ? 0.95 : 0.2
+  );
+  const trimIn = 0.17; // wake+cue — same as getRecordingReplacementSkipSeconds(true)
+  const sliced = slicePeaksForTrim(peaks, duration, trimIn, duration);
+  assert.ok(sliced);
+  // 0.17s → round(0.17*48/3) = 3 bars, not proportional floor → 2.
+  assert.equal(sliced!.length, peaks.length - 3);
+  assert.equal(sliced![0], 0.2);
+  assert.equal(sliced![5], 0.95);
 });
 
 test('computeWaveformPeaksFromChannelData matches peakCount and finds loud samples', () => {

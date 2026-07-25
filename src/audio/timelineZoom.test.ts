@@ -24,6 +24,15 @@ test('getTimelineZoomBounds clamps very long recordings', () => {
   assert.equal(bounds.pixelsPerSecondMin, TIMELINE_MIN_PIXELS_PER_SECOND);
 });
 
+test('getTimelineZoomBounds does not inflate min for tiny placeholder durations', () => {
+  const bounds = getTimelineZoomBounds(393, 0.01, 1);
+  assert.ok(bounds.pixelsPerSecondMin <= bounds.pixelsPerSecondMax);
+  assert.ok(bounds.pixelsPerSecondMax <= 384);
+  assert.ok(bounds.pixelsPerSecondDefault <= bounds.pixelsPerSecondMax);
+  // Must not lock live recording zoom to viewport/0.01 (~39300).
+  assert.ok(bounds.pixelsPerSecondMin < 1000);
+});
+
 test('clampTimelinePixelsPerSecond respects bounds', () => {
   const bounds = getTimelineZoomBounds(400, 20, 2);
   assert.equal(clampTimelinePixelsPerSecond(1, bounds), bounds.pixelsPerSecondMin);

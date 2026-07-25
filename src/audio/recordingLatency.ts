@@ -19,7 +19,7 @@ export const RECORDING_WAKE_TRIM_SEC = 0.02;
  * Folded into `trimIn` (with wake) so activeStart stays on the session
  * start instead of hanging below 0.
  */
-export const SOFTWARE_CUE_OUTPUT_COMPENSATION_SEC = 0.1;
+export const SOFTWARE_CUE_OUTPUT_COMPENSATION_SEC = 0.15;
 
 /** Seconds to skip at the start of a replace-splice replacement buffer. */
 export function getRecordingReplacementSkipSeconds(softwareCue: boolean): number {
