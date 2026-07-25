@@ -233,6 +233,7 @@ export function RecordingsList({
       await setRecordingDefaults({
         precount: settings.precount,
         metronomeEnabled: settings.metronome.enabled,
+        metronomeShowGrid: settings.metronome.showGrid,
         bpm: settings.metronome.bpm,
       });
       const memo = await createMemo({

@@ -19,13 +19,15 @@ import {
 } from './metronome';
 import {
   DEFAULT_METRONOME_SETTINGS,
+  getMetronomeMode,
+  nextMetronomeMode,
   normalizeMetronomeSettings,
-  withMetronomeEnabledToggled,
+  settingsForMetronomeMode,
   type MetronomeSettings,
 } from '@/src/storage/types';
 
 function makeSettings(overrides: Partial<MetronomeSettings> = {}): MetronomeSettings {
-  return { ...DEFAULT_METRONOME_SETTINGS, enabled: true, ...overrides };
+  return { ...DEFAULT_METRONOME_SETTINGS, enabled: true, showGrid: true, ...overrides };
 }
 
 describe('synthesizeClickSamples', () => {
@@ -217,12 +219,17 @@ describe('normalizeMetronomeSettings', () => {
     assert.equal(normalizeMetronomeSettings({}).timeSignature, '4/4');
   });
 
-  it('defaults showGrid to true', () => {
-    assert.equal(normalizeMetronomeSettings({}).showGrid, true);
+  it('defaults showGrid to false', () => {
+    assert.equal(normalizeMetronomeSettings({}).showGrid, false);
   });
 
-  it('defaults showGridFollowsMetronome to true', () => {
-    assert.equal(normalizeMetronomeSettings({}).showGridFollowsMetronome, true);
+  it('ignores legacy showGridFollowsMetronome', () => {
+    const settings = normalizeMetronomeSettings({
+      showGridFollowsMetronome: true,
+      showGrid: true,
+    } as Parameters<typeof normalizeMetronomeSettings>[0]);
+    assert.equal(settings.showGrid, true);
+    assert.equal('showGridFollowsMetronome' in settings, false);
   });
 
   it('preserves a valid time signature preset', () => {
@@ -243,29 +250,54 @@ describe('normalizeMetronomeSettings', () => {
   });
 });
 
-describe('withMetronomeEnabledToggled', () => {
-  it('syncs showGrid to enabled when following', () => {
-    const settings = makeSettings({
-      enabled: false,
-      showGrid: false,
-      showGridFollowsMetronome: true,
-    });
-    assert.deepEqual(withMetronomeEnabledToggled(settings), {
+describe('metronome mode cycle', () => {
+  it('derives mode from enabled and showGrid', () => {
+    assert.equal(getMetronomeMode({ enabled: true, showGrid: true }), 'metronome');
+    assert.equal(getMetronomeMode({ enabled: true, showGrid: false }), 'metronome');
+    assert.equal(getMetronomeMode({ enabled: false, showGrid: true }), 'grid');
+    assert.equal(getMetronomeMode({ enabled: false, showGrid: false }), 'off');
+  });
+
+  it('maps each mode to enabled/showGrid pairs', () => {
+    assert.deepEqual(settingsForMetronomeMode('metronome'), {
       enabled: true,
       showGrid: true,
     });
-    assert.deepEqual(
-      withMetronomeEnabledToggled({ ...settings, enabled: true, showGrid: true }),
-      { enabled: false, showGrid: false }
-    );
-  });
-
-  it('leaves showGrid unchanged when follow is locked', () => {
-    const settings = makeSettings({
+    assert.deepEqual(settingsForMetronomeMode('grid'), {
       enabled: false,
       showGrid: true,
-      showGridFollowsMetronome: false,
     });
-    assert.deepEqual(withMetronomeEnabledToggled(settings), { enabled: true });
+    assert.deepEqual(settingsForMetronomeMode('off'), {
+      enabled: false,
+      showGrid: false,
+    });
+  });
+
+  it('cycles off → metronome → grid → off with headphones', () => {
+    let settings = settingsForMetronomeMode('off');
+    settings = nextMetronomeMode(settings, { headphonesConnected: true });
+    assert.deepEqual(settings, { enabled: true, showGrid: true });
+    settings = nextMetronomeMode(settings, { headphonesConnected: true });
+    assert.deepEqual(settings, { enabled: false, showGrid: true });
+    settings = nextMetronomeMode(settings, { headphonesConnected: true });
+    assert.deepEqual(settings, { enabled: false, showGrid: false });
+  });
+
+  it('cycles off → grid → off without headphones', () => {
+    let settings = settingsForMetronomeMode('off');
+    settings = nextMetronomeMode(settings, { headphonesConnected: false });
+    assert.deepEqual(settings, { enabled: false, showGrid: true });
+    settings = nextMetronomeMode(settings, { headphonesConnected: false });
+    assert.deepEqual(settings, { enabled: false, showGrid: false });
+  });
+
+  it('advances from metronome to grid even without headphones', () => {
+    assert.deepEqual(
+      nextMetronomeMode(
+        { enabled: true, showGrid: true },
+        { headphonesConnected: false }
+      ),
+      { enabled: false, showGrid: true }
+    );
   });
 });

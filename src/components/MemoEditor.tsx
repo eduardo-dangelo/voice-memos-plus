@@ -26,6 +26,7 @@ import {
   needsMonitorMix,
   requiresHeadphones,
   subscribeHeadphoneDisconnect,
+  subscribeHeadphonesConnected,
 } from '@/src/audio/headphoneDetection';
 import { getClickIntervalSec, getQuarterIntervalSec } from '@/src/audio/metronome';
 import type { LayerEffects, LayerEffectsChange } from '@/src/audio/layerEffects';
@@ -96,9 +97,9 @@ import {
   getMemoTimelineDuration,
   getPlayableLayers,
   hasRecording,
+  nextMetronomeMode,
   nextPrecountMode,
   normalizeMetronomeSettings,
-  withMetronomeEnabledToggled,
 } from '@/src/storage/types';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 import { formatDurationWithTenths } from '@/src/utils/format';
@@ -397,6 +398,7 @@ export function MemoEditor({
   const [colorPickerLayerId, setColorPickerLayerId] = useState<string | null>(null);
   const [trackMenuLayerId, setTrackMenuLayerId] = useState<string | null>(null);
   const [metronomeSettingsVisible, setMetronomeSettingsVisible] = useState(false);
+  const [headphonesConnected, setHeadphonesConnected] = useState(false);
   const [loopSettingsVisible, setLoopSettingsVisible] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [layoutReady, setLayoutReady] = useState(false);
@@ -905,11 +907,16 @@ export function MemoEditor({
     [engine, flushMetronomePersist, memo]
   );
 
-  const handleMetronomeToggle = useCallback(() => {
+  const handleMetronomeCycle = useCallback(() => {
     if (!memo) {
       return;
     }
-    handleMetronomeChange(withMetronomeEnabledToggled(getMemoMetronomeSettings(memo)));
+    void (async () => {
+      const headphonesConnected = await isHeadphonesConnected();
+      handleMetronomeChange(
+        nextMetronomeMode(getMemoMetronomeSettings(memo), { headphonesConnected })
+      );
+    })();
   }, [handleMetronomeChange, memo]);
 
   const handlePrecountCycle = useCallback(() => {
@@ -2217,6 +2224,8 @@ export function MemoEditor({
     }
   }, [isRecording]);
 
+  useEffect(() => subscribeHeadphonesConnected(setHeadphonesConnected), []);
+
   useEffect(() => {
     if (!isRecording || !engineState.monitorMixActive) {
       return;
@@ -2662,9 +2671,10 @@ export function MemoEditor({
                 <View style={styles.timeDisplaySide}>
                   <MetronomeButton
                     disabled={isRecording}
+                    headphonesConnected={headphonesConnected}
                     settings={metronomeSettings}
+                    onCycle={handleMetronomeCycle}
                     onOpenSettings={() => setMetronomeSettingsVisible(true)}
-                    onToggle={handleMetronomeToggle}
                   />
                 </View>
                 <MemoEditorTimeLabel

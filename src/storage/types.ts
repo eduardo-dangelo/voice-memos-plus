@@ -45,16 +45,21 @@ export type MetronomeSettings = {
   timeSignature: TimeSignaturePreset;
   accentEnabled: boolean;
   showGrid: boolean;
-  /** When true, metronome toggle also sets showGrid to match enabled. */
-  showGridFollowsMetronome: boolean;
   volume: number;
 };
+
+/** Button cycle: metronome (clicks+grid) → grid only → off. */
+export type MetronomeMode = 'off' | 'metronome' | 'grid';
+
+export const METRONOME_MODES: MetronomeMode[] = ['off', 'metronome', 'grid'];
 
 /** @deprecated Legacy field migrated to timeSignature in normalizeMetronomeSettings */
 type LegacyMetronomeSubdivision = '1/4' | '1/8';
 
 type MetronomeSettingsInput = Partial<MetronomeSettings> & {
   subdivision?: LegacyMetronomeSubdivision;
+  /** @deprecated Ignored; cycle owns grid vs clicks. */
+  showGridFollowsMetronome?: boolean;
 };
 
 export const DEFAULT_METRONOME_SETTINGS: MetronomeSettings = {
@@ -62,8 +67,7 @@ export const DEFAULT_METRONOME_SETTINGS: MetronomeSettings = {
   bpm: DEFAULT_BPM,
   timeSignature: '4/4',
   accentEnabled: true,
-  showGrid: true,
-  showGridFollowsMetronome: true,
+  showGrid: false,
   volume: 70,
 };
 
@@ -86,21 +90,47 @@ export function normalizeMetronomeSettings(
     timeSignature,
     accentEnabled: metronome?.accentEnabled ?? defaults.accentEnabled,
     showGrid: metronome?.showGrid ?? defaults.showGrid,
-    showGridFollowsMetronome:
-      metronome?.showGridFollowsMetronome ?? defaults.showGridFollowsMetronome,
     volume: Math.max(0, Math.min(100, metronome?.volume ?? defaults.volume)),
   };
 }
 
-/** Partial update for flipping metronome enabled (and optionally showGrid). */
-export function withMetronomeEnabledToggled(
-  settings: MetronomeSettings
-): Pick<MetronomeSettings, 'enabled' | 'showGrid'> {
-  const enabled = !settings.enabled;
-  if (!settings.showGridFollowsMetronome) {
-    return { enabled };
+export function getMetronomeMode(
+  settings: Pick<MetronomeSettings, 'enabled' | 'showGrid'>
+): MetronomeMode {
+  if (settings.enabled) {
+    return 'metronome';
   }
-  return { enabled, showGrid: enabled };
+  if (settings.showGrid) {
+    return 'grid';
+  }
+  return 'off';
+}
+
+export function settingsForMetronomeMode(
+  mode: MetronomeMode
+): Pick<MetronomeSettings, 'enabled' | 'showGrid'> {
+  switch (mode) {
+    case 'metronome':
+      return { enabled: true, showGrid: true };
+    case 'grid':
+      return { enabled: false, showGrid: true };
+    case 'off':
+    default:
+      return { enabled: false, showGrid: false };
+  }
+}
+
+export function nextMetronomeMode(
+  settings: Pick<MetronomeSettings, 'enabled' | 'showGrid'>,
+  options: { headphonesConnected: boolean }
+): Pick<MetronomeSettings, 'enabled' | 'showGrid'> {
+  const current = getMetronomeMode(settings);
+  if (!options.headphonesConnected && current === 'off') {
+    return settingsForMetronomeMode('grid');
+  }
+  const index = METRONOME_MODES.indexOf(current);
+  const next = METRONOME_MODES[(index + 1) % METRONOME_MODES.length]!;
+  return settingsForMetronomeMode(next);
 }
 
 export function getMemoMetronomeSettings(memo: Pick<Memo, 'metronome'>): MetronomeSettings {

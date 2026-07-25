@@ -5,7 +5,11 @@ import { useMemo } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { useColorScheme } from '@/components/useColorScheme';
-import type { MetronomeSettings } from '@/src/storage/types';
+import {
+  getMetronomeMode,
+  type MetronomeMode,
+  type MetronomeSettings,
+} from '@/src/storage/types';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
 const LONG_PRESS_DELAY_MS = 400;
@@ -14,21 +18,51 @@ const BUTTON_SIZE = 32;
 
 type Props = {
   settings: MetronomeSettings;
-  onToggle: () => void;
+  headphonesConnected: boolean;
+  onCycle: () => void;
   onOpenSettings: () => void;
   disabled?: boolean;
 };
 
+function accessibilityLabelForMode(mode: MetronomeMode): string {
+  switch (mode) {
+    case 'metronome':
+      return 'Metronome with grid';
+    case 'grid':
+      return 'Grid only';
+    case 'off':
+    default:
+      return 'Metronome off';
+  }
+}
+
+function iconNameForMode(
+  mode: MetronomeMode,
+  headphonesConnected: boolean
+): 'metronome.fill' | 'metronome' | 'rectangle.split.3x1' {
+  switch (mode) {
+    case 'metronome':
+      return 'metronome.fill';
+    case 'grid':
+      return 'rectangle.split.3x1';
+    case 'off':
+    default:
+      return headphonesConnected ? 'metronome' : 'rectangle.split.3x1';
+  }
+}
+
 export function MetronomeButton({
   settings,
-  onToggle,
+  headphonesConnected,
+  onCycle,
   onOpenSettings,
   disabled = false,
 }: Props) {
   const colors = useVoiceMemosColors();
   const colorScheme = useColorScheme();
   const styles = useStyles(colors, colorScheme);
-  const enabled = settings.enabled;
+  const mode = getMetronomeMode(settings);
+  const enabled = mode !== 'off';
   const iconTint = enabled ? colors.accent : colors.secondaryText;
 
   const handlePress = () => {
@@ -36,7 +70,7 @@ export function MetronomeButton({
       return;
     }
     void Haptics.selectionAsync();
-    onToggle();
+    onCycle();
   };
 
   const handleLongPress = () => {
@@ -49,7 +83,7 @@ export function MetronomeButton({
 
   const content = (
     <SymbolView
-      name={{ ios: enabled ? 'metronome.fill' : 'metronome' }}
+      name={{ ios: iconNameForMode(mode, headphonesConnected) }}
       size={18}
       tintColor={iconTint}
     />
@@ -57,8 +91,8 @@ export function MetronomeButton({
 
   return (
     <Pressable
-      accessibilityHint="Long press to configure tempo and metronome settings"
-      accessibilityLabel={enabled ? 'Metronome on' : 'Metronome off'}
+      accessibilityHint="Cycles metronome with grid, grid only, then off"
+      accessibilityLabel={accessibilityLabelForMode(mode)}
       accessibilityRole="button"
       accessibilityState={{ selected: enabled, disabled }}
       delayLongPress={LONG_PRESS_DELAY_MS}

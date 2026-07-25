@@ -76,3 +76,28 @@ export function subscribeHeadphoneDisconnect(onDisconnect: () => void): () => vo
     subscription?.remove();
   };
 }
+
+/** Initial check + live updates whenever the audio route changes. */
+export function subscribeHeadphonesConnected(
+  onChange: (connected: boolean) => void
+): () => void {
+  let cancelled = false;
+
+  const refresh = () => {
+    void isHeadphonesConnected().then((connected) => {
+      if (!cancelled) {
+        onChange(connected);
+      }
+    });
+  };
+
+  refresh();
+  const subscription = AudioManager.addSystemEventListener('routeChange', () => {
+    refresh();
+  });
+
+  return () => {
+    cancelled = true;
+    subscription?.remove();
+  };
+}

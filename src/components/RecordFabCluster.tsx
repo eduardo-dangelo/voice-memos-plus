@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, StyleSheet, View } from 'react-native';
 
-import { isHeadphonesConnected } from '@/src/audio/headphoneDetection';
+import {
+  isHeadphonesConnected,
+  subscribeHeadphonesConnected,
+} from '@/src/audio/headphoneDetection';
 import { MetronomeButton } from '@/src/components/MetronomeButton';
 import { MetronomeSettingsSheet } from '@/src/components/MetronomeSettingsSheet';
 import { PrecountButton } from '@/src/components/PrecountButton';
@@ -12,8 +15,8 @@ import {
 } from '@/src/settings/appSettings';
 import {
   DEFAULT_METRONOME_SETTINGS,
+  nextMetronomeMode,
   nextPrecountMode,
-  withMetronomeEnabledToggled,
   type MetronomeSettings,
   type PrecountMode,
 } from '@/src/storage/types';
@@ -39,8 +42,7 @@ function metronomeFromDefaults(): MetronomeSettings {
     ...DEFAULT_METRONOME_SETTINGS,
     enabled: defaults.metronomeEnabled,
     bpm: defaults.bpm,
-    showGrid: defaults.metronomeEnabled,
-    showGridFollowsMetronome: true,
+    showGrid: defaults.metronomeShowGrid,
   };
 }
 
@@ -48,6 +50,7 @@ function persistSettings(precount: PrecountMode, metronome: MetronomeSettings) {
   void setRecordingDefaults({
     precount,
     metronomeEnabled: metronome.enabled,
+    metronomeShowGrid: metronome.showGrid,
     bpm: metronome.bpm,
   });
 }
@@ -59,6 +62,9 @@ export function RecordFabCluster({ disabled, bottomOffset = 32, onRecord }: Prop
   );
   const [metronome, setMetronome] = useState<MetronomeSettings>(metronomeFromDefaults);
   const [metronomeSettingsVisible, setMetronomeSettingsVisible] = useState(false);
+  const [headphonesConnected, setHeadphonesConnected] = useState(false);
+
+  useEffect(() => subscribeHeadphonesConnected(setHeadphonesConnected), []);
 
   useEffect(() => {
     if (disabled) {
@@ -74,15 +80,14 @@ export function RecordFabCluster({ disabled, bottomOffset = 32, onRecord }: Prop
     });
   };
 
-  const handleMetronomeToggle = () => {
+  const handleMetronomeCycle = () => {
     void (async () => {
-      const enabling = !metronome.enabled;
-      if (enabling && !(await isHeadphonesConnected())) {
-        Alert.alert(METRONOME_HEADPHONES_TITLE, METRONOME_HEADPHONES_MESSAGE);
-        return;
-      }
+      const headphonesConnected = await isHeadphonesConnected();
       setMetronome((current) => {
-        const next = { ...current, ...withMetronomeEnabledToggled(current) };
+        const next = {
+          ...current,
+          ...nextMetronomeMode(current, { headphonesConnected }),
+        };
         persistSettings(precount, next);
         return next;
       });
@@ -117,9 +122,10 @@ export function RecordFabCluster({ disabled, bottomOffset = 32, onRecord }: Prop
           <View style={styles.side}>
             <MetronomeButton
               disabled={disabled}
+              headphonesConnected={headphonesConnected}
               settings={metronome}
+              onCycle={handleMetronomeCycle}
               onOpenSettings={() => setMetronomeSettingsVisible(true)}
-              onToggle={handleMetronomeToggle}
             />
           </View>
           <RecordButton disabled={disabled} onPress={handleRecord} />

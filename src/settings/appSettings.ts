@@ -12,6 +12,7 @@ export type ThemePreference = 'system' | 'light' | 'dark';
 export type RecordingDefaults = {
   precount: PrecountMode;
   metronomeEnabled: boolean;
+  metronomeShowGrid: boolean;
   bpm: number;
 };
 
@@ -26,6 +27,7 @@ const THEME_PREFERENCES: readonly ThemePreference[] = ['system', 'light', 'dark'
 const DEFAULT_RECORDING_DEFAULTS: RecordingDefaults = {
   precount: DEFAULT_PRECOUNT_MODE,
   metronomeEnabled: DEFAULT_METRONOME_SETTINGS.enabled,
+  metronomeShowGrid: DEFAULT_METRONOME_SETTINGS.showGrid,
   bpm: DEFAULT_METRONOME_SETTINGS.bpm,
 };
 
@@ -46,6 +48,8 @@ function normalizeRecordingDefaults(value: unknown): RecordingDefaults {
   const parsed = value as Partial<RecordingDefaults>;
   const metronome = normalizeMetronomeSettings({
     enabled: typeof parsed.metronomeEnabled === 'boolean' ? parsed.metronomeEnabled : undefined,
+    showGrid:
+      typeof parsed.metronomeShowGrid === 'boolean' ? parsed.metronomeShowGrid : undefined,
     bpm: typeof parsed.bpm === 'number' ? parsed.bpm : undefined,
   });
   return {
@@ -54,6 +58,7 @@ function normalizeRecordingDefaults(value: unknown): RecordingDefaults {
         ? normalizePrecountMode(parsed.precount)
         : DEFAULT_RECORDING_DEFAULTS.precount,
     metronomeEnabled: metronome.enabled,
+    metronomeShowGrid: metronome.showGrid,
     bpm: metronome.bpm,
   };
 }
