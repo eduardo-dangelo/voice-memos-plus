@@ -113,12 +113,6 @@ function assertRecordingFilePresent(path: string): void {
   }
 }
 const PLAYBACK_UI_UPDATE_MS = 50;
-/** Soft clamp for DJ scrub (library allows -3…3). */
-const MIN_SCRUB_PLAYBACK_RATE = -3;
-const MAX_SCRUB_PLAYBACK_RATE = 3;
-const PLAYBACK_RATE_EPSILON = 0.02;
-/** Extend scheduled source stops while rate ≠ 1 so context-time stops do not cut early. */
-const SCRUB_STOP_EXTENSION_SEC = 3600;
 
 /** Sample rates the iOS AAC encoder accepts reliably when opening a file for writing. */
 const RECORDING_FILE_PRESET = {
@@ -240,8 +234,6 @@ export class MemoAudioEngine {
   private playbackRateAnchorContextTime = 0;
   /** Timeline position at the last rate-clock anchor. */
   private playbackRateAnchorPosition = 0;
-  /** True after metronome was muted due to non-1× scrub rate. */
-  private scrubMetronomeMuted = false;
   private sessionMode: SessionMode = null;
   private lastOutputRouteKey = '';
   private recordingPeaksBuffer: number[] = [];
@@ -411,38 +403,6 @@ export class MemoAudioEngine {
       return this.state.currentTime;
     }
     return this.getElapsedPlaybackTime(this.context);
-  }
-
-  getPlaybackRate(): number {
-    return this.playbackRate;
-  }
-
-  /**
-   * Modulate live source playbackRate without restarting (DJ scrub).
-   * No-ops while recording or when not in an active playback session.
-   */
-  setPlaybackRate(rate: number): void {
-    if (this.state.isRecording || !this.state.isPlaying) {
-      return;
-    }
-    if (!this.context || this.playbackContextStartWhen <= 0) {
-      return;
-    }
-
-    const clamped = Math.max(
-      MIN_SCRUB_PLAYBACK_RATE,
-      Math.min(MAX_SCRUB_PLAYBACK_RATE, rate)
-    );
-    const next =
-      Math.abs(clamped - 1) < PLAYBACK_RATE_EPSILON ? 1 : clamped;
-
-    if (Math.abs(next - this.playbackRate) < PLAYBACK_RATE_EPSILON) {
-      return;
-    }
-
-    this.anchorPlaybackClock(this.context);
-    this.applyPlaybackRateToSources(next);
-    this.syncMetronomeForPlaybackRate(next);
   }
 
   getRecordingDuration(): number {
@@ -775,7 +735,6 @@ export class MemoAudioEngine {
     this.playbackRate = 1;
     this.playbackRateAnchorContextTime = startWhen;
     this.playbackRateAnchorPosition = playStart;
-    this.scrubMetronomeMuted = false;
 
     const planSpecs = filterPlaybackPlansBySilentLayer(
       this.buildPlaybackPlans(playStart, endAt),
@@ -1104,71 +1063,10 @@ export class MemoAudioEngine {
     return Math.max(this.playbackStartAt, Math.min(pos, this.playbackEndAt));
   }
 
-  /** Freeze the rate clock at the current timeline position (call before changing rate). */
-  private anchorPlaybackClock(context: AudioContext): void {
-    const now = context.currentTime;
-    let pos: number;
-    if (this.playbackRateAnchorContextTime > 0) {
-      const dt = now - this.playbackRateAnchorContextTime;
-      pos = this.playbackRateAnchorPosition + dt * this.playbackRate;
-    } else if (this.playbackContextStartWhen > 0) {
-      pos =
-        this.playbackStartAt +
-        Math.max(0, now - this.playbackContextStartWhen) * this.playbackRate;
-    } else {
-      pos = this.state.currentTime;
-    }
-    this.playbackRateAnchorPosition = Math.max(
-      this.playbackStartAt,
-      Math.min(pos, this.playbackEndAt)
-    );
-    this.playbackRateAnchorContextTime = now;
-  }
-
   private resetPlaybackRateClock(): void {
     this.playbackRate = 1;
     this.playbackRateAnchorContextTime = 0;
     this.playbackRateAnchorPosition = 0;
-    this.scrubMetronomeMuted = false;
-  }
-
-  private applyPlaybackRateToSources(rate: number): void {
-    this.playbackRate = rate;
-    for (const source of this.sources) {
-      try {
-        source.playbackRate.value = rate;
-      } catch {
-        // Source may already be stopped.
-      }
-    }
-    if (Math.abs(rate - 1) >= PLAYBACK_RATE_EPSILON && this.context) {
-      this.extendSourceStops(this.context);
-    }
-  }
-
-  private extendSourceStops(context: AudioContext): void {
-    const stopWhen = context.currentTime + SCRUB_STOP_EXTENSION_SEC;
-    for (const source of this.sources) {
-      try {
-        source.stop(stopWhen);
-      } catch {
-        // Source may already be stopped.
-      }
-    }
-  }
-
-  private syncMetronomeForPlaybackRate(rate: number): void {
-    if (Math.abs(rate - 1) >= PLAYBACK_RATE_EPSILON) {
-      if (!this.scrubMetronomeMuted) {
-        this.stopMetronomeSources();
-        this.scrubMetronomeMuted = true;
-      }
-      return;
-    }
-    if (this.scrubMetronomeMuted) {
-      this.scrubMetronomeMuted = false;
-      this.resyncMetronome();
-    }
   }
 
   private releaseMonitorMixPlayback(): void {
@@ -1186,7 +1084,6 @@ export class MemoAudioEngine {
         0,
         this.playbackEndAt - this.getElapsedPlaybackTime(context) - PLAYBACK_END_TOLERANCE
       );
-      const rate = Math.max(Math.abs(this.playbackRate), PLAYBACK_RATE_EPSILON);
       this.playbackEndTimeoutId = setTimeout(() => {
         this.playbackEndTimeoutId = null;
         if (sessionId !== this.activePlaybackSessionId || !this.state.isRecording) {
@@ -1195,7 +1092,7 @@ export class MemoAudioEngine {
         // Monitor range ended while still recording — keep the live recording
         // graph; chunked metronome keeps extending via progress.
         this.releaseMonitorMixPlayback();
-      }, (remainingSec / rate) * 1000);
+      }, remainingSec * 1000);
       return;
     }
 
@@ -1206,17 +1103,7 @@ export class MemoAudioEngine {
         return;
       }
 
-      let nextTime = this.getElapsedPlaybackTime(context);
-
-      // Holding reverse past the start freezes at rate 0 instead of fighting the clamp.
-      if (
-        nextTime <= this.playbackStartAt + PLAYBACK_END_TOLERANCE &&
-        this.playbackRate < -PLAYBACK_RATE_EPSILON
-      ) {
-        this.anchorPlaybackClock(context);
-        this.applyPlaybackRateToSources(0);
-        nextTime = this.playbackStartAt;
-      }
+      const nextTime = this.getElapsedPlaybackTime(context);
 
       if (frameMs - lastUiUpdateMs >= PLAYBACK_UI_UPDATE_MS) {
         lastUiUpdateMs = frameMs;
@@ -1230,10 +1117,7 @@ export class MemoAudioEngine {
         this.extendMetronomeOnlySchedule(nextTime);
       }
 
-      if (
-        nextTime >= this.playbackEndAt - PLAYBACK_END_TOLERANCE &&
-        this.playbackRate > PLAYBACK_RATE_EPSILON
-      ) {
+      if (nextTime >= this.playbackEndAt - PLAYBACK_END_TOLERANCE) {
         this.finishPlaybackNaturally(this.playbackEndAt, sessionId);
         return;
       }
@@ -1401,16 +1285,9 @@ export class MemoAudioEngine {
   ): AudioBufferSourceNode {
     const source = context.createBufferSource();
     source.buffer = buffer;
-    if (Math.abs(this.playbackRate - 1) >= PLAYBACK_RATE_EPSILON) {
-      source.playbackRate.value = this.playbackRate;
-    }
     this.mixGraph.connectSourceToPath(source, path);
     source.start(startWhen, bufferOffset);
-    const effectiveStop =
-      Math.abs(this.playbackRate - 1) >= PLAYBACK_RATE_EPSILON
-        ? Math.max(stopWhen, context.currentTime + SCRUB_STOP_EXTENSION_SEC)
-        : stopWhen;
-    source.stop(effectiveStop);
+    source.stop(stopWhen);
     this.sources.push(source);
     return source;
   }
@@ -2706,7 +2583,6 @@ export class MemoAudioEngine {
       this.playbackRate = 1;
       this.playbackRateAnchorContextTime = when;
       this.playbackRateAnchorPosition = startAt;
-      this.scrubMetronomeMuted = false;
 
       let scheduledSources = 0;
 
