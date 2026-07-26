@@ -243,6 +243,7 @@ export function LoopRegionBar({
   useEffect(() => () => clearLongPressTimer(), []);
 
   const [preview, setPreview] = useState<{ start: number; end: number } | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
   const previewRef = useRef<{ start: number; end: number } | null>(null);
   const onPreviewChangeRef = useRef(onPreviewChange);
   onPreviewChangeRef.current = onPreviewChange;
@@ -312,6 +313,7 @@ export function LoopRegionBar({
   const endGesture = () => {
     clearLongPressTimer();
     scrollHelpersRef.current.onGestureActive(false);
+    setIsCreating(false);
     updatePreview(null, loopEnabledRef.current);
   };
 
@@ -384,6 +386,7 @@ export function LoopRegionBar({
       pixelsPerSecondRef.current
     );
     createStartTime.current = time;
+    setIsCreating(true);
     updatePreview({ start: time, end: time });
   };
 
@@ -659,40 +662,47 @@ export function LoopRegionBar({
               },
             ]}
           />
-          <View
-            {...toggleResponder.panHandlers}
-            style={[
-              styles.regionTapTarget,
-              {
-                left: regionLeft,
-                width: regionWidth,
-              },
-            ]}
-          />
-          <View
-            {...leftResponder.panHandlers}
-            style={[
-              styles.edgeHandle,
-              {
-                left: regionLeft - handleTouch / 2,
-                width: handleTouch,
-              },
-            ]}
-          />
-          <View
-            {...rightResponder.panHandlers}
-            style={[
-              styles.edgeHandle,
-              {
-                left: regionRight - handleTouch / 2,
-                width: handleTouch,
-              },
-            ]}
-          />
+          {!isCreating ? (
+            <>
+              <View
+                {...toggleResponder.panHandlers}
+                style={[
+                  styles.regionTapTarget,
+                  {
+                    left: regionLeft,
+                    width: regionWidth,
+                  },
+                ]}
+              />
+              <View
+                {...leftResponder.panHandlers}
+                style={[
+                  styles.edgeHandle,
+                  {
+                    left: regionLeft - handleTouch / 2,
+                    width: handleTouch,
+                  },
+                ]}
+              />
+              <View
+                {...rightResponder.panHandlers}
+                style={[
+                  styles.edgeHandle,
+                  {
+                    left: regionRight - handleTouch / 2,
+                    width: handleTouch,
+                  },
+                ]}
+              />
+            </>
+          ) : null}
         </>
       ) : null}
 
-      <View {...createResponder.panHandlers} style={[styles.createLayer, { width: bandWidth }]} />
+      <View
+        {...createResponder.panHandlers}
+        style={[styles.createLayer, { width: bandWidth, zIndex: isCreating ? 6 : 1 }]}
+      />
     </Animated.View>
   );
 }
