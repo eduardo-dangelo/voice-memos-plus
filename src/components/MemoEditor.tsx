@@ -404,6 +404,8 @@ export function MemoEditor({
   const [layoutReady, setLayoutReady] = useState(false);
   const [precountVisible, setPrecountVisible] = useState(false);
   const [precountNumber, setPrecountNumber] = useState<number | null>(null);
+  const [precountPreparing, setPrecountPreparing] = useState(false);
+  const precountPreparingRef = useRef(false);
   const [isStoppingRecording, setIsStoppingRecording] = useState(false);
   const isStoppingRecordingRef = useRef(false);
   const lastLayoutHeightRef = useRef<number | null>(null);
@@ -929,8 +931,20 @@ export function MemoEditor({
   }, [memo]);
 
   const clearPrecountOverlay = useCallback(() => {
+    precountPreparingRef.current = false;
     setPrecountVisible(false);
     setPrecountNumber(null);
+    setPrecountPreparing(false);
+  }, []);
+
+  /** Show preparing Modal and wait one frame so the spinner paints before warmup. */
+  const showPreparingOverlay = useCallback(async () => {
+    precountCancelledRef.current = false;
+    precountPreparingRef.current = true;
+    setPrecountNumber(null);
+    setPrecountPreparing(true);
+    setPrecountVisible(true);
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
   }, []);
 
   const handlePrecountModalDismiss = useCallback(() => {
@@ -961,7 +975,11 @@ export function MemoEditor({
   const handlePrecountCancel = useCallback(() => {
     precountCancelledRef.current = true;
     engine.abortRecordingStartCommit();
-  }, [engine]);
+    // Warmup can take seconds on long layers — hide preparing UI immediately.
+    if (precountPreparingRef.current) {
+      clearPrecountOverlay();
+    }
+  }, [clearPrecountOverlay, engine]);
 
   const runPrecount = useCallback(
     async (
@@ -969,6 +987,8 @@ export function MemoEditor({
       bpm: number
     ): Promise<{ completed: false } | { completed: true; nextBeatDeadlineMs: number }> => {
       precountCancelledRef.current = false;
+      precountPreparingRef.current = false;
+      setPrecountPreparing(false);
       setPrecountNumber(null);
       setPrecountVisible(true);
       const safeBpm = Number.isFinite(bpm) && bpm > 0 ? bpm : 120;
@@ -2081,26 +2101,45 @@ export function MemoEditor({
 
       let nextBeatDeadlineMs: number | undefined;
       const precountMode = getMemoPrecountMode(memo);
+      const abortArmedRecording = async () => {
+        await engine.cancelPreparedRecording();
+        clearPrecountOverlay();
+        monitorMixRef.current = false;
+        setReplaceMode(false);
+        setStackMode(false);
+        setRecordingArmed(false);
+        pendingRecordModeRef.current = null;
+        pendingRecordingColor.current = null;
+        liveRecordingSnapshot.current = null;
+        clearSession();
+      };
       try {
+        if (useMonitorMix) {
+          await showPreparingOverlay();
+          if (precountCancelledRef.current) {
+            await abortArmedRecording();
+            return;
+          }
+        }
+
         await engine.prepareRecordingStart({
           monitorMix: useMonitorMix,
         });
+        if (precountCancelledRef.current) {
+          await abortArmedRecording();
+          return;
+        }
         await engine.finalizeRecordingWarmup({ monitorMix: useMonitorMix });
+        if (precountCancelledRef.current) {
+          await abortArmedRecording();
+          return;
+        }
 
         if (precountMode !== 'off') {
           const bpm = getMemoMetronomeSettings(memo).bpm;
           const precountResult = await runPrecount(precountMode, bpm);
           if (!precountResult.completed) {
-            await engine.cancelPreparedRecording();
-            clearPrecountOverlay();
-            monitorMixRef.current = false;
-            setReplaceMode(false);
-            setStackMode(false);
-            setRecordingArmed(false);
-            pendingRecordModeRef.current = null;
-            pendingRecordingColor.current = null;
-            liveRecordingSnapshot.current = null;
-            clearSession();
+            await abortArmedRecording();
             return;
           }
           if (engine.getState().isRecording) {
@@ -2108,6 +2147,9 @@ export function MemoEditor({
             return;
           }
           nextBeatDeadlineMs = precountResult.nextBeatDeadlineMs;
+        } else if (useMonitorMix) {
+          // Dismiss preparing Modal before arm — same rule as precount dismiss.
+          await dismissPrecountAndWait();
         }
 
         await engine.commitRecordingStart({
@@ -2755,6 +2797,7 @@ export function MemoEditor({
       ) : null}
       <PrecountOverlay
         count={precountNumber}
+        preparing={precountPreparing}
         visible={precountVisible}
         onCancel={handlePrecountCancel}
         onDismiss={handlePrecountModalDismiss}

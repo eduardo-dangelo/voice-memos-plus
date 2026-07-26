@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Modal, Pressable, StyleSheet, Text } from 'react-native';
+import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeOut, ZoomIn } from 'react-native-reanimated';
 
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
@@ -7,6 +7,8 @@ import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 type Props = {
   visible: boolean;
   count: number | null;
+  /** Monitor-mix warmup before 4→1 (or before commit when precount is off). */
+  preparing?: boolean;
   onCancel: () => void;
   /** Fires when the Modal has finished dismissing (iOS). Used to gate monitor arm. */
   onDismiss?: () => void;
@@ -17,7 +19,13 @@ type Props = {
  * Callers must wait for onDismiss (with a timeout fallback) before sync
  * monitor-mix arm — arming while this Modal is still up freezes at "1".
  */
-export function PrecountOverlay({ visible, count, onCancel, onDismiss }: Props) {
+export function PrecountOverlay({
+  visible,
+  count,
+  preparing = false,
+  onCancel,
+  onDismiss,
+}: Props) {
   const colors = useVoiceMemosColors();
   const styles = useStyles(colors);
 
@@ -29,11 +37,16 @@ export function PrecountOverlay({ visible, count, onCancel, onDismiss }: Props) 
       onDismiss={onDismiss}
       onRequestClose={onCancel}>
       <Pressable
-        accessibilityLabel="Cancel precount"
+        accessibilityLabel={preparing ? 'Cancel preparing' : 'Cancel precount'}
         accessibilityRole="button"
         style={styles.overlay}
         onPress={onCancel}>
-        {count !== null ? (
+        {preparing ? (
+          <View pointerEvents="none" style={styles.preparingWrap}>
+            <ActivityIndicator color={colors.text} size="large" />
+            <Text style={styles.preparingText}>Preparing…</Text>
+          </View>
+        ) : count !== null ? (
           <Animated.View
             key={count}
             entering={ZoomIn.duration(180).springify().damping(18)}
@@ -57,6 +70,16 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           alignItems: 'center',
           justifyContent: 'center',
           backgroundColor: 'rgba(0, 0, 0, 0.45)',
+        },
+        preparingWrap: {
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 16,
+        },
+        preparingText: {
+          fontSize: 17,
+          fontWeight: '500',
+          color: colors.text,
         },
         numeralWrap: {
           alignItems: 'center',

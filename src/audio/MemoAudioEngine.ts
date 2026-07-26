@@ -642,11 +642,8 @@ export class MemoAudioEngine {
   }
 
   private getTargetContextSampleRate(): number {
-    if (this.state.isRecording) {
-      return Math.round(
-        this.activeRecordingSampleRate ?? AudioManager.getDevicePreferredSampleRate()
-      );
-    }
+    // Playback and recording monitor mix both use RECORDING_SAMPLE_RATE so
+    // layer buffers match without a full-song JS resample on stack warmup.
     return RECORDING_SAMPLE_RATE;
   }
 
@@ -694,9 +691,9 @@ export class MemoAudioEngine {
     if (!options?.sessionReady) {
       await this.configureForRecording();
     }
-    const targetRate = Math.round(
-      this.activeRecordingSampleRate ?? AudioManager.getDevicePreferredSampleRate()
-    );
+    // Match stored layers + recorder file preset (44100) so monitor-mix
+    // finalize skips O(duration) resample when device preferred rate is 48k.
+    const targetRate = RECORDING_SAMPLE_RATE;
 
     if (this.context && Math.round(this.context.sampleRate) !== targetRate) {
       await this.closeContextAndDisposeGraph();
