@@ -7,13 +7,17 @@ import {
   type ReactNode,
 } from 'react';
 
+import { KeepAwakeWhileRecording } from './KeepAwakeWhileRecording';
 import { memoAudioEngine, type EngineState, type MemoAudioEngine } from './MemoAudioEngine';
 
 const AudioEngineContext = createContext<MemoAudioEngine>(memoAudioEngine);
 
 export function AudioEngineProvider({ children }: { children: ReactNode }) {
   return (
-    <AudioEngineContext.Provider value={memoAudioEngine}>{children}</AudioEngineContext.Provider>
+    <AudioEngineContext.Provider value={memoAudioEngine}>
+      <KeepAwakeWhileRecording />
+      {children}
+    </AudioEngineContext.Provider>
   );
 }
 
