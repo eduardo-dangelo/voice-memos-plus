@@ -1473,6 +1473,10 @@ export function MemoEditor({
       } catch (error) {
         await engine.cancelPreparedRecording();
         clearPrecountOverlay();
+        // Capture may already be live (e.g. Live Activity start threw after recorder.start).
+        if (engine.getState().isRecording) {
+          return;
+        }
         setRecordingArmed(false);
         clearSession();
         if (error instanceof RecordingStartAbortedError || precountCancelledRef.current) {
@@ -2117,6 +2121,10 @@ export function MemoEditor({
       } catch (error) {
         await engine.cancelPreparedRecording();
         clearPrecountOverlay();
+        // Capture may already be live (e.g. Live Activity start threw after recorder.start).
+        if (engine.getState().isRecording) {
+          return;
+        }
         monitorMixRef.current = false;
         setReplaceMode(false);
         setStackMode(false);

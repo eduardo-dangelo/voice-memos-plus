@@ -58,7 +58,8 @@ export function needsMonitorMix(memo: Memo, mode: 'replace' | 'stack'): boolean 
   return mode === 'replace' && getPlayableLayers(memo).length > 1;
 }
 
-const DISCONNECT_ROUTE_REASONS = new Set(['OldDeviceUnavailable', 'ConfigurationChange']);
+// Unlock / Live Activity allow prompts fire ConfigurationChange without a real unplug.
+const DISCONNECT_ROUTE_REASONS = new Set(['OldDeviceUnavailable']);
 
 export function subscribeHeadphoneDisconnect(onDisconnect: () => void): () => void {
   const subscription = AudioManager.addSystemEventListener('routeChange', (event) => {

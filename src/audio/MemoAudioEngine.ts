@@ -12,8 +12,11 @@ import {
 } from 'react-native-audio-api';
 import { AppState } from 'react-native';
 
+import { File } from 'expo-file-system';
+
 import {
     assertRecordingRouteOk,
+    getActiveRouteSnapshot,
     logRouteSnapshot,
     pinBuiltInMicrophone,
 } from '@/src/audio/audioInputRouting';
@@ -87,6 +90,22 @@ export class RecordingStartAbortedError extends Error {
   constructor() {
     super('Recording start aborted');
     this.name = 'RecordingStartAbortedError';
+  }
+}
+
+function assertRecordingFilePresent(path: string): void {
+  let exists = false;
+  let size = 0;
+  try {
+    const file = new File(path);
+    exists = file.exists;
+    size = file.size ?? 0;
+  } catch {
+    exists = false;
+    size = 0;
+  }
+  if (!exists || size <= 0) {
+    throw new Error('Recording file was not written. Try recording again.');
   }
 }
 const PLAYBACK_UI_UPDATE_MS = 50;
@@ -250,10 +269,15 @@ export class MemoAudioEngine {
   private recordingStartAborted = false;
   /** Resampled/ready buffers for monitor-mix atomic start (path → buffer). */
   private recordingPlaybackBuffers = new Map<string, AudioBuffer>();
+  /** True between AVAudioSession interruption began/ended while a take is live. */
+  private recordingInterrupted = false;
 
   constructor() {
     AudioManager.addSystemEventListener('routeChange', () => {
       void this.handleRouteChange();
+    });
+    AudioManager.addSystemEventListener('interruption', (event) => {
+      void this.handleInterruption(event);
     });
 
     AppState.addEventListener('change', (nextState) => {
@@ -269,21 +293,60 @@ export class MemoAudioEngine {
     });
   }
 
+  private setRecordingInterruptionObservation(enabled: boolean): void {
+    // While observing, native skips auto onInterruptionEnd — only enable mid-take.
+    AudioManager.observeAudioInterruptions(enabled);
+  }
+
+  private async handleInterruption(event: {
+    type: 'began' | 'ended';
+    shouldResume: boolean;
+  }): Promise<void> {
+    if (!this.state.isRecording || this.stopCaptureInFlight) {
+      return;
+    }
+
+    if (event.type === 'began') {
+      this.recordingInterrupted = true;
+      return;
+    }
+
+    // Interruption ended — always try to reclaim capture. System alerts (Live Activity
+    // Allow) often set shouldResume=false even though the take should continue.
+    this.recordingInterrupted = false;
+    try {
+      await this.configureForRecording();
+      if (this.recorder?.isPaused()) {
+        this.recorder.resume();
+      } else if (this.recorder && !this.recorder.isRecording()) {
+        this.recorder.resume();
+      }
+      this.refreshActiveRecordingSampleRate();
+    } catch (error) {
+      if (__DEV__) {
+        console.warn(
+          '[MemoAudioEngine] recording interruption resume failed; continuing',
+          error
+        );
+      }
+    }
+  }
+
   private async handleRouteChange(): Promise<void> {
     if (this.state.isRecording) {
-      if (this.stopCaptureInFlight) {
+      if (this.stopCaptureInFlight || this.recordingInterrupted) {
         return;
       }
 
-      // Unlock / route churn often fails asserts transiently. Never discard a live take.
+      // Unlock / Live Activity allow prompt cause route churn. Never re-pin the mic
+      // or discard a live take — setPreferredInput mid-capture can kill the WAV.
       try {
-        await pinBuiltInMicrophone();
-        const routeSnapshot = await assertRecordingRouteOk();
+        const routeSnapshot = await getActiveRouteSnapshot();
         logRouteSnapshot('recording-route-change', routeSnapshot);
         this.refreshActiveRecordingSampleRate();
       } catch (error) {
         if (__DEV__) {
-          console.warn('[MemoAudioEngine] recording route re-pin failed; continuing', error);
+          console.warn('[MemoAudioEngine] recording route snapshot failed; continuing', error);
         }
       }
       return;
@@ -2220,7 +2283,9 @@ export class MemoAudioEngine {
 
     this.recordingPrepared = false;
     this.recordingWarmupFinalized = false;
+    this.recordingInterrupted = false;
     this.refreshActiveRecordingSampleRate();
+    this.setRecordingInterruptionObservation(true);
 
     this.emit({
       isRecording: true,
@@ -2242,7 +2307,14 @@ export class MemoAudioEngine {
 
     const session = getSession();
     if (session) {
-      startRecordingLiveActivity(session);
+      // Isolated from capture — Live Activity Allow UI must never abort a live take.
+      try {
+        startRecordingLiveActivity(session);
+      } catch (error) {
+        if (__DEV__) {
+          console.warn('[MemoAudioEngine] Live Activity start failed; capture continues', error);
+        }
+      }
     }
   }
 
@@ -2288,6 +2360,7 @@ export class MemoAudioEngine {
   async cancelRecording(): Promise<void> {
     if (this.state.isRecording) {
       this.clearRecordingTimer();
+      this.setRecordingInterruptionObservation(false);
       if (this.recorder) {
         this.recorder.clearOnAudioReady();
         this.recorder.stop();
@@ -2303,6 +2376,7 @@ export class MemoAudioEngine {
       this.clearRecordingSampleRateState();
       await this.resetPlaybackGraph();
       await this.configureForPlayback();
+      this.recordingInterrupted = false;
       this.emit({
         isRecording: false,
         recordingDuration: 0,
@@ -2326,6 +2400,7 @@ export class MemoAudioEngine {
     this.stopCaptureInFlight = true;
     try {
       this.clearRecordingTimer();
+      this.setRecordingInterruptionObservation(false);
       this.emitRecordingProgress();
       const trimmed = this.trimRawPeaksToDuration(
         this.recordingPeaksBuffer,
@@ -2350,6 +2425,7 @@ export class MemoAudioEngine {
       this.clearRecordingSampleRateState();
       this.monitorSilentLayerId = null;
       this.allowPrecountClicks = true;
+      this.recordingInterrupted = false;
       this.emit({
         isRecording: false,
         recordingDuration: 0,
@@ -2364,7 +2440,7 @@ export class MemoAudioEngine {
 
       const path = result.paths[0];
       if (!path) {
-        throw new Error('Recording file missing');
+        throw new Error('Recording file was not written. Try recording again.');
       }
 
       return {
@@ -2387,6 +2463,8 @@ export class MemoAudioEngine {
     let path = capture.path;
     let duration = capture.duration;
     const recorderDuration = capture.recorderDuration;
+
+    assertRecordingFilePresent(path);
 
     const decoded = await decodeAudioData(path);
     const needsNormalize = recordingNeedsNormalize(

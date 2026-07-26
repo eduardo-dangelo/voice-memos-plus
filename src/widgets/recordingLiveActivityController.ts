@@ -94,11 +94,18 @@ export async function endMemoLiveActivity(): Promise<void> {
 }
 
 export function startRecordingLiveActivity(session: ActiveRecordingSession): void {
-  void endMemoLiveActivity();
+  try {
+    void endMemoLiveActivity();
 
-  const sessionWithStart = ensureSessionRecordingStartedAt(session);
-  const props = buildRecordingProps(sessionWithStart);
-  instance = RecordingActivity.start(props, memoDeepLink(sessionWithStart.memoId));
+    const sessionWithStart = ensureSessionRecordingStartedAt(session);
+    const props = buildRecordingProps(sessionWithStart);
+    instance = RecordingActivity.start(props, memoDeepLink(sessionWithStart.memoId));
+  } catch (error) {
+    instance = null;
+    if (__DEV__) {
+      console.warn('[recordingLiveActivityController] start failed', error);
+    }
+  }
 }
 
 /**
@@ -136,7 +143,14 @@ export function ensurePlaybackLiveActivity(params: {
     return;
   }
 
-  instance = RecordingActivity.start(props, memoDeepLink(params.memoId));
+  try {
+    instance = RecordingActivity.start(props, memoDeepLink(params.memoId));
+  } catch (error) {
+    instance = null;
+    if (__DEV__) {
+      console.warn('[recordingLiveActivityController] playback start failed', error);
+    }
+  }
 }
 
 export function startPlaybackLiveActivity(params: {
