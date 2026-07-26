@@ -97,6 +97,18 @@ export function resamplePeaks(peaks: number[], peakCount = DEFAULT_PEAK_COUNT): 
   return next;
 }
 
+/** Build design-density peaks from a live capture without decoding the file. */
+export function waveformPeaksFromCaptured(
+  capturedPeaks: number[] | undefined,
+  duration: number
+): number[] | undefined {
+  if (!shouldUseCapturedPeaks(capturedPeaks, duration)) {
+    return undefined;
+  }
+  const peakCount = peakCountForDuration(duration);
+  return resamplePeaks(capturedPeaks!.map(peakToAbsoluteScale), peakCount);
+}
+
 export async function resolveWaveformPeaks(
   filePath: string,
   duration?: number,

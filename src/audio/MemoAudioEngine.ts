@@ -39,6 +39,7 @@ import { accumulatePeaksFromSamples } from '@/src/audio/recordingWaveformPeaks';
 import { appendAbsoluteRecordingPeaks } from '@/src/audio/recordingPeaksEmit';
 import {
     peakToAbsoluteScale,
+    shouldUseCapturedPeaks,
     WAVEFORM_BAR_GAP,
     WAVEFORM_BAR_WIDTH,
     WAVEFORM_PIXELS_PER_SECOND,
@@ -84,6 +85,9 @@ const RECORDING_RECORDER_WAKE_LEAD_SEC = 0.005;
 /** How far ahead to schedule metronome clicks while recording without monitor mix. */
 const METRONOME_SCHEDULE_CHUNK_SEC = 12;
 const METRONOME_SCHEDULE_EXTEND_LEAD_SEC = 2;
+/** Sliding window for monitor-mix layer sources (same idea as metronome chunks). */
+const MONITOR_MIX_SCHEDULE_CHUNK_SEC = 12;
+const MONITOR_MIX_SCHEDULE_EXTEND_LEAD_SEC = 2;
 
 /** Thrown when precount cancel aborts commit during the downbeat wait. */
 export class RecordingStartAbortedError extends Error {
@@ -142,6 +146,8 @@ type ActiveLayerPlayback = {
   bufferOffset: number;
   scheduleDelay: number;
   layerPlayLength: number;
+  /** How much of `layerPlayLength` has been scheduled (tiled monitor mix). */
+  scheduledLength: number;
   playbackEffects: LayerEffects;
 };
 
@@ -162,6 +168,8 @@ export type RecordingCaptureResult = {
   /** Monitor mix and/or metronome played from AudioContext during the take. */
   wasSoftwareMonitoredCue: boolean;
   recorderDuration: number;
+  /** True when capture used our 44.1k WAV preset — safe to skip verify-decode. */
+  usedWavFormat: boolean;
 };
 
 export type EngineState = {
@@ -732,6 +740,8 @@ export class MemoAudioEngine {
   /**
    * Schedule monitor-mix playback + metronome at a fixed audio time.
    * Uses buffers warmed in finalizeRecordingWarmup — no awaits.
+   * Dry-only + tiled windows: skip delay/reverb DSP and schedule short chunks
+   * so long multi-layer stacks stay lighter on CPU.
    */
   private startMonitorMixAt(startAt: number, startWhen: number): void {
     const context = this.context;
@@ -784,7 +794,14 @@ export class MemoAudioEngine {
         plan.playbackEffects.trimIn,
         Math.max(0, trimOut - PLAYBACK_END_TOLERANCE)
       );
-      const playbackEffects: LayerEffects = { ...plan.playbackEffects, trimIn, trimOut };
+      // Dry cue only while stacking — stored layer FX still apply on normal play.
+      const playbackEffects: LayerEffects = {
+        ...plan.playbackEffects,
+        trimIn,
+        trimOut,
+        delay: { ...plan.playbackEffects.delay, preset: 'off', mix: 0 },
+        reverb: { ...plan.playbackEffects.reverb, preset: 'off', mix: 0 },
+      };
       const activeStart = plan.layer.startTime + trimIn;
       const relativeStart = Math.max(0, playStart - activeStart);
       const bufferOffset = trimIn + relativeStart;
@@ -805,9 +822,8 @@ export class MemoAudioEngine {
       }
 
       const layerStartWhen = startWhen + plan.delay;
-      const stopWhen = layerStartWhen + layerPlayLength;
-      const hasDelay = isDelayPathActive(playbackEffects);
-      const hasReverb = isReverbPathActive(playbackEffects);
+      const firstChunk = Math.min(layerPlayLength, MONITOR_MIX_SCHEDULE_CHUNK_SEC);
+      const stopWhen = layerStartWhen + firstChunk;
 
       const drySources = [
         this.schedulePathSource(
@@ -821,47 +837,18 @@ export class MemoAudioEngine {
       ];
       scheduledSources += 1;
 
-      const delaySources: AudioBufferSourceNode[] = [];
-      if (hasDelay && channel.delay) {
-        delaySources.push(
-          this.schedulePathSource(
-            context,
-            channel.delay,
-            buffer,
-            layerStartWhen,
-            stopWhen,
-            bufferOffset
-          )
-        );
-        scheduledSources += 1;
-      }
-
-      const reverbSources: AudioBufferSourceNode[] = [];
-      if (hasReverb && channel.reverb) {
-        reverbSources.push(
-          this.schedulePathSource(
-            context,
-            channel.reverb,
-            buffer,
-            layerStartWhen,
-            stopWhen,
-            bufferOffset
-          )
-        );
-        scheduledSources += 1;
-      }
-
       this.activeLayerPlayback.set(plan.layer.id, {
         layerId: plan.layer.id,
-        hasDelay,
-        hasReverb,
+        hasDelay: false,
+        hasReverb: false,
         drySources,
-        delaySources,
-        reverbSources,
+        delaySources: [],
+        reverbSources: [],
         buffer,
         bufferOffset,
         scheduleDelay: plan.delay,
         layerPlayLength,
+        scheduledLength: firstChunk,
         playbackEffects,
       });
     }
@@ -883,6 +870,54 @@ export class MemoAudioEngine {
       this.metronomeTimelineOrigin = playStart;
       this.metronomeAudioOrigin = startWhen;
       this.extendMetronomeOnlySchedule(playStart);
+    }
+  }
+
+  /** Extend tiled monitor-mix layer sources while recording. */
+  private extendMonitorMixSchedule(timelineNow: number): void {
+    if (
+      !this.state.isRecording ||
+      !this.state.monitorMixActive ||
+      !this.context ||
+      this.playbackContextStartWhen <= 0 ||
+      this.activeLayerPlayback.size === 0
+    ) {
+      return;
+    }
+
+    const context = this.context;
+    for (const active of this.activeLayerPlayback.values()) {
+      const remaining = active.layerPlayLength - active.scheduledLength;
+      if (remaining <= PLAYBACK_END_TOLERANCE) {
+        continue;
+      }
+
+      const scheduledEndTimeline =
+        this.playbackStartAt + active.scheduleDelay + active.scheduledLength;
+      if (timelineNow < scheduledEndTimeline - MONITOR_MIX_SCHEDULE_EXTEND_LEAD_SEC) {
+        continue;
+      }
+
+      const channel = this.mixGraph.getChannel(active.layerId);
+      if (!channel) {
+        continue;
+      }
+
+      const chunk = Math.min(remaining, MONITOR_MIX_SCHEDULE_CHUNK_SEC);
+      const chunkStartWhen =
+        this.playbackContextStartWhen + active.scheduleDelay + active.scheduledLength;
+      const chunkBufferOffset = active.bufferOffset + active.scheduledLength;
+      active.drySources.push(
+        this.schedulePathSource(
+          context,
+          channel.dry,
+          active.buffer,
+          chunkStartWhen,
+          chunkStartWhen + chunk,
+          chunkBufferOffset
+        )
+      );
+      active.scheduledLength += chunk;
     }
   }
 
@@ -1671,9 +1706,13 @@ export class MemoAudioEngine {
       return;
     }
     const duration = this.recorder.getCurrentDuration();
+    const timelineNow = this.playbackStartAt + duration;
+
+    if (this.state.monitorMixActive) {
+      this.extendMonitorMixSchedule(timelineNow);
+    }
 
     if (this.metronomeOnlyActive) {
-      const timelineNow = this.playbackStartAt + duration;
       if (timelineNow >= this.metronomeScheduledUntil - METRONOME_SCHEDULE_EXTEND_LEAD_SEC) {
         this.extendMetronomeOnlySchedule(timelineNow);
       }
@@ -1731,9 +1770,10 @@ export class MemoAudioEngine {
     this.stopPlayback();
     this.disposeMixGraph();
     clearReverbIrCache();
-    this.invalidateLayerBuffers();
 
     this.loadedLayers = layers;
+    // Keep decoded PCM for unchanged layer paths across stack save/reload.
+    this.pruneLayerBuffers();
     const trimEndResolved = trimEnd > 0
       ? Math.min(trimEnd, timelineDuration)
       : timelineDuration;
@@ -2293,9 +2333,10 @@ export class MemoAudioEngine {
       isPlaying: false,
       currentTime: monitorStartTime,
     });
+    // 150ms balances live waveform growth vs JS wakeups on long stacked takes.
     this.recordingTimer = setInterval(() => {
       this.emitRecordingProgress();
-    }, 100);
+    }, 150);
 
     if (monitorMix && this.playbackContextStartWhen > 0) {
       const sessionId = this.activePlaybackSessionId;
@@ -2412,6 +2453,7 @@ export class MemoAudioEngine {
       const wasMonitorMix = this.state.monitorMixActive;
       // Capture before clearMetronomeOnlyState — metro-only first takes need cue compensation.
       const wasSoftwareMonitoredCue = wasMonitorMix || this.metronomeOnlyActive;
+      const usedWavFormat = this.recordingUsedWavFormat;
       this.stopMetronomeSources();
       this.stopActiveSources();
       this.recordingPlaybackBuffers.clear();
@@ -2447,6 +2489,7 @@ export class MemoAudioEngine {
         wasMonitorMix,
         wasSoftwareMonitoredCue,
         recorderDuration: result.duration,
+        usedWavFormat,
       };
     } finally {
       this.stopCaptureInFlight = false;
@@ -2463,28 +2506,39 @@ export class MemoAudioEngine {
 
     assertRecordingFilePresent(path);
 
-    const decoded = await decodeAudioData(path);
-    const needsNormalize = recordingNeedsNormalize(
-      decoded.sampleRate,
-      decoded.duration,
-      recorderDuration,
-      RECORDING_SAMPLE_RATE
-    );
+    // Happy path: our 44.1k WAV + dense live peaks — skip full-file decode.
+    const canSkipDecode =
+      capture.usedWavFormat &&
+      recorderDuration > 0.05 &&
+      shouldUseCapturedPeaks(capture.peaks, recorderDuration);
 
-    if (needsNormalize) {
-      try {
-        const normalized = await normalizeRecordingFile(path, RECORDING_SAMPLE_RATE, {
-          recordedDuration: recorderDuration,
-        });
-        path = normalized.path;
-        duration = normalized.duration;
-      } catch (error) {
-        if (__DEV__) {
-          console.warn(
-            '[MemoAudioEngine] recording normalize failed, using raw file',
-            error
-          );
+    if (!canSkipDecode) {
+      const decoded = await decodeAudioData(path);
+      const needsNormalize = recordingNeedsNormalize(
+        decoded.sampleRate,
+        decoded.duration,
+        recorderDuration,
+        RECORDING_SAMPLE_RATE
+      );
+
+      if (needsNormalize) {
+        try {
+          const normalized = await normalizeRecordingFile(path, RECORDING_SAMPLE_RATE, {
+            recordedDuration: recorderDuration,
+          });
+          path = normalized.path;
+          duration = normalized.duration;
+        } catch (error) {
+          if (__DEV__) {
+            console.warn(
+              '[MemoAudioEngine] recording normalize failed, using raw file',
+              error
+            );
+          }
+          duration = decoded.duration;
         }
+      } else {
+        duration = decoded.duration;
       }
     }
 
@@ -2498,7 +2552,10 @@ export class MemoAudioEngine {
     if (deferPlaybackSetup) {
       this.deferredPlaybackSetup = true;
     } else {
-      await this.resetPlaybackGraph();
+      // Keep decoded prior layers warm across stack save → reload.
+      await this.resetPlaybackGraph({
+        preserveLayerBuffers: this.loadedLayers.length > 0,
+      });
       await this.configureForPlayback();
     }
 
@@ -2718,6 +2775,7 @@ export class MemoAudioEngine {
           bufferOffset: plan.bufferOffset,
           scheduleDelay: plan.delay,
           layerPlayLength: plan.layerPlayLength,
+          scheduledLength: plan.layerPlayLength,
           playbackEffects: plan.playbackEffects,
         });
       }

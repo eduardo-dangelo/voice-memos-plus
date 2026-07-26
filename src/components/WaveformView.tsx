@@ -71,6 +71,8 @@ const TIMELINE_HEADROOM_SECONDS = 30;
 const LAYOUT_DURATION_STEP_SECONDS = 30;
 /** Min interval between React viewport/grid commits while auto-scrolling. */
 const VIEWPORT_COMMIT_MIN_MS = 100;
+/** Cap follow-scroll while recording — 60fps RAF heats long multi-layer takes. */
+const RECORDING_FOLLOW_SCROLL_MS = 50;
 const TRIM_SIDE_BORDER = 16;
 const TRIM_SIDE_BORDER_EXPANDED = 24;
 const TRIM_EDGE_BORDER = 2;
@@ -2177,12 +2179,10 @@ function WaveformViewComponent({
       return;
     }
 
-    let raf = 0;
     let bufferSyncRaf = 0;
     let pendingBufferScrollX = 0;
     const tick = () => {
       if (isUserScrollingRef.current) {
-        raf = requestAnimationFrame(tick);
         return;
       }
       const time = getRecordingTimeRef.current?.() ?? currentTimeRef.current;
@@ -2211,12 +2211,12 @@ function WaveformViewComponent({
           syncMetronomeGridRef.current(pendingBufferScrollX);
         });
       }
-      raf = requestAnimationFrame(tick);
     };
 
-    raf = requestAnimationFrame(tick);
+    tick();
+    const interval = setInterval(tick, RECORDING_FOLLOW_SCROLL_MS);
     return () => {
-      cancelAnimationFrame(raf);
+      clearInterval(interval);
       if (bufferSyncRaf !== 0) {
         cancelAnimationFrame(bufferSyncRaf);
       }

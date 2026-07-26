@@ -5,6 +5,7 @@ import {
   computeWaveformPeaksFromChannelData,
   peakCountForDuration,
   resolveWaveformPeaks,
+  waveformPeaksFromCaptured,
 } from '@/src/audio/waveform';
 import {
   createDefaultLayerEffects,
@@ -512,7 +513,7 @@ export async function ensureWaveformPeaks(memo: Memo): Promise<Memo> {
 export async function saveRecording(
   memoId: string,
   sourcePath: string,
-  _duration: number,
+  duration: number,
   capturedPeaks?: number[],
   options?: { softwareCue?: boolean }
 ): Promise<Memo> {
@@ -533,7 +534,16 @@ export async function saveRecording(
   }
   source.copy(dest);
 
-  await refreshLayerFromFile(memo, layer, capturedPeaks);
+  const precomputedPeaks =
+    duration > 0 ? waveformPeaksFromCaptured(capturedPeaks, duration) : undefined;
+  await refreshLayerFromFile(
+    memo,
+    layer,
+    capturedPeaks,
+    precomputedPeaks && duration > 0
+      ? { duration, waveformPeaks: precomputedPeaks }
+      : undefined
+  );
   applyRecordingIoLatencyTrim(layer, { softwareCue: options?.softwareCue });
   memo.trimStart = 0;
   updateMemoTimeline(memo);
@@ -613,7 +623,7 @@ export async function addStackedLayer(
   sourcePath: string,
   capturedPeaks?: number[],
   color?: string,
-  options?: { softwareCue?: boolean }
+  options?: { softwareCue?: boolean; duration?: number }
 ): Promise<Memo> {
   const memo = await getMemo(memoId);
   if (!memo) {
@@ -637,7 +647,19 @@ export async function addStackedLayer(
   }
   source.copy(dest);
 
-  await refreshLayerFromFile(memo, layer, capturedPeaks);
+  const knownDuration = options?.duration ?? 0;
+  const precomputedPeaks =
+    knownDuration > 0
+      ? waveformPeaksFromCaptured(capturedPeaks, knownDuration)
+      : undefined;
+  await refreshLayerFromFile(
+    memo,
+    layer,
+    capturedPeaks,
+    precomputedPeaks && knownDuration > 0
+      ? { duration: knownDuration, waveformPeaks: precomputedPeaks }
+      : undefined
+  );
   applyRecordingIoLatencyTrim(layer, {
     softwareCue: options?.softwareCue === true,
   });

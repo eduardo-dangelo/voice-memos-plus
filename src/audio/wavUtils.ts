@@ -237,7 +237,8 @@ export async function normalizeRecordingFile(
     };
   }
 
-  const resampledSamples = resampleChannelData(samples, fromRate, target);
+  // Yield during long resamples so stop/save does not freeze the JS thread.
+  const resampledSamples = await resampleChannelDataAsync(samples, fromRate, target);
 
   const outputPath = isWavPath(inputPath)
     ? inputPath

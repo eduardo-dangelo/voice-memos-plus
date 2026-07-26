@@ -204,7 +204,7 @@ export async function stopAndSave(
           path,
           peaks,
           currentSession.trackColor ?? undefined,
-          { softwareCue }
+          { softwareCue, duration }
         );
         activeLayerId = updated.layers[updated.layers.length - 1]?.id ?? layerId;
       } else if (wasReplaceMode) {
