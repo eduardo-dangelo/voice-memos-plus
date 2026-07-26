@@ -72,13 +72,31 @@ function schedulePathSource(
   return source;
 }
 
-export async function renderMemoForShare(memo: Memo): Promise<AudioBuffer> {
+export async function renderMemoForShare(
+  memo: Memo,
+  layerId?: string
+): Promise<AudioBuffer> {
   if (!hasRecording(memo)) {
     throw new Error('This memo has no recorded audio.');
   }
 
   const timeline = getMemoPlaybackTimeline(memo);
-  const { layers, duration, trimStart, trimEnd } = timeline;
+  const { duration, trimStart, trimEnd } = timeline;
+  let layers = timeline.layers;
+
+  if (layerId) {
+    const matched = layers.find((layer) => layer.id === layerId);
+    if (!matched) {
+      throw new Error('Track not found.');
+    }
+    layers = [
+      {
+        ...matched,
+        effects: { ...matched.effects, muted: false, solo: false },
+      },
+    ];
+  }
+
   const bounds = getMemoExportBounds(trimStart, trimEnd, duration);
   const exportDuration = bounds.end - bounds.start;
 

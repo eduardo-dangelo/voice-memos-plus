@@ -25,11 +25,22 @@ export type IconActionSheetRename = {
   initialValue: string;
 };
 
+export type IconActionSheetFormatPicker = {
+  title: string;
+};
+
+const FORMAT_ACTIONS: IconActionSheetItem[] = [
+  { id: 'm4a', title: 'm4a', systemImage: 'music.note' },
+  { id: 'wav', title: 'wav', systemImage: 'waveform' },
+];
+
 type Props = {
   visible: boolean;
   actions: IconActionSheetItem[];
   /** When set, the same Modal shows a select-all rename form instead of actions. */
   rename?: IconActionSheetRename | null;
+  /** When set, the same Modal shows format choices instead of actions. */
+  formatPicker?: IconActionSheetFormatPicker | null;
   onSelect: (actionId: string) => void;
   onRenameSave?: (value: string) => void;
   onDismiss: () => void;
@@ -41,6 +52,7 @@ export function IconActionSheet({
   visible,
   actions,
   rename = null,
+  formatPicker = null,
   onSelect,
   onRenameSave,
   onDismiss,
@@ -54,6 +66,7 @@ export function IconActionSheet({
   const [inputInstance, setInputInstance] = useState(0);
 
   const renameActive = rename != null;
+  const formatPickerActive = !renameActive && formatPicker != null;
   valueRef.current = value;
 
   const selectAllText = useCallback(() => {
@@ -85,6 +98,8 @@ export function IconActionSheet({
       clearTimeout(t2);
     };
   }, [visible, rename, selectAllText]);
+
+  const listActions = formatPickerActive ? FORMAT_ACTIONS : actions;
 
   return (
     <Modal animationType="fade" transparent visible={visible} onRequestClose={onDismiss}>
@@ -124,31 +139,36 @@ export function IconActionSheet({
               </View>
             </>
           ) : (
-            actions.map((action) => (
-              <Pressable
-                key={action.id}
-                accessibilityRole="button"
-                style={styles.row}
-                onPress={() => {
-                  onSelect(action.id);
-                  // Stay open for rename so the same Modal can switch to the form.
-                  if (action.id !== 'rename') {
-                    onDismiss();
-                  }
-                }}>
-                {action.systemImage ? (
-                  <SymbolView
-                    name={{ ios: action.systemImage as SFSymbol }}
-                    size={20}
-                    tintColor={action.destructive ? colors.recordRed : colors.text}
-                  />
-                ) : null}
-                <Text
-                  style={[styles.rowLabel, action.destructive && styles.rowLabelDestructive]}>
-                  {action.title}
-                </Text>
-              </Pressable>
-            ))
+            <>
+              {formatPickerActive && formatPicker ? (
+                <Text style={styles.formatTitle}>{formatPicker.title}</Text>
+              ) : null}
+              {listActions.map((action) => (
+                <Pressable
+                  key={action.id}
+                  accessibilityRole="button"
+                  style={styles.row}
+                  onPress={() => {
+                    onSelect(action.id);
+                    // Stay open for rename/export so the same Modal can switch views.
+                    if (action.id !== 'rename' && action.id !== 'export') {
+                      onDismiss();
+                    }
+                  }}>
+                  {action.systemImage ? (
+                    <SymbolView
+                      name={{ ios: action.systemImage as SFSymbol }}
+                      size={20}
+                      tintColor={action.destructive ? colors.recordRed : colors.text}
+                    />
+                  ) : null}
+                  <Text
+                    style={[styles.rowLabel, action.destructive && styles.rowLabelDestructive]}>
+                    {action.title}
+                  </Text>
+                </Pressable>
+              ))}
+            </>
           )}
         </Pressable>
       </Pressable>
@@ -195,6 +215,15 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           color: colors.text,
           textAlign: 'center',
           paddingTop: 18,
+          paddingHorizontal: 18,
+        },
+        formatTitle: {
+          fontSize: 17,
+          fontWeight: '600',
+          color: colors.text,
+          textAlign: 'center',
+          paddingTop: 18,
+          paddingBottom: 6,
           paddingHorizontal: 18,
         },
         renameInput: {

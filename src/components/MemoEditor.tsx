@@ -398,6 +398,7 @@ export function MemoEditor({
   const [savingTrim, setSavingTrim] = useState(false);
   const [colorPickerLayerId, setColorPickerLayerId] = useState<string | null>(null);
   const [trackMenuLayerId, setTrackMenuLayerId] = useState<string | null>(null);
+  const [trackMenuFormatPicker, setTrackMenuFormatPicker] = useState(false);
   const [trackMenuRename, setTrackMenuRename] = useState<{
     layerId: string;
     label: string;
@@ -1163,6 +1164,7 @@ export function MemoEditor({
       const effects = getLayerEffects(layer);
       const canDelete = getPlayableLayers(memo).length > 1;
       const actions: IconActionSheetItem[] = [
+        { id: 'export', title: 'Export', systemImage: 'square.and.arrow.up' },
         { id: 'rename', title: 'Rename Track', systemImage: 'pencil' },
         { id: 'changeColor', title: 'Change Color', systemImage: 'paintpalette' },
         {
@@ -1215,12 +1217,14 @@ export function MemoEditor({
           setActiveLayerId(layerId);
           setActiveEditor(null);
           setTrackMenuRename(null);
+          setTrackMenuFormatPicker(false);
           setTrackMenuLayerId(layerId);
         })();
         return;
       }
 
       setTrackMenuRename(null);
+      setTrackMenuFormatPicker(false);
       setTrackMenuLayerId(layerId);
     },
     [
@@ -1257,8 +1261,21 @@ export function MemoEditor({
       };
 
       switch (actionId) {
+        case 'export':
+          setTrackMenuFormatPicker(true);
+          break;
+        case 'm4a':
+        case 'wav':
+          shareMemo(memo, {
+            layerId,
+            format: actionId,
+            onExportStarted: () => setIsExporting(true),
+            onExportFinished: () => setIsExporting(false),
+          });
+          break;
         case 'rename':
           selectLayerIfNeeded();
+          setTrackMenuFormatPicker(false);
           setTrackMenuRename({ layerId, label: layer.label });
           break;
         case 'changeColor':
@@ -1292,6 +1309,7 @@ export function MemoEditor({
 
   const dismissTrackMenu = useCallback(() => {
     setTrackMenuLayerId(null);
+    setTrackMenuFormatPicker(false);
     setTrackMenuRename(null);
   }, []);
 
@@ -1881,7 +1899,7 @@ export function MemoEditor({
             ) : null}
             {memo && hasRecording(memo) ? (
               <FloatingHeaderButton
-                accessibilityLabel="Share"
+                accessibilityLabel="Export"
                 icon="square.and.arrow.up"
                 size="small"
                 onPress={handleShare}
@@ -2799,6 +2817,9 @@ export function MemoEditor({
       />
       <IconActionSheet
         actions={trackMenuActions}
+        formatPicker={
+          trackMenuFormatPicker ? { title: 'Choose format…' } : null
+        }
         rename={
           trackMenuRename
             ? { title: 'Rename Track', initialValue: trackMenuRename.label }

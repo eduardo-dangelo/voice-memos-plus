@@ -8,6 +8,9 @@ import {
 import { hasRecording, type Memo } from '@/src/storage/types';
 
 export type ShareMemoOptions = {
+  layerId?: string;
+  /** When set, skip the format ActionSheet and export directly. */
+  format?: ExportFormat;
   onExportStarted?: () => void;
   onExportFinished?: () => void;
 };
@@ -24,7 +27,7 @@ async function exportAndShare(
   options?.onExportStarted?.();
 
   try {
-    const file = await exportMemoToFile(memo, format);
+    const file = await exportMemoToFile(memo, format, options?.layerId);
     if (!file.exists) {
       throw new Error('Export file was not created.');
     }
@@ -57,7 +60,7 @@ function showFormatPicker(memo: Memo, options?: ShareMemoOptions): void {
       if (selected === 'm4a' || selected === 'wav') {
         void exportAndShare(memo, selected, options).catch((error) => {
           Alert.alert(
-            'Share failed',
+            'Export failed',
             error instanceof Error ? error.message : 'Unknown error'
           );
         });
@@ -68,7 +71,17 @@ function showFormatPicker(memo: Memo, options?: ShareMemoOptions): void {
 
 export function shareMemo(memo: Memo, options?: ShareMemoOptions): void {
   if (!hasRecording(memo)) {
-    Alert.alert('Nothing to share', 'This memo has no recorded audio yet.');
+    Alert.alert('Nothing to export', 'This memo has no recorded audio yet.');
+    return;
+  }
+
+  if (options?.format === 'm4a' || options?.format === 'wav') {
+    void exportAndShare(memo, options.format, options).catch((error) => {
+      Alert.alert(
+        'Export failed',
+        error instanceof Error ? error.message : 'Unknown error'
+      );
+    });
     return;
   }
 

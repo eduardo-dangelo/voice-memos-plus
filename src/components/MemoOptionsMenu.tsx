@@ -39,7 +39,7 @@ export function MemoOptionsMenu({
   const actions = useMemo((): MenuAction[] => {
     const items: MenuAction[] = [];
     if (includeShare) {
-      items.push({ id: 'share', title: 'Share', image: 'square.and.arrow.up' });
+      items.push({ id: 'share', title: 'Export', image: 'square.and.arrow.up' });
     }
     items.push({ id: 'rename', title: 'Rename', image: 'pencil' });
     if (includeEditRecording) {

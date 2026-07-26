@@ -881,13 +881,20 @@ export async function duplicateMemo(memoId: string): Promise<Memo> {
   return updated;
 }
 
-export async function exportMemoToFile(memo: Memo, format: ExportFormat): Promise<File> {
+export async function exportMemoToFile(
+  memo: Memo,
+  format: ExportFormat,
+  layerId?: string
+): Promise<File> {
   if (!hasRecording(memo)) {
     throw new Error('This memo has no recorded audio.');
   }
 
-  const rendered = await renderMemoForShare(memo);
-  const baseName = sanitizeExportFileName(memo.title);
+  const rendered = await renderMemoForShare(memo, layerId);
+  const layer = layerId ? memo.layers.find((entry) => entry.id === layerId) : undefined;
+  const baseName = sanitizeExportFileName(
+    layer ? `${memo.title} - ${layer.label}` : memo.title
+  );
   const extension = format === 'm4a' ? 'm4a' : 'wav';
   const output = new File(Paths.cache, `${baseName}.${extension}`);
 
