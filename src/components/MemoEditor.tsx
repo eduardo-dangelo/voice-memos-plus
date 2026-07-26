@@ -306,6 +306,8 @@ type EditDraftSnapshot = {
   generation: number;
 };
 
+const EDIT_DRAFT_IDLE_AUTOSAVE_MS = 3000;
+
 function cloneLayers(layers: Layer[]): Layer[] {
   return JSON.parse(JSON.stringify(layers)) as Layer[];
 }
@@ -426,6 +428,9 @@ export function MemoEditor({
   const monitorMixRef = useRef(false);
   const editDraftRef = useRef<EditDraftSnapshot | null>(null);
   const draftGenerationRef = useRef(0);
+  const editDraftIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const editGestureActiveRef = useRef(false);
+  const confirmEditDraftRef = useRef<() => Promise<void>>(async () => {});
   const precountCancelledRef = useRef(false);
   const precountDismissResolveRef = useRef<(() => void) | null>(null);
   stackModeRef.current = stackMode;
@@ -596,6 +601,27 @@ export function MemoEditor({
     pendingStartTimePersist.current = null;
   }, []);
 
+  const clearEditDraftIdleTimer = useCallback(() => {
+    if (editDraftIdleTimerRef.current) {
+      clearTimeout(editDraftIdleTimerRef.current);
+      editDraftIdleTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleEditDraftIdleAutosave = useCallback(() => {
+    clearEditDraftIdleTimer();
+    if (!editDraftRef.current || editGestureActiveRef.current) {
+      return;
+    }
+    editDraftIdleTimerRef.current = setTimeout(() => {
+      editDraftIdleTimerRef.current = null;
+      if (!editDraftRef.current || editGestureActiveRef.current) {
+        return;
+      }
+      void confirmEditDraftRef.current();
+    }, EDIT_DRAFT_IDLE_AUTOSAVE_MS);
+  }, [clearEditDraftIdleTimer]);
+
   const beginEditDraft = useCallback(
     (tool: 'trim' | 'move') => {
       const current = memoRef.current;
@@ -610,9 +636,11 @@ export function MemoEditor({
         trimEnd: current.trimEnd,
         generation: draftGenerationRef.current,
       };
+      editGestureActiveRef.current = false;
       setActiveEditor(tool);
+      scheduleEditDraftIdleAutosave();
     },
-    []
+    [scheduleEditDraftIdleAutosave]
   );
 
   const cancelEditDraft = useCallback(async (): Promise<void> => {
@@ -622,8 +650,10 @@ export function MemoEditor({
     }
 
     draftGenerationRef.current += 1;
+    clearEditDraftIdleTimer();
     clearDraftPersistTimers();
     editDraftRef.current = null;
+    editGestureActiveRef.current = false;
     setActiveEditor(null);
 
     const current = memoRef.current;
@@ -644,21 +674,25 @@ export function MemoEditor({
       getMemoTimelineDuration(restored)
     );
     await loadMemoIntoEngine(engine, restored, seekTime);
-  }, [clearDraftPersistTimers, engine]);
+  }, [clearDraftPersistTimers, clearEditDraftIdleTimer, engine]);
 
   const confirmEditDraft = useCallback(async (): Promise<void> => {
     const snapshot = editDraftRef.current;
     const current = memoRef.current;
     if (!snapshot || !current) {
       draftGenerationRef.current += 1;
+      clearEditDraftIdleTimer();
       editDraftRef.current = null;
+      editGestureActiveRef.current = false;
       setActiveEditor(null);
       return;
     }
 
     draftGenerationRef.current += 1;
+    clearEditDraftIdleTimer();
     clearDraftPersistTimers();
     editDraftRef.current = null;
+    editGestureActiveRef.current = false;
     setSavingTrim(true);
 
     try {
@@ -694,7 +728,21 @@ export function MemoEditor({
     } finally {
       setSavingTrim(false);
     }
-  }, [activeLayerId, clearDraftPersistTimers]);
+  }, [activeLayerId, clearDraftPersistTimers, clearEditDraftIdleTimer]);
+
+  confirmEditDraftRef.current = confirmEditDraft;
+
+  const handleEditGestureActive = useCallback(
+    (active: boolean) => {
+      editGestureActiveRef.current = active;
+      if (active) {
+        clearEditDraftIdleTimer();
+        return;
+      }
+      scheduleEditDraftIdleAutosave();
+    },
+    [clearEditDraftIdleTimer, scheduleEditDraftIdleAutosave]
+  );
 
   const handleEditorToolChange = useCallback(
     (tool: EditorTool | null) => {
@@ -741,8 +789,9 @@ export function MemoEditor({
   const handleTrimChange = useCallback(
     (trimIn: number, trimOut: number) => {
       handleEffectsChange({ trimIn, trimOut });
+      scheduleEditDraftIdleAutosave();
     },
-    [handleEffectsChange]
+    [handleEffectsChange, scheduleEditDraftIdleAutosave]
   );
 
   const handleLayerStartTimeChange = useCallback(
@@ -818,6 +867,7 @@ export function MemoEditor({
       engine.updateTimelineDuration(timeline);
 
       if (isDraftMove) {
+        scheduleEditDraftIdleAutosave();
         return;
       }
 
@@ -834,7 +884,7 @@ export function MemoEditor({
         void updateLayerStartTimes(memoId!, { [activeLayerId]: nextStartTime! });
       }, 300);
     },
-    [activeLayerId, engine, isDraftGenerationCurrent]
+    [activeLayerId, engine, isDraftGenerationCurrent, scheduleEditDraftIdleAutosave]
   );
 
   const handleLoopChange = useCallback(
@@ -1723,6 +1773,7 @@ export function MemoEditor({
       resetLayoutReady();
       resetPerformanceWarningState();
       engine.pause();
+      clearEditDraftIdleTimer();
       if (persistEffectsTimeout.current) {
         clearTimeout(persistEffectsTimeout.current);
       }
@@ -1739,7 +1790,7 @@ export function MemoEditor({
         deactivateLoopForMemo(engine, current, setMemo);
       }
     };
-  }, [engine, flushMetronomePersist, loadMemo, resetLayoutReady]);
+  }, [clearEditDraftIdleTimer, engine, flushMetronomePersist, loadMemo, resetLayoutReady]);
 
   const handleDone = useCallback(async () => {
     if (!memo) {
@@ -2627,6 +2678,13 @@ export function MemoEditor({
     : [];
   const showEditorContent = Boolean(memo && !loading);
 
+  const timelineSnapIntervalSec = useMemo(() => {
+    if (!metronomeSettings.showGrid) {
+      return null;
+    }
+    return getClickIntervalSec(metronomeSettings);
+  }, [metronomeSettings]);
+
   const trimOverlay = useMemo(() => {
     if (activeEditor !== 'trim' || savingTrim || !activeLayer || !activeLayerEffects) {
       return undefined;
@@ -2636,8 +2694,16 @@ export function MemoEditor({
       trimIn: activeLayerEffects.trimIn,
       trimOut: activeLayerEffects.trimOut,
       onChange: handleTrimChange,
+      snapIntervalSec: timelineSnapIntervalSec,
     };
-  }, [activeEditor, activeLayer, activeLayerEffects, handleTrimChange, savingTrim]);
+  }, [
+    activeEditor,
+    activeLayer,
+    activeLayerEffects,
+    handleTrimChange,
+    savingTrim,
+    timelineSnapIntervalSec,
+  ]);
 
   const moveOverlay = useMemo(() => {
     if (activeEditor !== 'move' || !activeLayer || !activeLayerEffects) {
@@ -2648,15 +2714,21 @@ export function MemoEditor({
       startTime: activeLayer.startTime,
       trimIn: activeLayerEffects.trimIn,
       onChange: handleLayerStartTimeChange,
+      snapIntervalSec: timelineSnapIntervalSec,
     };
-  }, [activeEditor, activeLayer, activeLayerEffects, handleLayerStartTimeChange]);
+  }, [
+    activeEditor,
+    activeLayer,
+    activeLayerEffects,
+    handleLayerStartTimeChange,
+    timelineSnapIntervalSec,
+  ]);
 
   const loopOverlay = useMemo(() => {
     if (!memo || waveformDuration <= 0) {
       return undefined;
     }
-    const snapEnabled =
-      metronomeSettings.enabled && memo.loopSnapToGrid !== false;
+    const snapEnabled = memo.loopSnapToGrid !== false;
     return {
       loopStart: memo.loopStart ?? 0,
       loopEnd: memo.loopEnd ?? 0,
@@ -2665,9 +2737,15 @@ export function MemoEditor({
       onChange: handleLoopChange,
       onOpenSettings: () => setLoopSettingsVisible(true),
       holdExpanded: loopSettingsVisible,
-      snapIntervalSec: snapEnabled ? getClickIntervalSec(metronomeSettings) : null,
+      snapIntervalSec: snapEnabled ? timelineSnapIntervalSec : null,
     };
-  }, [handleLoopChange, loopSettingsVisible, memo, metronomeSettings, waveformDuration]);
+  }, [
+    handleLoopChange,
+    loopSettingsVisible,
+    memo,
+    timelineSnapIntervalSec,
+    waveformDuration,
+  ]);
 
   const loopSettingsValues = useMemo(() => {
     if (!memo) {
@@ -2681,13 +2759,6 @@ export function MemoEditor({
       duration: waveformDuration,
     };
   }, [memo, waveformDuration]);
-
-  const loopSheetSnapInterval = useMemo(() => {
-    if (!metronomeSettings.enabled) {
-      return null;
-    }
-    return getClickIntervalSec(metronomeSettings);
-  }, [metronomeSettings]);
 
   return (
     <SafeAreaView edges={['bottom']} style={styles.screen}>
@@ -2715,6 +2786,7 @@ export function MemoEditor({
               onTrackPress={handleTrackPress}
               onTrackDeselect={handleTrackDeselect}
               onTrackLongPress={handleTrackLongPress}
+              onEditGestureActive={handleEditGestureActive}
             />
           ) : (
             <View style={styles.tracksLoading}>
@@ -2800,7 +2872,7 @@ export function MemoEditor({
       {loopSettingsValues ? (
         <LoopSettingsSheet
           snapIntervalSec={
-            loopSettingsValues.loopSnapToGrid ? loopSheetSnapInterval : null
+            loopSettingsValues.loopSnapToGrid ? timelineSnapIntervalSec : null
           }
           values={loopSettingsValues}
           visible={loopSettingsVisible}

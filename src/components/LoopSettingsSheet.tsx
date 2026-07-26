@@ -148,7 +148,7 @@ export function LoopSettingsSheet({
               onSelect={(value) => onChange({ loopSnapToGrid: value === 'on' })}
             />
             <Text style={styles.sectionCaption}>
-              Only available when the metronome is active
+              Only available when the grid is visible
             </Text>
           </View>
         </Pressable>

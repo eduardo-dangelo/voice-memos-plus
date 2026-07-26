@@ -401,14 +401,21 @@ export function syncDelayTimeMs(sync: DelaySync, bpm = DEFAULT_BPM): number {
 export function clampTrimValues(
   trimIn: number,
   trimOut: number,
-  layerDuration: number
+  layerDuration: number,
+  quantizeSec: number | null = TRIM_SNAP_SECONDS
 ): { trimIn: number; trimOut: number } {
-  const snappedIn = Math.round(trimIn / TRIM_SNAP_SECONDS) * TRIM_SNAP_SECONDS;
-  const snappedOut = Math.round(trimOut / TRIM_SNAP_SECONDS) * TRIM_SNAP_SECONDS;
-  const clampedIn = Math.max(0, Math.min(snappedIn, layerDuration - MIN_TRIM_SELECTION));
+  const quantizedIn =
+    quantizeSec != null && quantizeSec > 0
+      ? Math.round(trimIn / quantizeSec) * quantizeSec
+      : trimIn;
+  const quantizedOut =
+    quantizeSec != null && quantizeSec > 0
+      ? Math.round(trimOut / quantizeSec) * quantizeSec
+      : trimOut;
+  const clampedIn = Math.max(0, Math.min(quantizedIn, layerDuration - MIN_TRIM_SELECTION));
   const clampedOut = Math.min(
     layerDuration,
-    Math.max(snappedOut, clampedIn + MIN_TRIM_SELECTION)
+    Math.max(quantizedOut, clampedIn + MIN_TRIM_SELECTION)
   );
   return { trimIn: clampedIn, trimOut: clampedOut };
 }
