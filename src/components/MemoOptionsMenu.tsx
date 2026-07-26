@@ -11,6 +11,7 @@ export type MemoOptionsMenuHandlers = {
   onRename: () => void;
   onEditRecording?: () => void;
   onMoveToFolder?: () => void;
+  onMergeLayers?: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
 };
@@ -20,6 +21,7 @@ export type MemoOptionsMenuProps = MemoOptionsMenuHandlers & {
   includeEditRecording?: boolean;
   includeMoveToFolder?: boolean;
   includeShare?: boolean;
+  includeMergeLayers?: boolean;
   style?: StyleProp<ViewStyle>;
 };
 
@@ -28,10 +30,12 @@ export function MemoOptionsMenu({
   includeEditRecording = true,
   includeMoveToFolder = false,
   includeShare = true,
+  includeMergeLayers = false,
   onShare,
   onRename,
   onEditRecording,
   onMoveToFolder,
+  onMergeLayers,
   onDuplicate,
   onDelete,
   style,
@@ -48,6 +52,9 @@ export function MemoOptionsMenu({
     if (includeMoveToFolder) {
       items.push({ id: 'moveToFolder', title: 'Move to Folder', image: 'folder' });
     }
+    if (includeMergeLayers) {
+      items.push({ id: 'mergeLayers', title: 'Merge Layers', image: 'square.stack.3d.down.right' });
+    }
     items.push({ id: 'duplicate', title: 'Duplicate', image: 'plus.square.on.square' });
     items.push({
       id: 'delete',
@@ -56,7 +63,7 @@ export function MemoOptionsMenu({
       attributes: { destructive: true },
     });
     return items;
-  }, [includeEditRecording, includeMoveToFolder, includeShare]);
+  }, [includeEditRecording, includeMergeLayers, includeMoveToFolder, includeShare]);
 
   return (
     <ThemedMenuView
@@ -75,6 +82,9 @@ export function MemoOptionsMenu({
             break;
           case 'moveToFolder':
             onMoveToFolder?.();
+            break;
+          case 'mergeLayers':
+            onMergeLayers?.();
             break;
           case 'duplicate':
             onDuplicate();

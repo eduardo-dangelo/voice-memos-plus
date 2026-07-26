@@ -14,6 +14,7 @@ import {
 } from '@/src/audio/layerEffectChain';
 import type { LoadedLayer } from '@/src/audio/MemoAudioEngine';
 import { MemoMixGraph } from '@/src/audio/memoMixGraph';
+import { prepareLayersForMix } from '@/src/audio/mergeLayersLogic';
 import {
   buildLayerPlaybackPlans,
   getLayerEffectsForPlayback,
@@ -34,6 +35,8 @@ type ResolvedPlaybackPlan = {
   delay: number;
   layerPlayLength: number;
 };
+
+export type MixBoundsMode = 'timeline' | 'exportTrim';
 
 async function getLayerBufferForContext(
   context: OfflineAudioContext,
@@ -72,32 +75,10 @@ function schedulePathSource(
   return source;
 }
 
-export async function renderMemoForShare(
-  memo: Memo,
-  layerId?: string
+async function renderLayersOffline(
+  layers: LoadedLayer[],
+  bounds: { start: number; end: number }
 ): Promise<AudioBuffer> {
-  if (!hasRecording(memo)) {
-    throw new Error('This memo has no recorded audio.');
-  }
-
-  const timeline = getMemoPlaybackTimeline(memo);
-  const { duration, trimStart, trimEnd } = timeline;
-  let layers = timeline.layers;
-
-  if (layerId) {
-    const matched = layers.find((layer) => layer.id === layerId);
-    if (!matched) {
-      throw new Error('Track not found.');
-    }
-    layers = [
-      {
-        ...matched,
-        effects: { ...matched.effects, muted: false, solo: false },
-      },
-    ];
-  }
-
-  const bounds = getMemoExportBounds(trimStart, trimEnd, duration);
   const exportDuration = bounds.end - bounds.start;
 
   if (exportDuration <= PLAYBACK_END_TOLERANCE) {
@@ -210,4 +191,56 @@ export async function renderMemoForShare(
     mixGraph.dispose();
     clearReverbIrCache();
   }
+}
+
+export async function renderLayersMix(
+  memo: Memo,
+  layerIds: string[],
+  options?: { bounds?: MixBoundsMode }
+): Promise<AudioBuffer> {
+  if (!hasRecording(memo)) {
+    throw new Error('This memo has no recorded audio.');
+  }
+
+  if (layerIds.length < 2) {
+    throw new Error('Select at least two tracks to merge.');
+  }
+
+  const timeline = getMemoPlaybackTimeline(memo);
+  const { duration, trimStart, trimEnd } = timeline;
+  const layers = prepareLayersForMix(timeline.layers, {
+    layerIds,
+    forceAudible: true,
+  });
+
+  if (layers.length < 2) {
+    throw new Error('Select at least two tracks to merge.');
+  }
+
+  const boundsMode = options?.bounds ?? 'timeline';
+  const bounds =
+    boundsMode === 'exportTrim'
+      ? getMemoExportBounds(trimStart, trimEnd, duration)
+      : { start: 0, end: duration };
+
+  return renderLayersOffline(layers, bounds);
+}
+
+export async function renderMemoForShare(
+  memo: Memo,
+  layerId?: string
+): Promise<AudioBuffer> {
+  if (!hasRecording(memo)) {
+    throw new Error('This memo has no recorded audio.');
+  }
+
+  const timeline = getMemoPlaybackTimeline(memo);
+  const { duration, trimStart, trimEnd } = timeline;
+  const layers = prepareLayersForMix(timeline.layers, {
+    layerIds: layerId ? [layerId] : undefined,
+    forceAudible: Boolean(layerId),
+  });
+
+  const bounds = getMemoExportBounds(trimStart, trimEnd, duration);
+  return renderLayersOffline(layers, bounds);
 }

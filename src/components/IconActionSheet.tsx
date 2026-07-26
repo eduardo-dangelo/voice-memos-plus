@@ -29,6 +29,14 @@ export type IconActionSheetFormatPicker = {
   title: string;
 };
 
+export type IconActionSheetMultiSelect = {
+  title: string;
+  options: IconActionSheetItem[];
+  confirmTitle?: string;
+  /** Minimum selected options required to enable confirm. Defaults to 1. */
+  minSelection?: number;
+};
+
 const FORMAT_ACTIONS: IconActionSheetItem[] = [
   { id: 'm4a', title: 'm4a', systemImage: 'music.note' },
   { id: 'wav', title: 'wav', systemImage: 'waveform' },
@@ -41,8 +49,11 @@ type Props = {
   rename?: IconActionSheetRename | null;
   /** When set, the same Modal shows format choices instead of actions. */
   formatPicker?: IconActionSheetFormatPicker | null;
+  /** When set, the same Modal shows a multi-select checklist. */
+  multiSelect?: IconActionSheetMultiSelect | null;
   onSelect: (actionId: string) => void;
   onRenameSave?: (value: string) => void;
+  onMultiSelectConfirm?: (selectedIds: string[]) => void;
   onDismiss: () => void;
 };
 
@@ -53,8 +64,10 @@ export function IconActionSheet({
   actions,
   rename = null,
   formatPicker = null,
+  multiSelect = null,
   onSelect,
   onRenameSave,
+  onMultiSelectConfirm,
   onDismiss,
 }: Props) {
   const colors = useVoiceMemosColors();
@@ -64,9 +77,11 @@ export function IconActionSheet({
   const [value, setValue] = useState(rename?.initialValue ?? '');
   const [selection, setSelection] = useState<Selection | undefined>(undefined);
   const [inputInstance, setInputInstance] = useState(0);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
 
   const renameActive = rename != null;
-  const formatPickerActive = !renameActive && formatPicker != null;
+  const multiSelectActive = !renameActive && multiSelect != null;
+  const formatPickerActive = !renameActive && !multiSelectActive && formatPicker != null;
   valueRef.current = value;
 
   const selectAllText = useCallback(() => {
@@ -87,7 +102,6 @@ export function IconActionSheet({
 
     const t1 = setTimeout(() => {
       inputRef.current?.focus();
-      selectAllText();
     }, 50);
     const t2 = setTimeout(() => {
       selectAllText();
@@ -99,7 +113,29 @@ export function IconActionSheet({
     };
   }, [visible, rename, selectAllText]);
 
+  useEffect(() => {
+    if (!visible || !multiSelect) {
+      setSelectedIds(new Set());
+      return;
+    }
+    setSelectedIds(new Set());
+  }, [visible, multiSelect]);
+
   const listActions = formatPickerActive ? FORMAT_ACTIONS : actions;
+  const minSelection = multiSelect?.minSelection ?? 1;
+  const canConfirmMulti = selectedIds.size >= minSelection;
+
+  const toggleSelected = useCallback((id: string) => {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }, []);
 
   return (
     <Modal animationType="fade" transparent visible={visible} onRequestClose={onDismiss}>
@@ -138,6 +174,56 @@ export function IconActionSheet({
                 </Pressable>
               </View>
             </>
+          ) : multiSelectActive && multiSelect ? (
+            <>
+              <Text style={styles.formatTitle}>{multiSelect.title}</Text>
+              {multiSelect.options.map((option) => {
+                const checked = selectedIds.has(option.id);
+                return (
+                  <Pressable
+                    key={option.id}
+                    accessibilityRole="checkbox"
+                    accessibilityState={{ checked }}
+                    style={styles.row}
+                    onPress={() => toggleSelected(option.id)}>
+                    <SymbolView
+                      name={{
+                        ios: (checked
+                          ? 'checkmark.circle.fill'
+                          : 'circle') as SFSymbol,
+                      }}
+                      size={20}
+                      tintColor={checked ? colors.accent : colors.secondaryText}
+                    />
+                    <Text style={styles.rowLabel}>{option.title}</Text>
+                  </Pressable>
+                );
+              })}
+              <View style={styles.renameActions}>
+                <Pressable accessibilityRole="button" hitSlop={8} onPress={onDismiss}>
+                  <Text style={styles.cancelText}>Cancel</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: !canConfirmMulti }}
+                  disabled={!canConfirmMulti}
+                  hitSlop={8}
+                  onPress={() => {
+                    if (!canConfirmMulti) {
+                      return;
+                    }
+                    onMultiSelectConfirm?.([...selectedIds]);
+                  }}>
+                  <Text
+                    style={[
+                      styles.saveText,
+                      !canConfirmMulti && styles.confirmDisabled,
+                    ]}>
+                    {multiSelect.confirmTitle ?? 'Merge'}
+                  </Text>
+                </Pressable>
+              </View>
+            </>
           ) : (
             <>
               {formatPickerActive && formatPicker ? (
@@ -150,8 +236,12 @@ export function IconActionSheet({
                   style={styles.row}
                   onPress={() => {
                     onSelect(action.id);
-                    // Stay open for rename/export so the same Modal can switch views.
-                    if (action.id !== 'rename' && action.id !== 'export') {
+                    // Stay open for rename/export/merge so the same Modal can switch views.
+                    if (
+                      action.id !== 'rename' &&
+                      action.id !== 'export' &&
+                      action.id !== 'merge'
+                    ) {
                       onDismiss();
                     }
                   }}>
@@ -253,6 +343,9 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           fontSize: 17,
           fontWeight: '600',
           color: colors.accent,
+        },
+        confirmDisabled: {
+          opacity: 0.4,
         },
       }),
     [colors]

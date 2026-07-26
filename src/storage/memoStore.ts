@@ -12,7 +12,11 @@ import {
   mergeLayerEffects,
   type LayerEffectsChange,
 } from '@/src/audio/layerEffects';
-import { renderMemoForShare } from '@/src/audio/memoExport';
+import { renderLayersMix, renderMemoForShare } from '@/src/audio/memoExport';
+import {
+  buildMergedLayerLabel,
+  resolveMergeSurvivor,
+} from '@/src/audio/mergeLayersLogic';
 import {
   applyRecordingIoLatencyTrim,
   getRecordingReplacementSkipSeconds,
@@ -844,6 +848,91 @@ export async function deleteLayer(memoId: string, layerId: string): Promise<Memo
   memo.updatedAt = new Date().toISOString();
   writeManifest(memo);
   return memo;
+}
+
+/**
+ * Offline-mixes the given layers into one survivor track and deletes the rest.
+ * Prefer `survivorId` (e.g. long-press anchor); otherwise lowest-order selected.
+ */
+export async function mergeLayers(
+  memoId: string,
+  layerIds: string[],
+  survivorId?: string
+): Promise<Memo> {
+  const memo = await getMemo(memoId);
+  if (!memo) {
+    throw new Error('Memo not found');
+  }
+
+  const uniqueIds = [...new Set(layerIds)];
+  const survivor = resolveMergeSurvivor(memo.layers, uniqueIds, survivorId);
+  const mergedLabel = buildMergedLayerLabel(memo.layers, uniqueIds, survivor.id);
+  const removeIds = new Set(uniqueIds.filter((id) => id !== survivor.id));
+
+  const rendered = await renderLayersMix(memo, uniqueIds, { bounds: 'timeline' });
+  const temp = new File(Paths.cache, `merge-${memo.id}-${Date.now()}.wav`);
+  if (temp.exists) {
+    temp.delete();
+  }
+  writeAudioBufferToWavFile(rendered, temp.uri);
+
+  try {
+    const liveSurvivor = memo.layers.find((entry) => entry.id === survivor.id);
+    if (!liveSurvivor) {
+      throw new Error('Track not found.');
+    }
+
+    liveSurvivor.label = mergedLabel;
+
+    const previousFileName = liveSurvivor.fileName;
+    alignLayerFileNameWithSource(liveSurvivor, temp.uri);
+
+    if (previousFileName !== liveSurvivor.fileName) {
+      const oldFile = requireLayerFile(memoId, previousFileName);
+      if (oldFile.exists) {
+        oldFile.delete();
+      }
+    }
+
+    const dest = requireLayerFile(memoId, liveSurvivor.fileName);
+    if (dest.exists) {
+      dest.delete();
+    }
+    await temp.copy(dest);
+
+    const peakCount = peakCountForDuration(rendered.duration);
+    const waveformPeaks = computeWaveformPeaksFromChannelData(
+      rendered.getChannelData(0),
+      peakCount
+    );
+    await refreshLayerFromFile(memo, liveSurvivor, undefined, {
+      duration: rendered.duration,
+      waveformPeaks,
+    });
+    liveSurvivor.startTime = 0;
+    liveSurvivor.effects = createDefaultLayerEffects(liveSurvivor.duration);
+
+    for (const layer of memo.layers) {
+      if (!removeIds.has(layer.id)) {
+        continue;
+      }
+      const file = requireLayerFile(memoId, layer.fileName);
+      if (file.exists) {
+        file.delete();
+      }
+    }
+    memo.layers = memo.layers.filter((entry) => !removeIds.has(entry.id));
+
+    updateMemoTimeline(memo);
+    normalizeLoopRegion(memo, memo.duration);
+    memo.updatedAt = new Date().toISOString();
+    writeManifest(memo);
+    return memo;
+  } finally {
+    if (temp.exists) {
+      temp.delete();
+    }
+  }
 }
 
 export async function duplicateMemo(memoId: string): Promise<Memo> {

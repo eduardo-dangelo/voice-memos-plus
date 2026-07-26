@@ -33,6 +33,11 @@ import type { LayerEffects, LayerEffectsChange } from '@/src/audio/layerEffects'
 import { hasAnySoloActive, isLayerSelectable, mergeLayerEffects } from '@/src/audio/layerEffects';
 import { loadMemoIntoEngine } from '@/src/audio/loadMemoIntoEngine';
 import {
+  canMergeLayers,
+  getMergePartnerLayers,
+  getPlayableLayersInTimelineOrder,
+} from '@/src/audio/mergeLayersLogic';
+import {
   maybeShowPerformanceWarning,
   resetPerformanceWarningState,
 } from '@/src/audio/performanceWarning';
@@ -74,6 +79,7 @@ import {
   duplicateMemo,
   ensureWaveformPeaks,
   getMemo,
+  mergeLayers,
   permanentlyDeleteMemo,
   updateLayerColor,
   updateLayerEffects,
@@ -401,6 +407,8 @@ export function MemoEditor({
   const [colorPickerLayerId, setColorPickerLayerId] = useState<string | null>(null);
   const [trackMenuLayerId, setTrackMenuLayerId] = useState<string | null>(null);
   const [trackMenuFormatPicker, setTrackMenuFormatPicker] = useState(false);
+  const [trackMenuMergePicker, setTrackMenuMergePicker] = useState(false);
+  const [memoMergePickerVisible, setMemoMergePickerVisible] = useState(false);
   const [trackMenuRename, setTrackMenuRename] = useState<{
     layerId: string;
     label: string;
@@ -1200,6 +1208,89 @@ export function MemoEditor({
     [cancelEditDraft, engine, flushEffectsPersist, flushStartTimePersist, memo]
   );
 
+  const performMergeLayers = useCallback(
+    async (layerIds: string[], survivorId?: string) => {
+      const current = memoRef.current;
+      if (!current || engineState.isRecording || isExporting) {
+        return;
+      }
+
+      try {
+        await cancelEditDraft();
+        flushEffectsPersist();
+        flushStartTimePersist();
+        const latest = memoRef.current;
+        if (!latest) {
+          return;
+        }
+
+        setIsExporting(true);
+        if (engineState.isPlaying) {
+          engine.pause();
+        }
+
+        const seekTime = Math.min(engine.getPlaybackTime(), latest.duration);
+        const updated = await mergeLayers(latest.id, layerIds, survivorId);
+        const nextActiveId =
+          survivorId && updated.layers.some((layer) => layer.id === survivorId)
+            ? survivorId
+            : (getPlayableLayers(updated)[0]?.id ?? updated.layers[0]?.id ?? null);
+        memoRef.current = updated;
+        setMemo(updated);
+        setActiveLayerId(nextActiveId);
+        setActiveEditor(null);
+        await loadMemoIntoEngine(engine, updated, seekTime);
+      } catch (error) {
+        Alert.alert(
+          'Merge failed',
+          error instanceof Error ? error.message : 'Unknown error'
+        );
+      } finally {
+        setIsExporting(false);
+      }
+    },
+    [
+      cancelEditDraft,
+      engine,
+      engineState.isPlaying,
+      engineState.isRecording,
+      flushEffectsPersist,
+      flushStartTimePersist,
+      isExporting,
+    ]
+  );
+
+  const confirmMergeLayers = useCallback(
+    (layerIds: string[], survivorId?: string) => {
+      Alert.alert(
+        'Merge Layers',
+        'Selected tracks will be combined into one. This cannot be undone.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Merge',
+            style: 'destructive',
+            onPress: () => {
+              void performMergeLayers(layerIds, survivorId);
+            },
+          },
+        ]
+      );
+    },
+    [performMergeLayers]
+  );
+
+  const handleMergeAllLayers = useCallback(() => {
+    if (!memo || !canMergeLayers(memo.layers) || engineState.isRecording) {
+      return;
+    }
+    setTrackMenuLayerId(null);
+    setTrackMenuFormatPicker(false);
+    setTrackMenuMergePicker(false);
+    setTrackMenuRename(null);
+    setMemoMergePickerVisible(true);
+  }, [engineState.isRecording, memo]);
+
   const getTrackMenuActions = useCallback(
     (layerId: string): IconActionSheetItem[] | undefined => {
       if (!memo || layerId === '__recording__' || layerId === 'empty') {
@@ -1212,7 +1303,8 @@ export function MemoEditor({
       }
 
       const effects = getLayerEffects(layer);
-      const canDelete = getPlayableLayers(memo).length > 1;
+      const playableCount = getPlayableLayers(memo).length;
+      const canDelete = playableCount > 1;
       const actions: IconActionSheetItem[] = [
         { id: 'export', title: 'Export', systemImage: 'square.and.arrow.up' },
         { id: 'rename', title: 'Rename Track', systemImage: 'pencil' },
@@ -1228,6 +1320,13 @@ export function MemoEditor({
           systemImage: 'headphones',
         },
       ];
+      if (playableCount > 1) {
+        actions.push({
+          id: 'merge',
+          title: 'Merge',
+          systemImage: 'square.stack.3d.down.right',
+        });
+      }
       if (canDelete) {
         actions.push({
           id: 'delete',
@@ -1268,6 +1367,7 @@ export function MemoEditor({
           setActiveEditor(null);
           setTrackMenuRename(null);
           setTrackMenuFormatPicker(false);
+          setTrackMenuMergePicker(false);
           setTrackMenuLayerId(layerId);
         })();
         return;
@@ -1275,6 +1375,7 @@ export function MemoEditor({
 
       setTrackMenuRename(null);
       setTrackMenuFormatPicker(false);
+      setTrackMenuMergePicker(false);
       setTrackMenuLayerId(layerId);
     },
     [
@@ -1312,6 +1413,7 @@ export function MemoEditor({
 
       switch (actionId) {
         case 'export':
+          setTrackMenuMergePicker(false);
           setTrackMenuFormatPicker(true);
           break;
         case 'm4a':
@@ -1326,6 +1428,7 @@ export function MemoEditor({
         case 'rename':
           selectLayerIfNeeded();
           setTrackMenuFormatPicker(false);
+          setTrackMenuMergePicker(false);
           setTrackMenuRename({ layerId, label: layer.label });
           break;
         case 'changeColor':
@@ -1337,6 +1440,13 @@ export function MemoEditor({
           break;
         case 'solo':
           applyLayerEffectsChange(layerId, { solo: !effects.solo });
+          break;
+        case 'merge':
+          if (canMergeLayers(memo.layers)) {
+            setTrackMenuFormatPicker(false);
+            setTrackMenuRename(null);
+            setTrackMenuMergePicker(true);
+          }
           break;
         case 'delete':
           if (getPlayableLayers(memo).length > 1) {
@@ -1360,8 +1470,33 @@ export function MemoEditor({
   const dismissTrackMenu = useCallback(() => {
     setTrackMenuLayerId(null);
     setTrackMenuFormatPicker(false);
+    setTrackMenuMergePicker(false);
     setTrackMenuRename(null);
+    setMemoMergePickerVisible(false);
   }, []);
+
+  const handleTrackMergeConfirm = useCallback(
+    (selectedIds: string[]) => {
+      const anchorId = trackMenuLayerId;
+      dismissTrackMenu();
+      if (!anchorId || selectedIds.length === 0) {
+        return;
+      }
+      confirmMergeLayers([anchorId, ...selectedIds], anchorId);
+    },
+    [confirmMergeLayers, dismissTrackMenu, trackMenuLayerId]
+  );
+
+  const handleMemoMergeConfirm = useCallback(
+    (selectedIds: string[]) => {
+      setMemoMergePickerVisible(false);
+      if (selectedIds.length < 2) {
+        return;
+      }
+      confirmMergeLayers(selectedIds);
+    },
+    [confirmMergeLayers]
+  );
 
   const handleTrackRenameSave = useCallback(
     (value: string) => {
@@ -1974,9 +2109,11 @@ export function MemoEditor({
           <View style={styles.headerLeading}>
             <MemoOptionsMenu
               includeEditRecording={false}
+              includeMergeLayers={memo ? canMergeLayers(memo.layers) : false}
               includeShare={memo ? hasRecording(memo) : false}
               onShare={handleShare}
               onRename={handleRename}
+              onMergeLayers={handleMergeAllLayers}
               onDuplicate={() => void handleDuplicate()}
               onDelete={confirmDelete}>
               <FloatingHeaderIconFace
@@ -2009,6 +2146,7 @@ export function MemoEditor({
       engineState.isRecording,
       handleDone,
       handleDuplicate,
+      handleMergeAllLayers,
       handleRename,
       handleShare,
       isPane,
@@ -2676,6 +2814,24 @@ export function MemoEditor({
   const trackMenuActions = trackMenuLayerId
     ? getTrackMenuActions(trackMenuLayerId) ?? []
     : [];
+  const trackMenuMergeOptions = useMemo((): IconActionSheetItem[] => {
+    if (!memo || !trackMenuLayerId) {
+      return [];
+    }
+    return getMergePartnerLayers(memo.layers, trackMenuLayerId).map((layer) => ({
+      id: layer.id,
+      title: layer.label,
+    }));
+  }, [memo, trackMenuLayerId]);
+  const memoMergeOptions = useMemo((): IconActionSheetItem[] => {
+    if (!memo) {
+      return [];
+    }
+    return getPlayableLayersInTimelineOrder(memo.layers).map((layer) => ({
+      id: layer.id,
+      title: layer.label,
+    }));
+  }, [memo]);
   const showEditorContent = Boolean(memo && !loading);
 
   const timelineSnapIntervalSec = useMemo(() => {
@@ -2892,13 +3048,32 @@ export function MemoEditor({
         formatPicker={
           trackMenuFormatPicker ? { title: 'Choose format…' } : null
         }
+        multiSelect={
+          memoMergePickerVisible
+            ? {
+                title: 'Merge Layers',
+                options: memoMergeOptions,
+                confirmTitle: 'Merge',
+                minSelection: 2,
+              }
+            : trackMenuMergePicker
+              ? {
+                  title: 'Merge with…',
+                  options: trackMenuMergeOptions,
+                  confirmTitle: 'Merge',
+                }
+              : null
+        }
         rename={
           trackMenuRename
             ? { title: 'Rename Track', initialValue: trackMenuRename.label }
             : null
         }
-        visible={trackMenuLayerId !== null}
+        visible={trackMenuLayerId !== null || memoMergePickerVisible}
         onDismiss={dismissTrackMenu}
+        onMultiSelectConfirm={
+          memoMergePickerVisible ? handleMemoMergeConfirm : handleTrackMergeConfirm
+        }
         onRenameSave={handleTrackRenameSave}
         onSelect={(actionId) => {
           if (trackMenuLayerId) {
