@@ -45,10 +45,11 @@ import {
 } from '@/src/audio/waveform';
 import { FloatingHeaderButton, FloatingHeaderIconFace } from '@/src/components/FloatingHeaderButton';
 import { IconActionSheet, type IconActionSheetItem } from '@/src/components/IconActionSheet';
+import { LoopSettingsSheet } from '@/src/components/LoopSettingsSheet';
 import { MemoOptionsMenu } from '@/src/components/MemoOptionsMenu';
 import { MetronomeButton } from '@/src/components/MetronomeButton';
 import { MetronomeSettingsSheet } from '@/src/components/MetronomeSettingsSheet';
-import { LoopSettingsSheet } from '@/src/components/LoopSettingsSheet';
+import { NamePromptDialog } from '@/src/components/NamePromptDialog';
 import { PlaybackControls } from '@/src/components/PlaybackControls';
 import { PrecountButton } from '@/src/components/PrecountButton';
 import { PrecountOverlay } from '@/src/components/PrecountOverlay';
@@ -397,6 +398,11 @@ export function MemoEditor({
   const [savingTrim, setSavingTrim] = useState(false);
   const [colorPickerLayerId, setColorPickerLayerId] = useState<string | null>(null);
   const [trackMenuLayerId, setTrackMenuLayerId] = useState<string | null>(null);
+  const [trackMenuRename, setTrackMenuRename] = useState<{
+    layerId: string;
+    label: string;
+  } | null>(null);
+  const [recordingRenameVisible, setRecordingRenameVisible] = useState(false);
   const [metronomeSettingsVisible, setMetronomeSettingsVisible] = useState(false);
   const [headphonesConnected, setHeadphonesConnected] = useState(false);
   const [loopSettingsVisible, setLoopSettingsVisible] = useState(false);
@@ -1208,11 +1214,13 @@ export function MemoEditor({
           flushStartTimePersist();
           setActiveLayerId(layerId);
           setActiveEditor(null);
+          setTrackMenuRename(null);
           setTrackMenuLayerId(layerId);
         })();
         return;
       }
 
+      setTrackMenuRename(null);
       setTrackMenuLayerId(layerId);
     },
     [
@@ -1251,23 +1259,7 @@ export function MemoEditor({
       switch (actionId) {
         case 'rename':
           selectLayerIfNeeded();
-          Alert.prompt(
-            'Rename Track',
-            undefined,
-            [
-              { text: 'Cancel', style: 'cancel' },
-              {
-                text: 'Save',
-                onPress: (value?: string) => {
-                  if (value?.trim()) {
-                    void updateLayerLabel(memo.id, layerId, value.trim()).then(setMemo);
-                  }
-                },
-              },
-            ],
-            'plain-text',
-            layer.label
-          );
+          setTrackMenuRename({ layerId, label: layer.label });
           break;
         case 'changeColor':
           selectLayerIfNeeded();
@@ -1296,6 +1288,27 @@ export function MemoEditor({
       }
     },
     [activeLayerId, applyLayerEffectsChange, handleDeleteTrack, memo]
+  );
+
+  const dismissTrackMenu = useCallback(() => {
+    setTrackMenuLayerId(null);
+    setTrackMenuRename(null);
+  }, []);
+
+  const handleTrackRenameSave = useCallback(
+    (value: string) => {
+      if (!memo || !trackMenuRename) {
+        dismissTrackMenu();
+        return;
+      }
+      const trimmed = value.trim();
+      const { layerId } = trackMenuRename;
+      dismissTrackMenu();
+      if (trimmed) {
+        void updateLayerLabel(memo.id, layerId, trimmed).then(setMemo);
+      }
+    },
+    [dismissTrackMenu, memo, trackMenuRename]
   );
 
   const handleTrackColorSelect = useCallback(
@@ -1793,17 +1806,7 @@ export function MemoEditor({
     if (!memo) {
       return;
     }
-    Alert.prompt('Rename Recording', undefined, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Save',
-        onPress: (value?: string) => {
-          if (value?.trim()) {
-            void updateTitle(memo.id, value.trim()).then(setMemo);
-          }
-        },
-      },
-    ], 'plain-text', memo.title);
+    setRecordingRenameVisible(true);
   }, [memo]);
 
   const handleDuplicate = useCallback(async () => {
@@ -2768,16 +2771,6 @@ export function MemoEditor({
         onClose={() => setColorPickerLayerId(null)}
         onSelect={handleTrackColorSelect}
       />
-      <IconActionSheet
-        actions={trackMenuActions}
-        visible={trackMenuLayerId !== null}
-        onDismiss={() => setTrackMenuLayerId(null)}
-        onSelect={(actionId) => {
-          if (trackMenuLayerId) {
-            onTrackMenuAction(trackMenuLayerId, actionId);
-          }
-        }}
-      />
       <MetronomeSettingsSheet
         settings={metronomeSettings}
         visible={metronomeSettingsVisible}
@@ -2801,6 +2794,34 @@ export function MemoEditor({
         visible={precountVisible}
         onCancel={handlePrecountCancel}
         onDismiss={handlePrecountModalDismiss}
+      />
+      <IconActionSheet
+        actions={trackMenuActions}
+        rename={
+          trackMenuRename
+            ? { title: 'Rename Track', initialValue: trackMenuRename.label }
+            : null
+        }
+        visible={trackMenuLayerId !== null}
+        onDismiss={dismissTrackMenu}
+        onRenameSave={handleTrackRenameSave}
+        onSelect={(actionId) => {
+          if (trackMenuLayerId) {
+            onTrackMenuAction(trackMenuLayerId, actionId);
+          }
+        }}
+      />
+      <NamePromptDialog
+        initialValue={memo?.title ?? ''}
+        title="Rename Recording"
+        visible={recordingRenameVisible}
+        onCancel={() => setRecordingRenameVisible(false)}
+        onSave={(value) => {
+          setRecordingRenameVisible(false);
+          if (value.trim() && memo) {
+            void updateTitle(memo.id, value.trim()).then(setMemo);
+          }
+        }}
       />
       <Modal animationType="fade" transparent visible={isExporting}>
         <View style={styles.exportOverlay}>

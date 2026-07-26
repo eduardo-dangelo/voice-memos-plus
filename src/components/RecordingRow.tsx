@@ -4,6 +4,7 @@ import { ActivityIndicator, Alert, Modal, Pressable, StyleSheet, Text, View } fr
 import Animated from 'react-native-reanimated';
 
 import { LIST_ITEM_EXIT, LIST_ITEM_TRANSITION } from '@/src/components/listTransitions';
+import { NamePromptDialog } from '@/src/components/NamePromptDialog';
 
 import { showMoveToFolderActionSheet } from '@/src/actions/showMoveToFolderActionSheet';
 import { shareMemo } from '@/src/actions/shareMemo';
@@ -102,6 +103,7 @@ function RecordingRowComponent({
   const engine = useAudioEngine();
   const playback = useRowPlayback(memo.id);
   const [isExporting, setIsExporting] = useState(false);
+  const [renameVisible, setRenameVisible] = useState(false);
   const isActive = playback.isActive;
   const duration =
     isActive && playback.duration > 0 ? playback.duration : memo.duration;
@@ -151,17 +153,7 @@ function RecordingRowComponent({
   };
 
   const handleRename = () => {
-    Alert.prompt('Rename Recording', undefined, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Save',
-        onPress: (value?: string) => {
-          if (value?.trim()) {
-            void updateTitle(memo.id, value.trim()).then(onUpdated);
-          }
-        },
-      },
-    ], 'plain-text', memo.title);
+    setRenameVisible(true);
   };
 
   const confirmDelete = () => {
@@ -276,6 +268,18 @@ function RecordingRowComponent({
         </Collapsible>
       ) : null}
     </Animated.View>
+      <NamePromptDialog
+        initialValue={memo.title}
+        title="Rename Recording"
+        visible={renameVisible}
+        onCancel={() => setRenameVisible(false)}
+        onSave={(value) => {
+          setRenameVisible(false);
+          if (value.trim()) {
+            void updateTitle(memo.id, value.trim()).then(onUpdated);
+          }
+        }}
+      />
       <Modal animationType="fade" transparent visible={isExporting}>
         <View style={styles.exportOverlay}>
           <View style={styles.exportCard}>

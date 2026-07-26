@@ -12,6 +12,7 @@ import {
   GroupedListSectionHeader,
 } from '@/src/components/GroupedList';
 import { FloatingHeaderButton } from '@/src/components/FloatingHeaderButton';
+import { NamePromptDialog } from '@/src/components/NamePromptDialog';
 import { useFolders } from '@/src/hooks/useFolders';
 import { useLibraryCounts } from '@/src/hooks/useLibraryCounts';
 import {
@@ -33,6 +34,7 @@ export default function FoldersHomeScreen() {
   const { counts, refresh: refreshCounts } = useLibraryCounts();
   const [editMode, setEditMode] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [newFolderVisible, setNewFolderVisible] = useState(false);
   const [locationBasedNaming, setLocationBasedNamingEnabled] = useState(true);
   const [themePreference, setThemePreferenceState] = useState<ThemePreference>('system');
 
@@ -111,25 +113,8 @@ export default function FoldersHomeScreen() {
   };
 
   const handleNewFolder = useCallback(() => {
-    Alert.prompt(
-      'New Folder',
-      undefined,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Save',
-          onPress: (value?: string) => {
-            void createFolder(value?.trim() || 'New Folder').then(() => {
-              refreshFolders();
-              refreshCounts();
-            });
-          },
-        },
-      ],
-      'plain-text',
-      'New Folder'
-    );
-  }, [refreshCounts, refreshFolders]);
+    setNewFolderVisible(true);
+  }, []);
 
   const toggleSettings = useCallback(() => {
     setShowSettings((current) => !current);
@@ -236,6 +221,19 @@ export default function FoldersHomeScreen() {
   return (
     <>
       <Stack.Screen options={headerScreenOptions} />
+      <NamePromptDialog
+        initialValue="New Folder"
+        title="New Folder"
+        visible={newFolderVisible}
+        onCancel={() => setNewFolderVisible(false)}
+        onSave={(value) => {
+          setNewFolderVisible(false);
+          void createFolder(value.trim() || 'New Folder').then(() => {
+            refreshFolders();
+            refreshCounts();
+          });
+        }}
+      />
       <GroupedListScreen largeTitle="Voice Memos">
         <GroupedListSection>
           <GroupedListRow
