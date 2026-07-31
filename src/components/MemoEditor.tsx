@@ -67,10 +67,14 @@ import {
   awaitSaveInFlight,
   beginSession,
   clearSession,
+  getLastDiscardedMemoId,
   getSession,
   stopAndSave,
   subscribeRecordingSave,
 } from '@/src/recording/activeRecordingSession';
+import { decideAutoRecord } from '@/src/recording/autoRecordGate';
+import { consumeAutoRecordIntent } from '@/src/recording/autoRecordIntent';
+import { ensureRecordingBootstrapComplete } from '@/src/recording/recordingBootstrap';
 import { subscribeMemoUpdate } from '@/src/recording/memoUpdateEvents';
 import {
   deactivateMemoLoop,
@@ -1527,61 +1531,81 @@ export function MemoEditor({
     [colorPickerLayerId, memo]
   );
 
+  const clearArmedRecordingUi = useCallback(() => {
+    setRecordingArmed(false);
+    setReplaceMode(false);
+    setStackMode(false);
+    pendingRecordModeRef.current = null;
+    pendingRecordingColor.current = null;
+    liveRecordingSnapshot.current = null;
+  }, []);
+
   const loadMemo = useCallback(async () => {
     if (!id) {
       return;
     }
     setLoading(true);
+    await ensureRecordingBootstrapComplete(engine);
     const next = await getMemo(id);
-    const loaded = next && hasRecording(next) ? await ensureWaveformPeaks(next) : next;
+    if (!next) {
+      clearArmedRecordingUi();
+      setMemo(null);
+      setLoading(false);
+      if (getLastDiscardedMemoId() === id || record === '1') {
+        onDismiss();
+      }
+      return;
+    }
+    const loaded = hasRecording(next) ? await ensureWaveformPeaks(next) : next;
     setMemo(loaded);
-    if (loaded) {
-      const liveSession = getSession();
-      const isLiveRecordingForMemo =
-        engine.getState().isRecording && liveSession?.memoId === id;
+    const liveSession = getSession();
+    const isLiveRecordingForMemo =
+      engine.getState().isRecording && liveSession?.memoId === id;
 
-      if (isLiveRecordingForMemo && liveSession) {
-        // Remount mid-take must not unload() — that clears isRecording without
-        // stopping the native recorder and would lose the take on stop/save.
-        recordingStartTime.current = liveSession.startTime;
-        setRecordingArmed(true);
-        setReplaceMode(liveSession.mode === 'replace');
-        setStackMode(liveSession.mode === 'stack');
-        pendingRecordingColor.current = liveSession.trackColor;
-        if (liveSession.layerId) {
-          setActiveLayerId(liveSession.layerId);
-        } else {
-          const anySoloActive = hasAnySoloActive(
-            loaded.layers.map((entry) => getLayerEffects(entry))
-          );
-          const defaultLayer = loaded.layers.find(
-            (layer) =>
-              layer.duration > 0 &&
-              isLayerSelectable(getLayerEffects(layer), anySoloActive)
-          );
-          setActiveLayerId(defaultLayer?.id ?? null);
-        }
+    if (isLiveRecordingForMemo && liveSession) {
+      // Remount mid-take must not unload() — that clears isRecording without
+      // stopping the native recorder and would lose the take on stop/save.
+      recordingStartTime.current = liveSession.startTime;
+      setRecordingArmed(true);
+      setReplaceMode(liveSession.mode === 'replace');
+      setStackMode(liveSession.mode === 'stack');
+      pendingRecordingColor.current = liveSession.trackColor;
+      if (liveSession.layerId) {
+        setActiveLayerId(liveSession.layerId);
       } else {
         const anySoloActive = hasAnySoloActive(
           loaded.layers.map((entry) => getLayerEffects(entry))
         );
         const defaultLayer = loaded.layers.find(
           (layer) =>
-            layer.duration > 0 && isLayerSelectable(getLayerEffects(layer), anySoloActive)
+            layer.duration > 0 &&
+            isLayerSelectable(getLayerEffects(layer), anySoloActive)
         );
         setActiveLayerId(defaultLayer?.id ?? null);
-        if (hasRecording(loaded)) {
-          await loadMemoIntoEngine(engine, loaded);
-        } else {
-          engine.unload();
-          // unload() resets engine metronome to defaults; restore memo settings so
-          // brand-new recordings still arm clicks when the UI shows metro on.
-          engine.setMetronome(getMemoMetronomeSettings(loaded));
-        }
+      }
+    } else {
+      if (!engine.getState().isRecording && !beginRecordingInFlight.current) {
+        clearArmedRecordingUi();
+      }
+      const anySoloActive = hasAnySoloActive(
+        loaded.layers.map((entry) => getLayerEffects(entry))
+      );
+      const defaultLayer = loaded.layers.find(
+        (layer) =>
+          layer.duration > 0 && isLayerSelectable(getLayerEffects(layer), anySoloActive)
+      );
+      setActiveLayerId(defaultLayer?.id ?? null);
+      if (hasRecording(loaded)) {
+        await loadMemoIntoEngine(engine, loaded);
+      } else {
+        engine.unload();
+        // unload() resets engine metronome to defaults; restore memo settings so
+        // brand-new recordings still arm clicks when the UI shows metro on.
+        engine.setMetronome(getMemoMetronomeSettings(loaded));
       }
     }
     setLoading(false);
-  }, [engine, id]);
+  }, [clearArmedRecordingUi, engine, id, onDismiss, record]);
 
   useEffect(() => {
     if (!memo || !hasRecording(memo)) {
@@ -1631,39 +1655,84 @@ export function MemoEditor({
   }, [id]);
 
   useEffect(() => {
-    if (autoRecordStarted.current) {
-      return;
-    }
-    if (record !== '1' || !memo || hasRecording(memo)) {
+    if (autoRecordStarted.current || !id) {
       return;
     }
 
-    const existingSession = getSession();
-    if (
-      engine.getState().isRecording ||
-      (existingSession && existingSession.memoId !== memo.id)
-    ) {
+    // Normal opens are loaded by loadMemo — do not refresh/setMemo here or the
+    // effect will loop (memo dep / setMemo) and break layoutReady + playback.
+    if (record !== '1') {
       autoRecordStarted.current = true;
-      onAutoRecordConsumed?.();
-      onDismiss();
-      void deleteMemo(memo.id);
       return;
     }
-
-    autoRecordStarted.current = true;
-    pendingLocationNamingRef.current = true;
-    onAutoRecordConsumed?.();
-
-    const memoId = memo.id;
-    const memoTitle = memo.title;
-    const precountMode = getMemoPrecountMode(memo);
-    const bpm = getMemoMetronomeSettings(memo).bpm;
 
     void (async () => {
+      await ensureRecordingBootstrapComplete(engine);
+      if (autoRecordStarted.current) {
+        return;
+      }
+
+      const refreshed = await getMemo(id);
+      const hasProcessIntent = consumeAutoRecordIntent(id);
+      const decision = decideAutoRecord({
+        autoRecord: true,
+        isRecording: engine.getState().isRecording,
+        hasRecording: refreshed ? hasRecording(refreshed) : false,
+        hasProcessIntent,
+        sessionMemoId: getSession()?.memoId,
+        memoId: id,
+        memoMissing: !refreshed || getLastDiscardedMemoId() === id,
+      });
+
+      if (decision === 'skipDeletedMemo') {
+        autoRecordStarted.current = true;
+        onAutoRecordConsumed?.();
+        clearArmedRecordingUi();
+        onDismiss();
+        return;
+      }
+
+      if (decision === 'skipNoProcessIntent') {
+        // Restored ?record=1 after process death — do not re-arm Stop chrome.
+        autoRecordStarted.current = true;
+        onAutoRecordConsumed?.();
+        clearArmedRecordingUi();
+        return;
+      }
+
+      if (decision === 'skipNotRequested' || decision === 'skipHasAudio') {
+        autoRecordStarted.current = true;
+        onAutoRecordConsumed?.();
+        return;
+      }
+
+      if (!refreshed) {
+        autoRecordStarted.current = true;
+        onAutoRecordConsumed?.();
+        return;
+      }
+
+      if (decision === 'skipLiveRecording' || decision === 'skipOtherMemoSession') {
+        autoRecordStarted.current = true;
+        onAutoRecordConsumed?.();
+        onDismiss();
+        void deleteMemo(refreshed.id);
+        return;
+      }
+
+      autoRecordStarted.current = true;
+      setMemo(refreshed);
+      pendingLocationNamingRef.current = true;
+      onAutoRecordConsumed?.();
+
       if (beginRecordingInFlight.current || engine.getState().isRecording) {
         return;
       }
       beginRecordingInFlight.current = true;
+      const memoId = refreshed.id;
+      const memoTitle = refreshed.title;
+      const precountMode = getMemoPrecountMode(refreshed);
+      const bpm = getMemoMetronomeSettings(refreshed).bpm;
       let nextBeatDeadlineMs: number | undefined;
       try {
         await cancelEditDraft();
@@ -1731,13 +1800,38 @@ export function MemoEditor({
     })();
   }, [
     cancelEditDraft,
+    clearArmedRecordingUi,
     clearPrecountOverlay,
     engine,
-    memo,
+    id,
     onAutoRecordConsumed,
     onDismiss,
     record,
     runPrecount,
+  ]);
+
+  // Invariant: never leave armed/stack/replace chrome when capture is not live.
+  useEffect(() => {
+    if (engineState.isRecording) {
+      return;
+    }
+    if (!recordingArmed && !stackMode && !replaceMode) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      if (engine.getState().isRecording || beginRecordingInFlight.current) {
+        return;
+      }
+      clearArmedRecordingUi();
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [
+    clearArmedRecordingUi,
+    engine,
+    engineState.isRecording,
+    recordingArmed,
+    replaceMode,
+    stackMode,
   ]);
 
   const stopAndSaveActiveRecording = useCallback(
@@ -2997,9 +3091,9 @@ export function MemoEditor({
                 currentTime={currentTime}
                 duration={duration}
                 isPlaying={engineState.isPlaying}
-                isRecording={pendingRecordingLayout}
+                isRecording={isRecording}
                 isStoppingRecording={isStoppingRecording}
-                recordDisabled={!memo || !hasRecording(memo)}
+                recordDisabled={!memo || !hasRecording(memo) || pendingRecordingLayout}
                 showProgressBar={false}
                 showTimeLabels={false}
                 stopRecordingDisabled={!isRecording}

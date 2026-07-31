@@ -11,16 +11,13 @@ import type { VoiceMemosColorScheme } from '@/constants/VoiceMemosColors';
 import { AudioEngineProvider } from '@/src/audio/AudioEngineContext';
 import { memoAudioEngine } from '@/src/audio/MemoAudioEngine';
 import { useIsRegularWidth } from '@/src/hooks/useIsRegularWidth';
-import {
-  awaitSaveInFlight,
-  hydrateSessionFromStorage,
-} from '@/src/recording/activeRecordingSession';
+import { awaitSaveInFlight } from '@/src/recording/activeRecordingSession';
+import { ensureRecordingBootstrapComplete } from '@/src/recording/recordingBootstrap';
 import { maybeNavigateToActiveRecording } from '@/src/recording/resumeActiveRecording';
 import { getThemePreferenceSync } from '@/src/settings/appSettings';
 import { purgeExpiredTrash } from '@/src/storage/memoStore';
 import { applyThemePreference } from '@/src/theme/applyThemePreference';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
-import { recoverMemoLiveActivity } from '@/src/widgets/recordingLiveActivityController';
 import '@/src/widgets/RecordingLiveActivity';
 
 applyThemePreference(getThemePreferenceSync());
@@ -150,8 +147,7 @@ export default function RootLayout() {
     })();
     void purgeExpiredTrash();
     void (async () => {
-      await hydrateSessionFromStorage();
-      await recoverMemoLiveActivity(memoAudioEngine);
+      await ensureRecordingBootstrapComplete(memoAudioEngine);
       await awaitSaveInFlight();
       if (!memoAudioEngine.getState().isRecording) {
         await memoAudioEngine.finishDeferredPlaybackSetup();

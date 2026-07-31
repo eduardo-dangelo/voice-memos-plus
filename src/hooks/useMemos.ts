@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useFocusEffect } from 'expo-router';
 
-import { subscribeMemoUpdate } from '@/src/recording/memoUpdateEvents';
+import {
+  subscribeLibraryChanged,
+  subscribeMemoUpdate,
+} from '@/src/recording/memoUpdateEvents';
 import { listMemos, type MemoListScope } from '@/src/storage/memoStore';
 import type { Memo } from '@/src/storage/types';
 
@@ -59,6 +62,15 @@ export function useMemos(scope: MemoListScope = { kind: 'all' }) {
       });
     });
   }, []);
+
+  useEffect(() => {
+    return subscribeLibraryChanged((event) => {
+      if (event.memoId) {
+        removeMemo(event.memoId);
+      }
+      void refresh({ silent: true });
+    });
+  }, [refresh, removeMemo]);
 
   return { memos, loading, refresh, removeMemo, removeMemos };
 }

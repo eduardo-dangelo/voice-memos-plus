@@ -34,6 +34,7 @@ import {
 import { RecordingRow } from '@/src/components/RecordingRow';
 import { useMemos } from '@/src/hooks/useMemos';
 import { getSession } from '@/src/recording/activeRecordingSession';
+import { markAutoRecordIntent } from '@/src/recording/autoRecordIntent';
 import { setRecordingDefaults } from '@/src/settings/appSettings';
 import {
   createMemo,
@@ -241,6 +242,7 @@ export function RecordingsList({
         precount: settings.precount,
         metronome: settings.metronome,
       });
+      markAutoRecordIntent(memo.id);
       if (layoutMode === 'sidebar' && onSelectMemo) {
         await refresh({ silent: true });
         onSelectMemo(memo.id, { autoRecord: true });

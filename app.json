@@ -76,7 +76,8 @@
         }
       ],
       "./plugins/stripWidgetsPushEntitlement.js",
-      "./plugins/stripAppIconAppiconset.js"
+      "./plugins/stripAppIconAppiconset.js",
+      "./plugins/withEndLiveActivitiesOnTerminate.js"
     ],
     "experiments": {
       "typedRoutes": true

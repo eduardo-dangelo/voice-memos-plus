@@ -1,13 +1,14 @@
-import * as FileSystem from 'expo-file-system';
+import { File, Paths } from 'expo-file-system';
 import * as Haptics from 'expo-haptics';
 import { AppState } from 'react-native';
-import { widgetsDirectory } from 'expo-widgets';
 
 import { loadMemoIntoEngine } from '@/src/audio/loadMemoIntoEngine';
 import type { MemoAudioEngine } from '@/src/audio/MemoAudioEngine';
 import { getRecordingReplacementSkipSeconds } from '@/src/audio/recordingLatency';
+import { notifyLibraryChanged } from '@/src/recording/memoUpdateEvents';
 import {
   addStackedLayer,
+  deleteMemo,
   getMemo,
   replaceLayerSegment,
   saveRecording,
@@ -38,29 +39,34 @@ export type RecordingSaveResult = {
   wasReplaceMode: boolean;
 };
 
+export type DiscardUnfinishedResult = {
+  memoId: string;
+  mode: RecordingSessionMode;
+  deletedMemo: boolean;
+};
+
 type SaveListener = (result: RecordingSaveResult) => void;
 
 const SESSION_FILENAME = 'recording-session.json';
 
 let session: ActiveRecordingSession | null = null;
 let saveInFlight: Promise<RecordingSaveResult | null> | null = null;
+let discardInFlight: Promise<DiscardUnfinishedResult | null> | null = null;
+/** Memo id deleted by the most recent cold-start discard (new take). */
+let lastDiscardedMemoId: string | null = null;
 const listeners = new Set<SaveListener>();
 
-function getSessionFileUri(): string | null {
-  if (!widgetsDirectory) {
-    return null;
-  }
-  return `${widgetsDirectory}/${SESSION_FILENAME}`;
+function getSessionFile(): File {
+  return new File(Paths.document, SESSION_FILENAME);
 }
 
-async function persistSessionToStorage(next: ActiveRecordingSession): Promise<void> {
-  const uri = getSessionFileUri();
-  if (!uri) {
-    return;
-  }
-
+function persistSessionToStorage(next: ActiveRecordingSession): void {
+  const file = getSessionFile();
   try {
-    await FileSystem.writeAsStringAsync(uri, JSON.stringify(next));
+    if (!file.exists) {
+      file.create();
+    }
+    file.write(JSON.stringify(next));
   } catch (error) {
     if (__DEV__) {
       console.warn('[activeRecordingSession] persist failed', error);
@@ -68,16 +74,11 @@ async function persistSessionToStorage(next: ActiveRecordingSession): Promise<vo
   }
 }
 
-async function deletePersistedSession(): Promise<void> {
-  const uri = getSessionFileUri();
-  if (!uri) {
-    return;
-  }
-
+function deletePersistedSession(): void {
+  const file = getSessionFile();
   try {
-    const info = await FileSystem.getInfoAsync(uri);
-    if (info.exists) {
-      await FileSystem.deleteAsync(uri, { idempotent: true });
+    if (file.exists) {
+      file.delete();
     }
   } catch (error) {
     if (__DEV__) {
@@ -88,16 +89,20 @@ async function deletePersistedSession(): Promise<void> {
 
 export function beginSession(next: ActiveRecordingSession): void {
   session = next;
-  void persistSessionToStorage(next);
+  persistSessionToStorage(session);
 }
 
 export function clearSession(): void {
   session = null;
-  void deletePersistedSession();
+  deletePersistedSession();
 }
 
 export function getSession(): ActiveRecordingSession | null {
   return session;
+}
+
+export function getLastDiscardedMemoId(): string | null {
+  return lastDiscardedMemoId;
 }
 
 export async function hydrateSessionFromStorage(): Promise<ActiveRecordingSession | null> {
@@ -105,18 +110,13 @@ export async function hydrateSessionFromStorage(): Promise<ActiveRecordingSessio
     return session;
   }
 
-  const uri = getSessionFileUri();
-  if (!uri) {
-    return null;
-  }
-
+  const file = getSessionFile();
   try {
-    const info = await FileSystem.getInfoAsync(uri);
-    if (!info.exists) {
+    if (!file.exists) {
       return null;
     }
 
-    const raw = await FileSystem.readAsStringAsync(uri);
+    const raw = new TextDecoder().decode(file.bytesSync());
     const parsed = JSON.parse(raw) as ActiveRecordingSession;
     session = parsed;
     return parsed;
@@ -152,6 +152,73 @@ async function ensureSessionForStop(): Promise<ActiveRecordingSession> {
   }
 
   throw new Error('Recording session could not be restored');
+}
+
+/**
+ * After process death, discard any unfinished take.
+ * - new: delete the memo shell
+ * - stack/replace: drop session only; prior layers stay
+ */
+export async function discardUnfinishedRecording(
+  engine: MemoAudioEngine
+): Promise<DiscardUnfinishedResult | null> {
+  if (discardInFlight) {
+    return discardInFlight;
+  }
+
+  if (engine.getState().isRecording) {
+    return null;
+  }
+
+  await hydrateSessionFromStorage();
+  const currentSession = getSession();
+  if (!currentSession) {
+    return null;
+  }
+
+  const discardPromise = (async (): Promise<DiscardUnfinishedResult | null> => {
+    const memoId = currentSession.memoId;
+    const mode = currentSession.mode;
+    let deletedMemo = false;
+
+    try {
+      if (mode === 'new') {
+        await deleteMemo(memoId);
+        deletedMemo = true;
+        lastDiscardedMemoId = memoId;
+        notifyLibraryChanged({ reason: 'discardedNewRecording', memoId });
+      }
+
+      clearSession();
+
+      if (engine.getState().memoId === memoId) {
+        try {
+          engine.unload();
+        } catch (error) {
+          if (__DEV__) {
+            console.warn('[activeRecordingSession] discard unload failed', error);
+          }
+        }
+      }
+
+      return { memoId, mode, deletedMemo };
+    } catch (error) {
+      if (__DEV__) {
+        console.warn('[activeRecordingSession] discardUnfinishedRecording failed', error);
+      }
+      clearSession();
+      return { memoId, mode, deletedMemo };
+    }
+  })();
+
+  discardInFlight = discardPromise;
+  try {
+    return await discardPromise;
+  } finally {
+    if (discardInFlight === discardPromise) {
+      discardInFlight = null;
+    }
+  }
 }
 
 export async function stopAndSave(
@@ -215,7 +282,9 @@ export async function stopAndSave(
         if (!replaceLayer || replaceLayer.duration <= 0) {
           throw new Error('No active layer');
         }
-        const replacementSkipSeconds = getRecordingReplacementSkipSeconds(softwareCue);
+        const replacementSkipSeconds = getRecordingReplacementSkipSeconds(
+          softwareCue === true
+        );
         const { trimStart: fileTrimStart, trimEnd: fileTrimEnd, leadingPadSeconds } =
           getReplaceSpliceParams(
             replaceLayer,

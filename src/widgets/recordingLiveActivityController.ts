@@ -2,7 +2,7 @@ import type { LiveActivity } from 'expo-widgets';
 
 import {
   beginSession,
-  clearSession,
+  discardUnfinishedRecording,
   getSession,
   hydrateSessionFromStorage,
   type ActiveRecordingSession,
@@ -206,8 +206,12 @@ export async function recoverMemoLiveActivity(engine: MemoAudioEngine): Promise<
   await endAllInstances();
   instance = null;
 
-  // Stale metadata after process death — capture cannot resume.
+  // Process death: discard unfinished take (delete new memo / clear session).
   if (getSession()) {
-    clearSession();
+    await discardUnfinishedRecording(engine);
   }
+
+  // Guarantee ActivityKit chrome is gone after discard (getInstances can race at launch).
+  await endAllInstances();
+  instance = null;
 }
