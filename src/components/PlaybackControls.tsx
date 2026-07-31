@@ -102,7 +102,9 @@ export function PlaybackControls({
             </Pressable>
           </View>
         )}
-        {showTimeLabels ? <Text style={styles.time}>{formatDuration(duration)}</Text> : null}
+        {showTimeLabels ? (
+          <Text style={[styles.time, styles.timeEnd]}>{formatDuration(duration)}</Text>
+        ) : null}
       </View>
     </View>
   );
@@ -203,6 +205,9 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           fontSize: 12,
           color: colors.secondaryText,
           fontVariant: ['tabular-nums'],
+        },
+        timeEnd: {
+          textAlign: 'right',
         },
       }),
     [colors]

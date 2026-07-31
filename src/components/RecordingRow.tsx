@@ -1,14 +1,16 @@
 import { SymbolView } from 'expo-symbols';
-import { memo, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 
 import { LIST_ITEM_EXIT, LIST_ITEM_TRANSITION } from '@/src/components/listTransitions';
+import { MiniWaveformTracks } from '@/src/components/MiniWaveformTracks';
 import { NamePromptDialog } from '@/src/components/NamePromptDialog';
 
-import { showMoveToFolderActionSheet } from '@/src/actions/showMoveToFolderActionSheet';
 import { shareMemo } from '@/src/actions/shareMemo';
+import { showMoveToFolderActionSheet } from '@/src/actions/showMoveToFolderActionSheet';
 import { useAudioEngine, useAudioEngineSelector } from '@/src/audio/AudioEngineContext';
+import { useIsRegularWidth } from '@/src/hooks/useIsRegularWidth';
 import {
   deleteMemo,
   duplicateMemo,
@@ -18,8 +20,8 @@ import {
 import { getMemoPlaybackTimeline } from '@/src/storage/paths';
 import type { Memo } from '@/src/storage/types';
 import { hasRecording } from '@/src/storage/types';
-import { formatDate, formatDuration } from '@/src/utils/format';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
+import { formatDate, formatDuration } from '@/src/utils/format';
 
 import { Collapsible } from './Collapsible';
 import { MemoOptionsMenu } from './MemoOptionsMenu';
@@ -100,6 +102,7 @@ function RecordingRowComponent({
 }: Props) {
   const colors = useVoiceMemosColors();
   const styles = useStyles(colors);
+  const isRegularWidth = useIsRegularWidth();
   const engine = useAudioEngine();
   const playback = useRowPlayback(memo.id);
   const [isExporting, setIsExporting] = useState(false);
@@ -109,6 +112,15 @@ function RecordingRowComponent({
     isActive && playback.duration > 0 ? playback.duration : memo.duration;
   const playable = hasRecording(memo);
   const displayTime = isActive ? playback.currentTime : 0;
+  const wasExpandedRef = useRef(expanded);
+
+  useEffect(() => {
+    const wasExpanded = wasExpandedRef.current;
+    wasExpandedRef.current = expanded;
+    if (wasExpanded && !expanded && isActive) {
+      engine.pause();
+    }
+  }, [expanded, isActive, engine]);
 
   const ensureLoaded = async () => {
     if (!playable) {
@@ -243,10 +255,20 @@ function RecordingRowComponent({
       {playable ? (
         <Collapsible expanded={expanded}>
           <View style={styles.expanded}>
+            {!isRegularWidth ? (
+              <Pressable accessibilityLabel="Edit Recording" onPress={onOpenEditor}>
+                <MiniWaveformTracks
+                  currentTime={displayTime}
+                  duration={duration}
+                  memo={memo}
+                />
+              </Pressable>
+            ) : null}
             <PlaybackControls
               compact
               currentTime={displayTime}
               duration={duration}
+              showProgressBar={false}
               isPlaying={isActive && playback.isPlaying}
               onPlayPause={() => void handlePlayPause()}
               onSkipBack={() => void handleSkip(-15)}

@@ -110,6 +110,26 @@ export function pickRandomTrackColor(exclude?: readonly string[]): TrackColor {
 }
 
 export function colorWithAlpha(hex: string, alpha: number): string {
+  const { r, g, b } = parseHexRgb(hex);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+/** Mix toward grayscale (saturation 0–1), then apply alpha. */
+export function colorDesaturatedWithAlpha(
+  hex: string,
+  saturation: number,
+  alpha: number
+): string {
+  const { r, g, b } = parseHexRgb(hex);
+  const gray = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  const amount = Math.max(0, Math.min(1, saturation));
+  const nr = Math.round(gray + (r - gray) * amount);
+  const ng = Math.round(gray + (g - gray) * amount);
+  const nb = Math.round(gray + (b - gray) * amount);
+  return `rgba(${nr}, ${ng}, ${nb}, ${alpha})`;
+}
+
+function parseHexRgb(hex: string): { r: number; g: number; b: number } {
   const normalized = hex.replace('#', '');
   const value =
     normalized.length === 3
@@ -118,8 +138,9 @@ export function colorWithAlpha(hex: string, alpha: number): string {
           .map((char) => char + char)
           .join('')
       : normalized;
-  const r = parseInt(value.slice(0, 2), 16);
-  const g = parseInt(value.slice(2, 4), 16);
-  const b = parseInt(value.slice(4, 6), 16);
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  return {
+    r: parseInt(value.slice(0, 2), 16),
+    g: parseInt(value.slice(2, 4), 16),
+    b: parseInt(value.slice(4, 6), 16),
+  };
 }
