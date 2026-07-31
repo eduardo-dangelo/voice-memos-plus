@@ -88,6 +88,8 @@ const METRONOME_SCHEDULE_EXTEND_LEAD_SEC = 2;
 /** Sliding window for monitor-mix layer sources (same idea as metronome chunks). */
 const MONITOR_MIX_SCHEDULE_CHUNK_SEC = 12;
 const MONITOR_MIX_SCHEDULE_EXTEND_LEAD_SEC = 2;
+/** Ignore routeChange callbacks caused by our own setAudioSessionOptions. */
+const ROUTE_CHANGE_IGNORE_MS = 400;
 
 /** Thrown when precount cancel aborts commit during the downbeat wait. */
 export class RecordingStartAbortedError extends Error {
@@ -271,6 +273,10 @@ export class MemoAudioEngine {
   private recordingPlaybackBuffers = new Map<string, AudioBuffer>();
   /** True between AVAudioSession interruption began/ended while a take is live. */
   private recordingInterrupted = false;
+  /** True between playback interruption began and session heal on ended/foreground. */
+  private playbackInterrupted = false;
+  /** Ignore routeChange until this timestamp (self-caused CategoryChange). */
+  private ignoreRouteChangeUntil = 0;
 
   constructor() {
     AudioManager.addSystemEventListener('routeChange', () => {
@@ -281,58 +287,196 @@ export class MemoAudioEngine {
     });
 
     AppState.addEventListener('change', (nextState) => {
-      if (nextState === 'active') {
-        void (async () => {
-          if (this.state.isRecording) {
-            return;
-          }
-          await awaitSaveInFlight();
-          await this.finishDeferredPlaybackSetup();
-        })();
+      if (nextState !== 'active') {
+        // App Switcher / background: stop UI RAF; keep native audio scheduled.
+        this.freezePlaybackUiForBackground();
+        return;
       }
+
+      void (async () => {
+        if (this.state.isRecording) {
+          return;
+        }
+
+        await awaitSaveInFlight();
+
+        const deferredPending =
+          this.deferredPlaybackSetup || this.pendingEngineReload !== null;
+        if (deferredPending) {
+          await this.finishDeferredPlaybackSetup();
+          await this.healPlaybackSessionIfNeeded();
+          return;
+        }
+
+        if (this.isHealthyPlayingSession()) {
+          this.resumePlaybackUiFromBackground();
+          return;
+        }
+
+        await this.healPlaybackSessionIfNeeded();
+      })();
     });
   }
 
-  private setRecordingInterruptionObservation(enabled: boolean): void {
-    // While observing, native skips auto onInterruptionEnd — only enable mid-take.
+  private isHealthyPlayingSession(): boolean {
+    return (
+      this.state.isPlaying &&
+      this.playbackContextStartWhen > 0 &&
+      !this.playbackInterrupted &&
+      this.context?.state !== 'suspended'
+    );
+  }
+
+  private markIgnoreRouteChange(): void {
+    this.ignoreRouteChangeUntil = Date.now() + ROUTE_CHANGE_IGNORE_MS;
+  }
+
+  private setAudioInterruptionObservation(enabled: boolean): void {
+    // While observing, native skips auto onInterruptionEnd — JS owns recovery.
     AudioManager.observeAudioInterruptions(enabled);
+  }
+
+  private setRecordingInterruptionObservation(enabled: boolean): void {
+    this.setAudioInterruptionObservation(enabled);
+  }
+
+  private setPlaybackInterruptionObservation(enabled: boolean): void {
+    // Recording owns observation for the whole take.
+    if (!enabled && this.state.isRecording) {
+      return;
+    }
+    this.setAudioInterruptionObservation(enabled);
+  }
+
+  /** Pause playback for an AVAudioSession interruption; keep observing for `ended`. */
+  private pausePlaybackForInterruption(): void {
+    this.playRequestId += 1;
+    const pausedAt =
+      this.context && this.playbackContextStartWhen > 0
+        ? this.getElapsedPlaybackTime(this.context)
+        : this.state.currentTime;
+    this.invalidateAndStopSources();
+    this.emit({ isPlaying: false, currentTime: pausedAt });
+    void endMemoLiveActivity();
+    this.sessionMode = null;
+    this.playbackInterrupted = true;
+  }
+
+  private async healPlaybackAfterInterruption(): Promise<void> {
+    this.playbackInterrupted = false;
+    try {
+      await this.forceConfigureForPlayback();
+      if (!this.state.isRecording) {
+        await this.ensureContext();
+      }
+    } catch (error) {
+      this.sessionMode = null;
+      if (__DEV__) {
+        console.warn('[MemoAudioEngine] playback interruption heal failed', error);
+      }
+    } finally {
+      if (!this.state.isRecording && !this.state.isPlaying) {
+        this.setPlaybackInterruptionObservation(false);
+      }
+    }
+  }
+
+  /** Foreground recovery when interrupt left playback/session stale. Never auto-resumes. */
+  private async healPlaybackSessionIfNeeded(): Promise<void> {
+    if (this.state.isRecording) {
+      return;
+    }
+
+    const hasValidPlaybackClock =
+      this.state.isPlaying && this.playbackContextStartWhen > 0;
+    const contextSuspended = this.context?.state === 'suspended';
+
+    if (hasValidPlaybackClock && !this.playbackInterrupted && !contextSuspended) {
+      return;
+    }
+
+    if (!this.playbackInterrupted && !this.state.isPlaying && !contextSuspended) {
+      return;
+    }
+
+    if (this.state.isPlaying || this.playbackInterrupted) {
+      this.playRequestId += 1;
+      const pausedAt =
+        this.context && this.playbackContextStartWhen > 0
+          ? this.getElapsedPlaybackTime(this.context)
+          : this.state.currentTime;
+      this.invalidateAndStopSources();
+      this.emit({ isPlaying: false, currentTime: pausedAt });
+      void endMemoLiveActivity();
+      this.sessionMode = null;
+    }
+
+    await this.healPlaybackAfterInterruption();
   }
 
   private async handleInterruption(event: {
     type: 'began' | 'ended';
     shouldResume: boolean;
   }): Promise<void> {
-    if (!this.state.isRecording || this.stopCaptureInFlight) {
+    if (this.state.isRecording) {
+      if (this.stopCaptureInFlight) {
+        return;
+      }
+
+      if (event.type === 'began') {
+        this.recordingInterrupted = true;
+        return;
+      }
+
+      // Interruption ended — always try to reclaim capture. System alerts (Live Activity
+      // Allow) often set shouldResume=false even though the take should continue.
+      this.recordingInterrupted = false;
+      try {
+        await this.configureForRecording();
+        if (this.recorder?.isPaused()) {
+          this.recorder.resume();
+        } else if (this.recorder && !this.recorder.isRecording()) {
+          this.recorder.resume();
+        }
+        this.refreshActiveRecordingSampleRate();
+      } catch (error) {
+        if (__DEV__) {
+          console.warn(
+            '[MemoAudioEngine] recording interruption resume failed; continuing',
+            error
+          );
+        }
+      }
       return;
     }
 
+    // Playback / idle — never auto-resume (shouldResume is intentionally ignored).
     if (event.type === 'began') {
-      this.recordingInterrupted = true;
+      if (
+        this.state.isPlaying ||
+        this.playbackContextStartWhen > 0 ||
+        this.playInFlight
+      ) {
+        this.pausePlaybackForInterruption();
+      } else {
+        this.sessionMode = null;
+        this.playbackInterrupted = true;
+      }
       return;
     }
 
-    // Interruption ended — always try to reclaim capture. System alerts (Live Activity
-    // Allow) often set shouldResume=false even though the take should continue.
-    this.recordingInterrupted = false;
-    try {
-      await this.configureForRecording();
-      if (this.recorder?.isPaused()) {
-        this.recorder.resume();
-      } else if (this.recorder && !this.recorder.isRecording()) {
-        this.recorder.resume();
-      }
-      this.refreshActiveRecordingSampleRate();
-    } catch (error) {
-      if (__DEV__) {
-        console.warn(
-          '[MemoAudioEngine] recording interruption resume failed; continuing',
-          error
-        );
-      }
+    if (!this.playbackInterrupted) {
+      return;
     }
+
+    await this.healPlaybackAfterInterruption();
   }
 
   private async handleRouteChange(): Promise<void> {
+    if (Date.now() < this.ignoreRouteChangeUntil) {
+      return;
+    }
+
     if (this.state.isRecording) {
       if (this.stopCaptureInFlight || this.recordingInterrupted) {
         return;
@@ -485,8 +629,11 @@ export class MemoAudioEngine {
   private async applySessionMode(target: 'recording' | 'playback'): Promise<void> {
     if (this.sessionMode === target) {
       try {
-        await AudioManager.setAudioSessionActivity(true);
-        return;
+        const activated = await AudioManager.setAudioSessionActivity(true);
+        if (activated) {
+          return;
+        }
+        this.sessionMode = null;
       } catch {
         this.sessionMode = null;
       }
@@ -498,6 +645,7 @@ export class MemoAudioEngine {
       // Session may already be inactive.
     }
 
+    this.markIgnoreRouteChange();
     if (target === 'recording') {
       AudioManager.setAudioSessionOptions({
         iosCategory: 'playAndRecord',
@@ -515,9 +663,13 @@ export class MemoAudioEngine {
     this.sessionMode = target;
 
     try {
-      await AudioManager.setAudioSessionActivity(true);
+      const activated = await AudioManager.setAudioSessionActivity(true);
+      if (!activated) {
+        throw new Error(`Failed to activate audio session for ${target}`);
+      }
     } catch (primaryError) {
       if (target !== 'playback') {
+        this.sessionMode = null;
         throw primaryError;
       }
 
@@ -527,12 +679,17 @@ export class MemoAudioEngine {
         // Session may already be inactive.
       }
 
+      this.markIgnoreRouteChange();
       AudioManager.setAudioSessionOptions({
         iosCategory: 'playAndRecord',
         iosMode: 'default',
         iosOptions: ['defaultToSpeaker', 'allowBluetoothA2DP'],
       });
-      await AudioManager.setAudioSessionActivity(true);
+      const activated = await AudioManager.setAudioSessionActivity(true);
+      if (!activated) {
+        this.sessionMode = null;
+        throw new Error('Failed to activate audio session for playback');
+      }
     }
 
     if (target === 'playback') {
@@ -554,6 +711,7 @@ export class MemoAudioEngine {
       // Session may already be inactive.
     }
 
+    this.markIgnoreRouteChange();
     AudioManager.setAudioSessionOptions({
       iosCategory: 'playAndRecord',
       iosMode: 'default',
@@ -563,8 +721,51 @@ export class MemoAudioEngine {
 
     const activated = await AudioManager.setAudioSessionActivity(true);
     if (!activated) {
+      this.sessionMode = null;
       throw new Error('Failed to activate audio session for recording');
     }
+  }
+
+  /** Full session cycle after playback interruption / stale sessionMode cache. */
+  private async forceConfigureForPlayback(): Promise<void> {
+    this.sessionMode = null;
+
+    try {
+      await AudioManager.setAudioSessionActivity(false);
+    } catch {
+      // Session may already be inactive.
+    }
+
+    this.markIgnoreRouteChange();
+    AudioManager.setAudioSessionOptions({
+      iosCategory: 'playback',
+      iosMode: 'default',
+      iosOptions: ['allowBluetoothA2DP'],
+    });
+    this.sessionMode = 'playback';
+
+    let activated = await AudioManager.setAudioSessionActivity(true);
+    if (!activated) {
+      try {
+        await AudioManager.setAudioSessionActivity(false);
+      } catch {
+        // Session may already be inactive.
+      }
+
+      this.markIgnoreRouteChange();
+      AudioManager.setAudioSessionOptions({
+        iosCategory: 'playAndRecord',
+        iosMode: 'default',
+        iosOptions: ['defaultToSpeaker', 'allowBluetoothA2DP'],
+      });
+      activated = await AudioManager.setAudioSessionActivity(true);
+      if (!activated) {
+        this.sessionMode = null;
+        throw new Error('Failed to activate audio session for playback');
+      }
+    }
+
+    await this.refreshOutputRouteKey();
   }
 
   private async prepareRecordingRoute(): Promise<void> {
@@ -609,10 +810,17 @@ export class MemoAudioEngine {
     // Monitor mix state is cleared when the playback graph is reset.
   }
 
-  private getTargetContextSampleRate(): number {
-    // Playback and recording monitor mix both use RECORDING_SAMPLE_RATE so
-    // layer buffers match without a full-song JS resample on stack warmup.
-    return RECORDING_SAMPLE_RATE;
+  /**
+   * Hardware rate for listen-playback. Matching the session rate avoids
+   * continuous native SRC (common 44.1k context on 48k devices) that cracks
+   * under App Switcher / background CPU pressure.
+   */
+  private getPlaybackContextSampleRate(): number {
+    const preferred = Math.round(AudioManager.getDevicePreferredSampleRate());
+    if (!Number.isFinite(preferred) || preferred < 8000) {
+      return RECORDING_SAMPLE_RATE;
+    }
+    return preferred;
   }
 
   private async createAudioContextAtRate(targetRate: number): Promise<AudioContext> {
@@ -636,7 +844,7 @@ export class MemoAudioEngine {
   }
 
   private async ensureMonitorContextReady(): Promise<void> {
-    const context = await this.ensureContext();
+    const context = await this.ensureRecordingContext();
     await Promise.all(
       this.loadedLayers.map((layer) => this.getDecodedLayerBuffer(layer))
     );
@@ -965,22 +1173,33 @@ export class MemoAudioEngine {
 
   private async ensureContext(): Promise<AudioContext> {
     if (this.state.isRecording) {
-      await this.configureForRecording();
-    } else {
-      await this.configureForPlayback();
+      // Keep monitor-mix / in-take graph on the recording rate.
+      return this.ensureRecordingContext();
     }
 
-    const targetRate = this.getTargetContextSampleRate();
+    await this.configureForPlayback();
 
+    const sessionRate = this.getPlaybackContextSampleRate();
+
+    // Only recreate when leaving a leftover recording-rate context for a
+    // different hardware rate. Do not thrash when AVAudioSession.sampleRate
+    // flickers between play() calls — that broke first-play after the 48k change.
     if (
       this.context &&
-      Math.round(this.context.sampleRate) !== targetRate
+      Math.round(this.context.sampleRate) === RECORDING_SAMPLE_RATE &&
+      sessionRate !== RECORDING_SAMPLE_RATE
     ) {
       await this.closeContextAndDisposeGraph();
     }
 
     if (!this.context) {
-      this.context = await this.createAudioContextAtRate(targetRate);
+      this.context = await this.createAudioContextAtRate(sessionRate);
+      if (__DEV__) {
+        console.log(
+          `[audio] playback AudioContext at ${Math.round(this.context.sampleRate)} Hz` +
+            ` (session ${sessionRate} Hz)`
+        );
+      }
     }
 
     if (this.context.state === 'suspended') {
@@ -1063,6 +1282,93 @@ export class MemoAudioEngine {
     return Math.max(this.playbackStartAt, Math.min(pos, this.playbackEndAt));
   }
 
+  private getPlaybackRemainingWallMs(context: AudioContext): number {
+    const rate = Math.max(0.01, this.playbackRate);
+    const remainingSec = Math.max(
+      0,
+      (this.playbackEndAt - this.getElapsedPlaybackTime(context) - PLAYBACK_END_TOLERANCE) /
+        rate
+    );
+    // Prefer slightly late end vs cutting audio early.
+    return Math.ceil(remainingSec * 1000);
+  }
+
+  /** Schedule metronome clicks through playbackEndAt (for inactive AppState). */
+  private extendMetronomeThroughPlaybackEnd(): void {
+    if (!this.metronomeOnlyActive || !this.context || this.playbackEndAt <= 0) {
+      return;
+    }
+
+    let guard = 0;
+    while (
+      this.metronomeScheduledUntil < this.playbackEndAt - 0.001 &&
+      guard < 100
+    ) {
+      const before = this.metronomeScheduledUntil;
+      this.extendMetronomeOnlySchedule(this.metronomeScheduledUntil);
+      if (this.metronomeScheduledUntil <= before + 0.001) {
+        break;
+      }
+      guard += 1;
+    }
+  }
+
+  private armBackgroundPlaybackEndTimeout(
+    sessionId: number,
+    context: AudioContext
+  ): void {
+    this.clearPlaybackTimer();
+    this.extendMetronomeThroughPlaybackEnd();
+
+    const remainingMs = this.getPlaybackRemainingWallMs(context);
+    this.playbackEndTimeoutId = setTimeout(() => {
+      this.playbackEndTimeoutId = null;
+      if (sessionId !== this.activePlaybackSessionId || this.state.isRecording) {
+        return;
+      }
+
+      // Prefer late: if audio clock is still short of end, re-arm.
+      if (this.context && this.playbackContextStartWhen > 0) {
+        const now = this.getElapsedPlaybackTime(this.context);
+        if (now < this.playbackEndAt - PLAYBACK_END_TOLERANCE) {
+          this.armBackgroundPlaybackEndTimeout(sessionId, this.context);
+          return;
+        }
+      }
+
+      this.finishPlaybackNaturally(this.playbackEndAt, sessionId);
+    }, remainingMs);
+  }
+
+  /** Stop UI RAF while inactive; native sources keep playing. */
+  private freezePlaybackUiForBackground(): void {
+    if (
+      this.state.isRecording ||
+      !this.state.isPlaying ||
+      !this.context ||
+      this.playbackContextStartWhen <= 0
+    ) {
+      return;
+    }
+
+    const currentTime = this.getElapsedPlaybackTime(this.context);
+    this.emit({ currentTime, isPlaying: true });
+    this.armBackgroundPlaybackEndTimeout(this.activePlaybackSessionId, this.context);
+  }
+
+  private resumePlaybackUiFromBackground(): void {
+    if (
+      this.state.isRecording ||
+      !this.state.isPlaying ||
+      !this.context ||
+      this.playbackContextStartWhen <= 0
+    ) {
+      return;
+    }
+
+    this.startPlaybackTimer(this.activePlaybackSessionId, this.context);
+  }
+
   private resetPlaybackRateClock(): void {
     this.playbackRate = 1;
     this.playbackRateAnchorContextTime = 0;
@@ -1096,10 +1402,26 @@ export class MemoAudioEngine {
       return;
     }
 
+    // Loop restart / play while App Switcher is up — no RAF, wall-clock end only.
+    if (AppState.currentState !== 'active') {
+      this.emit({
+        currentTime: this.getElapsedPlaybackTime(context),
+        isPlaying: true,
+      });
+      this.armBackgroundPlaybackEndTimeout(sessionId, context);
+      return;
+    }
+
     let lastUiUpdateMs = 0;
 
     const tick = (frameMs: number) => {
       if (sessionId !== this.activePlaybackSessionId) {
+        return;
+      }
+
+      // App became inactive mid-tick — hand off to background end-timeout.
+      if (AppState.currentState !== 'active') {
+        this.armBackgroundPlaybackEndTimeout(sessionId, context);
         return;
       }
 
@@ -1125,7 +1447,11 @@ export class MemoAudioEngine {
       this.playbackRafId = requestAnimationFrame(tick);
     };
 
-    this.emit({ currentTime: this.playbackStartAt, isPlaying: true });
+    // Fresh play and foreground resume both land here — use the live clock.
+    this.emit({
+      currentTime: this.getElapsedPlaybackTime(context),
+      isPlaying: true,
+    });
     this.playbackRafId = requestAnimationFrame(tick);
   }
 
@@ -1487,18 +1813,30 @@ export class MemoAudioEngine {
   }
 
   private async getLayerBuffer(context: AudioContext, layer: LoadedLayer): Promise<AudioBuffer> {
-    const decoded = await this.getDecodedLayerBuffer(layer);
-    const bufferRate = Math.round(decoded.sampleRate);
     const contextRate = Math.round(context.sampleRate);
-
-    if (bufferRate === contextRate) {
-      return decoded;
-    }
-
     const cacheKey = this.resampledBufferKey(layer.path, contextRate);
     const cachedResampled = this.resampledLayerBuffers.get(cacheKey);
     if (cachedResampled) {
       return cachedResampled;
+    }
+
+    // Native decode-at-rate: avoids multi-second JS resample on first play when
+    // the playback context is 48k and files are 44.1k (felt like "play is broken").
+    try {
+      const decodedAtRate = await decodeAudioData(layer.path, contextRate);
+      if (Math.round(decodedAtRate.sampleRate) === contextRate) {
+        this.resampledLayerBuffers.set(cacheKey, decodedAtRate);
+        return decodedAtRate;
+      }
+    } catch {
+      // Fall through to file-rate decode + JS resample.
+    }
+
+    const decoded = await this.getDecodedLayerBuffer(layer);
+    const bufferRate = Math.round(decoded.sampleRate);
+
+    if (bufferRate === contextRate) {
+      return decoded;
     }
 
     if (__DEV__) {
@@ -1547,6 +1885,7 @@ export class MemoAudioEngine {
     this.invalidateAndStopSources();
     this.emit({ isPlaying: false, currentTime: endAt });
     if (!this.state.isRecording) {
+      this.setPlaybackInterruptionObservation(false);
       void endMemoLiveActivity();
     }
   }
@@ -1628,6 +1967,7 @@ export class MemoAudioEngine {
     this.invalidateAndStopSources();
     this.emit({ isPlaying: false });
     if (!this.state.isRecording) {
+      this.setPlaybackInterruptionObservation(false);
       void endMemoLiveActivity();
     }
   }
@@ -2664,6 +3004,12 @@ export class MemoAudioEngine {
 
       this.scheduleMetronome(context, startAt, endAt, when);
       this.startPlaybackTimer(sessionId, context);
+      this.playbackInterrupted = false;
+
+      if (!this.state.isRecording) {
+        // JS must observe so we sync pause UI; native then skips onInterruptionEnd.
+        this.setPlaybackInterruptionObservation(true);
+      }
 
       if (
         !this.state.isRecording &&
@@ -2681,6 +3027,7 @@ export class MemoAudioEngine {
       this.invalidateAndStopSources();
       this.emit({ isPlaying: false });
       if (!this.state.isRecording) {
+        this.setPlaybackInterruptionObservation(false);
         void endMemoLiveActivity();
       }
       throw error;
@@ -2693,6 +3040,7 @@ export class MemoAudioEngine {
     if (!this.state.isPlaying) {
       if (!this.state.isRecording) {
         this.invalidateAndStopSources();
+        this.setPlaybackInterruptionObservation(false);
       }
       return;
     }
@@ -2702,6 +3050,7 @@ export class MemoAudioEngine {
     this.invalidateAndStopSources();
     this.emit({ isPlaying: false, currentTime: pausedAt });
     if (!this.state.isRecording) {
+      this.setPlaybackInterruptionObservation(false);
       void endMemoLiveActivity();
     }
   }

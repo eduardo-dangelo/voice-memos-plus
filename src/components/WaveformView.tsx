@@ -2063,7 +2063,25 @@ function WaveformViewComponent({
     let raf = 0;
     let bufferSyncRaf = 0;
     let pendingBufferScrollX = 0;
+    let appState: string = AppState.currentState;
+
+    const syncScrollToPlaybackTime = () => {
+      const time = getPlaybackTimeRef.current?.() ?? currentTimeRef.current;
+      const x = timeToScrollX(time, contentWidth, layoutPixelsPerSecond);
+      scrollOffsetRef.current = x;
+      scrollRef.current?.scrollTo({
+        x,
+        animated: false,
+      });
+      syncMetronomeGridRef.current(x);
+    };
+
     const tick = () => {
+      // App Switcher / background: stop scroll RAF; native audio keeps playing.
+      if (appState !== 'active') {
+        raf = 0;
+        return;
+      }
       // User scrub can start before isPlaying flips false; don't fight the drag.
       if (isUserScrollingRef.current) {
         raf = requestAnimationFrame(tick);
@@ -2088,8 +2106,31 @@ function WaveformViewComponent({
       raf = requestAnimationFrame(tick);
     };
 
-    raf = requestAnimationFrame(tick);
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      appState = nextState;
+      if (nextState === 'active') {
+        syncScrollToPlaybackTime();
+        if (raf === 0) {
+          raf = requestAnimationFrame(tick);
+        }
+      } else if (raf !== 0) {
+        cancelAnimationFrame(raf);
+        raf = 0;
+        if (bufferSyncRaf !== 0) {
+          cancelAnimationFrame(bufferSyncRaf);
+          bufferSyncRaf = 0;
+        }
+      }
+    });
+
+    if (appState === 'active') {
+      raf = requestAnimationFrame(tick);
+    } else {
+      syncScrollToPlaybackTime();
+    }
+
     return () => {
+      subscription.remove();
       cancelAnimationFrame(raf);
       if (bufferSyncRaf !== 0) {
         cancelAnimationFrame(bufferSyncRaf);
