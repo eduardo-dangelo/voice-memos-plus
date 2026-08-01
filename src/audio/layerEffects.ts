@@ -88,9 +88,15 @@ export type LayerDelayEffects = {
   feedback: number;
 };
 
+export type EqBandGains = [number, number, number, number, number];
+export type EqBandFrequencies = [number, number, number, number, number];
+export type EqBandQFactors = [number, number, number, number, number];
+
 export type LayerEqEffects = {
   preset: EqPreset;
-  bands: [number, number, number, number, number];
+  bands: EqBandGains;
+  frequencies: EqBandFrequencies;
+  qFactors: EqBandQFactors;
 };
 
 export type LayerEffects = {
@@ -111,9 +117,84 @@ export type LayerEffectsChange = Omit<Partial<LayerEffects>, 'reverb' | 'delay' 
 };
 
 export const EQ_FREQUENCIES = [100, 250, 1000, 4000, 10000] as const;
+export const EQ_MIN_FREQ = 60;
+export const EQ_MAX_FREQ = 16000;
+export const EQ_MIN_Q = 0.3;
+export const EQ_MAX_Q = 8;
+export const EQ_DEFAULT_Q = 1;
+/** Minimum frequency ratio between neighboring bands (~1/6 octave). */
+export const EQ_BAND_MIN_RATIO = Math.pow(2, 1 / 6);
 export const DEFAULT_BPM = 100;
 export const MIN_TRIM_SELECTION = 0.5;
 export const TRIM_SNAP_SECONDS = 0.1;
+
+export function defaultEqFrequencies(): EqBandFrequencies {
+  return [...EQ_FREQUENCIES] as EqBandFrequencies;
+}
+
+export function defaultEqQFactors(): EqBandQFactors {
+  return [
+    EQ_DEFAULT_Q,
+    EQ_DEFAULT_Q,
+    EQ_DEFAULT_Q,
+    EQ_DEFAULT_Q,
+    EQ_DEFAULT_Q,
+  ];
+}
+
+export function clampEqQ(q: number): number {
+  return Math.max(EQ_MIN_Q, Math.min(EQ_MAX_Q, q));
+}
+
+function normalizeEqQFactors(
+  stored: Partial<EqBandQFactors> | undefined
+): EqBandQFactors {
+  const defaults = defaultEqQFactors();
+  return [
+    clampEqQ(typeof stored?.[0] === 'number' ? stored[0] : defaults[0]),
+    clampEqQ(typeof stored?.[1] === 'number' ? stored[1] : defaults[1]),
+    clampEqQ(typeof stored?.[2] === 'number' ? stored[2] : defaults[2]),
+    clampEqQ(typeof stored?.[3] === 'number' ? stored[3] : defaults[3]),
+    clampEqQ(typeof stored?.[4] === 'number' ? stored[4] : defaults[4]),
+  ];
+}
+
+export function clampEqBandFrequency(
+  index: number,
+  frequency: number,
+  frequencies: EqBandFrequencies
+): number {
+  const lower =
+    index <= 0 ? EQ_MIN_FREQ : frequencies[index - 1] * EQ_BAND_MIN_RATIO;
+  const upper =
+    index >= frequencies.length - 1
+      ? EQ_MAX_FREQ
+      : frequencies[index + 1] / EQ_BAND_MIN_RATIO;
+  return Math.max(lower, Math.min(upper, frequency));
+}
+
+function normalizeEqFrequencies(
+  stored: Partial<EqBandFrequencies> | undefined
+): EqBandFrequencies {
+  const defaults = defaultEqFrequencies();
+  const next: EqBandFrequencies = [
+    typeof stored?.[0] === 'number' ? stored[0] : defaults[0],
+    typeof stored?.[1] === 'number' ? stored[1] : defaults[1],
+    typeof stored?.[2] === 'number' ? stored[2] : defaults[2],
+    typeof stored?.[3] === 'number' ? stored[3] : defaults[3],
+    typeof stored?.[4] === 'number' ? stored[4] : defaults[4],
+  ];
+  for (let index = 0; index < next.length; index += 1) {
+    next[index] = clampEqBandFrequency(index, next[index], next);
+  }
+  return next;
+}
+
+function frequenciesMatchDefaults(frequencies: EqBandFrequencies): boolean {
+  return EQ_FREQUENCIES.every(
+    (frequency, index) => Math.abs(frequency - frequencies[index]) < 0.5
+  );
+}
 
 export const REVERB_PRESET_DEFAULTS: Record<
   Exclude<ReverbPreset, 'off' | 'custom'>,
@@ -184,7 +265,13 @@ export function getDelayPresetDefaults(
   };
 }
 
-function inferEqPreset(bands: LayerEqEffects['bands']): EqPreset {
+function inferEqPreset(
+  bands: LayerEqEffects['bands'],
+  frequencies: LayerEqEffects['frequencies']
+): EqPreset {
+  if (!frequenciesMatchDefaults(frequencies)) {
+    return 'custom';
+  }
   if (bands.every((bandDb) => Math.abs(bandDb) < 0.5)) {
     return 'off';
   }
@@ -213,7 +300,12 @@ export function createDefaultLayerEffects(duration: number): LayerEffects {
     solo: false,
     reverb: { preset: 'off', mix: 0, decay: 0.8 },
     delay: { preset: 'off', sync: 'off', timeMs: 320, mix: 0, feedback: 40 },
-    eq: { preset: 'off', bands: [0, 0, 0, 0, 0] },
+    eq: {
+      preset: 'off',
+      bands: [0, 0, 0, 0, 0],
+      frequencies: defaultEqFrequencies(),
+      qFactors: defaultEqQFactors(),
+    },
   };
 }
 
@@ -297,13 +389,15 @@ export function normalizeLayerEffects(
     layer.effects.eq?.bands?.[3] ?? 0,
     layer.effects.eq?.bands?.[4] ?? 0,
   ];
+  const eqFrequencies = normalizeEqFrequencies(layer.effects.eq?.frequencies);
+  const eqQFactors = normalizeEqQFactors(layer.effects.eq?.qFactors);
 
   const eqPreset = (() => {
     const storedPreset = layer.effects.eq?.preset;
     if (storedPreset != null && isEqPreset(storedPreset)) {
       return storedPreset;
     }
-    return inferEqPreset(eqBands);
+    return inferEqPreset(eqBands, eqFrequencies);
   })();
 
   return {
@@ -333,6 +427,8 @@ export function normalizeLayerEffects(
     eq: {
       preset: eqPreset,
       bands: eqBands,
+      frequencies: eqFrequencies,
+      qFactors: eqQFactors,
     },
   };
 }
@@ -362,6 +458,24 @@ export function mergeLayerEffects(
             partial.eq.bands[4] ?? current.eq.bands[4],
           ] as LayerEqEffects['bands'])
         : current.eq.bands,
+      frequencies: partial.eq?.frequencies
+        ? normalizeEqFrequencies([
+            partial.eq.frequencies[0] ?? current.eq.frequencies[0],
+            partial.eq.frequencies[1] ?? current.eq.frequencies[1],
+            partial.eq.frequencies[2] ?? current.eq.frequencies[2],
+            partial.eq.frequencies[3] ?? current.eq.frequencies[3],
+            partial.eq.frequencies[4] ?? current.eq.frequencies[4],
+          ])
+        : current.eq.frequencies,
+      qFactors: partial.eq?.qFactors
+        ? normalizeEqQFactors([
+            partial.eq.qFactors[0] ?? current.eq.qFactors[0],
+            partial.eq.qFactors[1] ?? current.eq.qFactors[1],
+            partial.eq.qFactors[2] ?? current.eq.qFactors[2],
+            partial.eq.qFactors[3] ?? current.eq.qFactors[3],
+            partial.eq.qFactors[4] ?? current.eq.qFactors[4],
+          ])
+        : current.eq.qFactors,
     },
   };
 
@@ -427,7 +541,9 @@ export function formatEqBand(value: number): string {
 
 export function formatFrequency(hz: number): string {
   if (hz >= 1000) {
-    return `${hz / 1000}k`;
+    const kilo = hz / 1000;
+    const rounded = kilo >= 10 ? Math.round(kilo) : Math.round(kilo * 10) / 10;
+    return `${rounded}k`;
   }
-  return `${hz}`;
+  return `${Math.round(hz)}`;
 }

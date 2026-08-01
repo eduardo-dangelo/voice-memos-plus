@@ -4,14 +4,19 @@ import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useColorScheme } from '@/components/useColorScheme';
 import {
+  clampEqBandFrequency,
+  clampEqQ,
   syncDelayTimeMs,
+  type EqBandFrequencies,
+  type EqBandGains,
+  type EqBandQFactors,
   type LayerEffects,
   type LayerEffectsChange,
 } from '@/src/audio/layerEffects';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
 import { EditorSlider } from './primitives/EditorSlider';
-import { EqCurveChart } from './primitives/EqCurveChart';
+import { EqCurveChart, type EqBandChange } from './primitives/EqCurveChart';
 
 export type EffectCustomKind = 'reverb' | 'delay' | 'eq';
 
@@ -36,10 +41,30 @@ export function EffectCustomDialog({ visible, effect, effects, onChange, onClose
   const colorScheme = useColorScheme();
   const styles = useStyles(colors, colorScheme);
 
-  const updateBand = (index: number, value: number) => {
-    const next = [...effects.eq.bands] as LayerEffects['eq']['bands'];
-    next[index] = value;
-    onChange({ eq: { bands: next } });
+  const updateBand = (index: number, change: EqBandChange) => {
+    const nextBands = [...effects.eq.bands] as EqBandGains;
+    const nextFrequencies = [...effects.eq.frequencies] as EqBandFrequencies;
+    const nextQFactors = [...effects.eq.qFactors] as EqBandQFactors;
+    if (change.gain != null) {
+      nextBands[index] = change.gain;
+    }
+    if (change.frequency != null) {
+      nextFrequencies[index] = clampEqBandFrequency(
+        index,
+        change.frequency,
+        nextFrequencies
+      );
+    }
+    if (change.q != null) {
+      nextQFactors[index] = clampEqQ(change.q);
+    }
+    onChange({
+      eq: {
+        bands: nextBands,
+        frequencies: nextFrequencies,
+        qFactors: nextQFactors,
+      },
+    });
   };
 
   const displayTimeMs =
@@ -130,7 +155,13 @@ export function EffectCustomDialog({ visible, effect, effects, onChange, onClose
 
       {effect === 'eq' ? (
         <View style={styles.section}>
-          <EqCurveChart bands={effects.eq.bands} onChange={updateBand} />
+          <EqCurveChart
+            key={visible ? 'eq-open' : 'eq-closed'}
+            bands={effects.eq.bands}
+            frequencies={effects.eq.frequencies}
+            qFactors={effects.eq.qFactors}
+            onChange={updateBand}
+          />
         </View>
       ) : null}
     </>

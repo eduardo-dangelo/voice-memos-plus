@@ -214,8 +214,12 @@ export function syncReverbConvolver(
   assignReverbImpulse(convolver, preset, decay, context);
 }
 
-/** Replace live gain without filling the 64-event automation queue. */
-function setAudioParamValue(param: GainNode['gain'], value: number, time: number): void {
+/** Replace live param without filling the 64-event automation queue. */
+function setAudioParamValue(
+  param: { cancelScheduledValues: (time: number) => void; setValueAtTime: (value: number, time: number) => void },
+  value: number,
+  time: number
+): void {
   param.cancelScheduledValues(time);
   param.setValueAtTime(value, time);
 }
@@ -233,7 +237,10 @@ export function applyPathInputEffects(
     now
   );
   effects.eq.bands.forEach((bandDb, index) => {
-    setAudioParamValue(path.eqFilters[index].gain, bandDb, now);
+    const filter = path.eqFilters[index];
+    setAudioParamValue(filter.gain, bandDb, now);
+    setAudioParamValue(filter.frequency, effects.eq.frequencies[index], now);
+    setAudioParamValue(filter.Q, effects.eq.qFactors[index], now);
   });
 }
 

@@ -1,4 +1,5 @@
-import { useMemo, useRef, useState, type ReactNode } from 'react';
+import * as Haptics from 'expo-haptics';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   LayoutChangeEvent,
   PanResponder,
@@ -9,33 +10,58 @@ import {
   type PanResponderGestureState,
   type ViewStyle,
 } from 'react-native';
+import Svg, { Path } from 'react-native-svg';
 
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 import {
+  clampEqBandFrequency,
+  clampEqQ,
+  EQ_DEFAULT_Q,
   EQ_FREQUENCIES,
+  EQ_MAX_FREQ,
+  EQ_MAX_Q,
+  EQ_MIN_FREQ,
+  EQ_MIN_Q,
   formatEqBand,
   formatFrequency,
-  type LayerEffects,
+  type EqBandFrequencies,
+  type EqBandGains,
+  type EqBandQFactors,
 } from '@/src/audio/layerEffects';
+
+import { EditorSlider } from './EditorSlider';
 
 const MIN_DB = -12;
 const MAX_DB = 12;
-const MIN_FREQ = EQ_FREQUENCIES[0];
-const MAX_FREQ = EQ_FREQUENCIES[EQ_FREQUENCIES.length - 1];
+const MIN_FREQ = EQ_MIN_FREQ;
+const MAX_FREQ = EQ_MAX_FREQ;
 const STEP_COUNT = 100;
+const RESPONSE_SAMPLES = 96;
+const RESPONSE_SAMPLE_RATE = 48000;
 const HANDLE_RADIUS = 10;
 const ACTIVE_HANDLE_RADIUS = 12;
 const HIT_RADIUS = 22;
-const CHART_HEIGHT = 110;
+const CHART_HEIGHT = 148;
 const CHART_PADDING_X = 16;
-const CHART_PADDING_Y = 8;
+const CHART_PADDING_Y = 16;
 const CURVE_STROKE = 2;
+const FILL_OPACITY = 0.18;
 const TAP_MOVE_THRESHOLD = 6;
 const TAP_DURATION_MS = 280;
+const LONG_PRESS_MS = 350;
+const LONG_PRESS_MOVE_THRESHOLD = 8;
+
+export type EqBandChange = {
+  gain?: number;
+  frequency?: number;
+  q?: number;
+};
 
 type Props = {
-  bands: LayerEffects['eq']['bands'];
-  onChange: (index: number, value: number) => void;
+  bands: EqBandGains;
+  frequencies: EqBandFrequencies;
+  qFactors: EqBandQFactors;
+  onChange: (index: number, change: EqBandChange) => void;
 };
 
 type ChartSize = {
@@ -64,6 +90,12 @@ function freqToNormalized(freq: number): number {
   return (Math.log10(freq) - minLog) / (maxLog - minLog);
 }
 
+function normalizedToFreq(normalized: number): number {
+  const minLog = Math.log10(MIN_FREQ);
+  const maxLog = Math.log10(MAX_FREQ);
+  return Math.pow(10, minLog + clamp(normalized, 0, 1) * (maxLog - minLog));
+}
+
 function dbToNormalized(db: number): number {
   return (MAX_DB - db) / (MAX_DB - MIN_DB);
 }
@@ -79,25 +111,124 @@ function freqToX(freq: number, size: ChartSize): number {
   return CHART_PADDING_X + freqToNormalized(freq) * innerWidth;
 }
 
+function xToFreq(x: number, size: ChartSize): number {
+  const { innerWidth } = getChartInner(size);
+  const normalized = (x - CHART_PADDING_X) / innerWidth;
+  return normalizedToFreq(normalized);
+}
+
 function dbToY(db: number, size: ChartSize): number {
   const { innerHeight } = getChartInner(size);
   return CHART_PADDING_Y + dbToNormalized(db) * innerHeight;
 }
 
-function getBandPoints(bands: LayerEffects['eq']['bands'], size: ChartSize): Point[] {
+function getBandPoints(
+  bands: EqBandGains,
+  frequencies: EqBandFrequencies,
+  size: ChartSize
+): Point[] {
   return bands.map((db, index) => ({
-    x: freqToX(EQ_FREQUENCIES[index], size),
+    x: freqToX(frequencies[index], size),
     y: dbToY(db, size),
   }));
+}
+
+/** Peaking biquad magnitude (dB) at frequency f — Audio EQ Cookbook. */
+function peakingMagDb(
+  f: number,
+  f0: number,
+  gainDb: number,
+  Q: number,
+  sampleRate = RESPONSE_SAMPLE_RATE
+): number {
+  if (f <= 0 || f0 <= 0 || Q <= 0 || Math.abs(gainDb) < 1e-4) {
+    return 0;
+  }
+  const A = Math.pow(10, gainDb / 40);
+  const w0 = (2 * Math.PI * f0) / sampleRate;
+  const cosw0 = Math.cos(w0);
+  const sinw0 = Math.sin(w0);
+  const alpha = sinw0 / (2 * Q);
+
+  const b0 = 1 + alpha * A;
+  const b1 = -2 * cosw0;
+  const b2 = 1 - alpha * A;
+  const a0 = 1 + alpha / A;
+  const a1 = -2 * cosw0;
+  const a2 = 1 - alpha / A;
+
+  const nb0 = b0 / a0;
+  const nb1 = b1 / a0;
+  const nb2 = b2 / a0;
+  const na1 = a1 / a0;
+  const na2 = a2 / a0;
+
+  const w = (2 * Math.PI * f) / sampleRate;
+  const cosw = Math.cos(w);
+  const sinw = Math.sin(w);
+  const z1r = cosw;
+  const z1i = -sinw;
+  const z2r = cosw * cosw - sinw * sinw;
+  const z2i = -2 * cosw * sinw;
+
+  const br = nb0 + nb1 * z1r + nb2 * z2r;
+  const bi = nb1 * z1i + nb2 * z2i;
+  const ar = 1 + na1 * z1r + na2 * z2r;
+  const ai = na1 * z1i + na2 * z2i;
+  const mag2 = (br * br + bi * bi) / Math.max(1e-20, ar * ar + ai * ai);
+  return 10 * Math.log10(mag2);
+}
+
+function sampleResponsePoints(
+  bands: EqBandGains,
+  frequencies: EqBandFrequencies,
+  qFactors: EqBandQFactors,
+  size: ChartSize
+): Point[] {
+  const points: Point[] = [];
+  const minLog = Math.log10(MIN_FREQ);
+  const maxLog = Math.log10(MAX_FREQ);
+  for (let i = 0; i < RESPONSE_SAMPLES; i += 1) {
+    const t = i / (RESPONSE_SAMPLES - 1);
+    const freq = Math.pow(10, minLog + t * (maxLog - minLog));
+    let db = 0;
+    for (let band = 0; band < bands.length; band += 1) {
+      db += peakingMagDb(freq, frequencies[band], bands[band], qFactors[band]);
+    }
+    db = clamp(db, MIN_DB, MAX_DB);
+    points.push({ x: freqToX(freq, size), y: dbToY(db, size) });
+  }
+  return points;
+}
+
+function buildCurvePath(points: Point[]): string {
+  if (points.length === 0) {
+    return '';
+  }
+  let d = `M ${points[0].x} ${points[0].y}`;
+  for (let index = 1; index < points.length; index += 1) {
+    d += ` L ${points[index].x} ${points[index].y}`;
+  }
+  return d;
+}
+
+function buildAreaPath(points: Point[], baselineY: number): string {
+  if (points.length < 2) {
+    return '';
+  }
+  const first = points[0];
+  const last = points[points.length - 1];
+  return `${buildCurvePath(points)} L ${last.x} ${baselineY} L ${first.x} ${baselineY} Z`;
 }
 
 function findNearestBandIndex(
   locationX: number,
   locationY: number,
-  bands: LayerEffects['eq']['bands'],
+  bands: EqBandGains,
+  frequencies: EqBandFrequencies,
   size: ChartSize
 ): number {
-  const points = getBandPoints(bands, size);
+  const points = getBandPoints(bands, frequencies, size);
   let nearestIndex = 0;
   let nearestDistance = Infinity;
 
@@ -124,98 +255,6 @@ function findNearestBandIndex(
   }
 
   return nearestIndex;
-}
-
-function ChartSegmentLine({
-  x1,
-  y1,
-  x2,
-  y2,
-  color,
-  strokeWidth,
-  segmentLineStyle,
-}: {
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
-  color: string;
-  strokeWidth: number;
-  segmentLineStyle: { position: 'absolute' };
-}) {
-  const dx = x2 - x1;
-  const dy = y2 - y1;
-  const length = Math.hypot(dx, dy);
-  if (length < 0.5) {
-    return null;
-  }
-  const angle = (Math.atan2(dy, dx) * 180) / Math.PI;
-  const centerX = (x1 + x2) / 2;
-  const centerY = (y1 + y2) / 2;
-
-  return (
-    <View
-      pointerEvents="none"
-      style={[
-        segmentLineStyle,
-        {
-          width: length,
-          height: strokeWidth,
-          left: centerX - length / 2,
-          top: centerY - strokeWidth / 2,
-          backgroundColor: color,
-          transform: [{ rotate: `${angle}deg` }],
-        },
-      ]}
-    />
-  );
-}
-
-function ChartAreaFill({
-  points,
-  baselineY,
-  areaStripStyle,
-}: {
-  points: Point[];
-  baselineY: number;
-  areaStripStyle: { position: 'absolute'; width: number; backgroundColor: string; opacity: number };
-}) {
-  if (points.length < 2) {
-    return null;
-  }
-
-  const strips: ReactNode[] = [];
-  for (let index = 0; index < points.length - 1; index += 1) {
-    const start = points[index];
-    const end = points[index + 1];
-    const span = Math.max(1, Math.ceil(end.x - start.x));
-    for (let step = 0; step < span; step += 1) {
-      const t = step / span;
-      const x = start.x + t * (end.x - start.x);
-      const curveY = start.y + t * (end.y - start.y);
-      const top = Math.min(curveY, baselineY);
-      const height = Math.abs(curveY - baselineY);
-      if (height < 0.5) {
-        continue;
-      }
-      strips.push(
-        <View
-          key={`${index}-${step}`}
-          pointerEvents="none"
-          style={[
-            areaStripStyle,
-            {
-              left: x,
-              top,
-              height,
-            },
-          ]}
-        />
-      );
-    }
-  }
-
-  return <>{strips}</>;
 }
 
 function ChartHandle({
@@ -248,37 +287,102 @@ function ChartHandle({
   );
 }
 
-export function EqCurveChart({ bands, onChange }: Props) {
+function formatQ(q: number): string {
+  return q >= 10 ? q.toFixed(0) : q.toFixed(1);
+}
+
+const EQ_Q_LOG_SPAN = Math.log(EQ_MAX_Q / EQ_MIN_Q);
+
+function qToSliderPos(q: number): number {
+  return Math.log(clampEqQ(q) / EQ_MIN_Q) / EQ_Q_LOG_SPAN;
+}
+
+function sliderPosToQ(pos: number): number {
+  const t = Math.max(0, Math.min(1, pos));
+  return clampEqQ(EQ_MIN_Q * Math.pow(EQ_MAX_Q / EQ_MIN_Q, t));
+}
+
+export function EqCurveChart({ bands, frequencies, qFactors, onChange }: Props) {
   const colors = useVoiceMemosColors();
   const styles = useStyles(colors);
   const [chartSize, setChartSize] = useState<ChartSize>({ width: 1, height: CHART_HEIGHT });
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const [qEditIndex, setQEditIndex] = useState<number | null>(null);
 
   const bandsRef = useRef(bands);
+  const frequenciesRef = useRef(frequencies);
+  const qFactorsRef = useRef(qFactors);
   const onChangeRef = useRef(onChange);
   const chartSizeRef = useRef(chartSize);
   const activeIndexRef = useRef<number | null>(null);
   const startDbRef = useRef(0);
+  const startFreqRef = useRef(EQ_MIN_FREQ);
   const grantTimeRef = useRef(0);
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressFiredRef = useRef(false);
+  const dragStartedRef = useRef(false);
+  const qEditIndexRef = useRef<number | null>(null);
 
   bandsRef.current = bands;
+  frequenciesRef.current = frequencies;
+  qFactorsRef.current = qFactors;
   onChangeRef.current = onChange;
   chartSizeRef.current = chartSize;
   activeIndexRef.current = activeIndex;
+  qEditIndexRef.current = qEditIndex;
 
-  const points = useMemo(() => getBandPoints(bands, chartSize), [bands, chartSize]);
-  const baselineY = dbToY(0, chartSize);
+  useEffect(() => {
+    return () => {
+      if (longPressTimerRef.current) {
+        clearTimeout(longPressTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handlePoints = useMemo(
+    () => getBandPoints(bands, frequencies, chartSize),
+    [bands, frequencies, chartSize]
+  );
+  const responsePoints = useMemo(
+    () => sampleResponsePoints(bands, frequencies, qFactors, chartSize),
+    [bands, frequencies, qFactors, chartSize]
+  );
+  const { innerHeight } = getChartInner(chartSize);
+  const fillBaselineY = CHART_PADDING_Y + innerHeight;
   const gridLines = [-6, 0, 6];
 
+  const curvePath = useMemo(() => buildCurvePath(responsePoints), [responsePoints]);
+  const areaPath = useMemo(
+    () => buildAreaPath(responsePoints, fillBaselineY),
+    [responsePoints, fillBaselineY]
+  );
+
+  const clearLongPressTimer = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  };
+
   const applyDrag = (gesture: PanResponderGestureState) => {
+    if (longPressFiredRef.current) {
+      return;
+    }
     const index = activeIndexRef.current;
     if (index == null) {
       return;
     }
-    const { innerHeight } = getChartInner(chartSizeRef.current);
-    const deltaDb = (-gesture.dy / innerHeight) * (MAX_DB - MIN_DB);
-    const next = quantizeDb(startDbRef.current + deltaDb);
-    onChangeRef.current(index, next);
+    const size = chartSizeRef.current;
+    const { innerHeight: height } = getChartInner(size);
+    const deltaDb = (-gesture.dy / height) * (MAX_DB - MIN_DB);
+    const nextGain = quantizeDb(startDbRef.current + deltaDb);
+    const startX = freqToX(startFreqRef.current, size);
+    const nextFrequency = clampEqBandFrequency(
+      index,
+      xToFreq(startX + gesture.dx, size),
+      frequenciesRef.current
+    );
+    onChangeRef.current(index, { gain: nextGain, frequency: nextFrequency });
   };
 
   const panResponder = useRef(
@@ -291,28 +395,69 @@ export function EqCurveChart({ bands, onChange }: Props) {
           locationX,
           locationY,
           bandsRef.current,
+          frequenciesRef.current,
           chartSizeRef.current
         );
+        // Dismiss Q panel on chart touch; long-press can reopen it.
+        setQEditIndex(null);
+        qEditIndexRef.current = null;
         activeIndexRef.current = index;
         setActiveIndex(index);
         startDbRef.current = bandsRef.current[index];
+        startFreqRef.current = frequenciesRef.current[index];
         grantTimeRef.current = Date.now();
+        longPressFiredRef.current = false;
+        dragStartedRef.current = false;
+        clearLongPressTimer();
+        longPressTimerRef.current = setTimeout(() => {
+          longPressFiredRef.current = true;
+          dragStartedRef.current = false;
+          void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+          setQEditIndex(index);
+          qEditIndexRef.current = index;
+          setActiveIndex(null);
+          activeIndexRef.current = null;
+        }, LONG_PRESS_MS);
       },
       onPanResponderMove: (_event: GestureResponderEvent, gesture: PanResponderGestureState) => {
-        applyDrag(gesture);
+        if (longPressFiredRef.current) {
+          return;
+        }
+        const moved =
+          Math.abs(gesture.dx) > LONG_PRESS_MOVE_THRESHOLD ||
+          Math.abs(gesture.dy) > LONG_PRESS_MOVE_THRESHOLD;
+        if (moved) {
+          clearLongPressTimer();
+          dragStartedRef.current = true;
+          applyDrag(gesture);
+        }
       },
       onPanResponderRelease: (_event: GestureResponderEvent, gesture: PanResponderGestureState) => {
+        clearLongPressTimer();
+        if (longPressFiredRef.current) {
+          longPressFiredRef.current = false;
+          return;
+        }
         const index = activeIndexRef.current;
         const duration = Date.now() - grantTimeRef.current;
         const isTap =
+          !dragStartedRef.current &&
           Math.abs(gesture.dy) < TAP_MOVE_THRESHOLD &&
           Math.abs(gesture.dx) < TAP_MOVE_THRESHOLD &&
           duration < TAP_DURATION_MS;
 
         if (isTap && index != null) {
-          onChangeRef.current(index, 0);
+          onChangeRef.current(index, { gain: 0 });
         }
 
+        activeIndexRef.current = null;
+        setActiveIndex(null);
+        dragStartedRef.current = false;
+      },
+      onPanResponderTerminate: () => {
+        clearLongPressTimer();
+        longPressFiredRef.current = false;
+        dragStartedRef.current = false;
         activeIndexRef.current = null;
         setActiveIndex(null);
       },
@@ -327,8 +472,12 @@ export function EqCurveChart({ bands, onChange }: Props) {
 
   const activeLabel =
     activeIndex != null
-      ? `${formatFrequency(EQ_FREQUENCIES[activeIndex])}  ${formatEqBand(bands[activeIndex])}`
-      : ' ';
+      ? `${formatFrequency(frequencies[activeIndex])}  ${formatEqBand(bands[activeIndex])}`
+      : qEditIndex != null
+        ? `${formatFrequency(frequencies[qEditIndex])}  Q ${formatQ(qFactors[qEditIndex])}`
+        : ' ';
+
+  const qValue = qEditIndex != null ? qFactors[qEditIndex] : EQ_DEFAULT_Q;
 
   return (
     <View style={styles.container}>
@@ -356,30 +505,46 @@ export function EqCurveChart({ bands, onChange }: Props) {
               ]}
             />
           ))}
-          <ChartAreaFill points={points} baselineY={baselineY} areaStripStyle={styles.areaStrip} />
-          {points.map((point, index) => {
-            if (index === points.length - 1) {
-              return null;
-            }
-            const next = points[index + 1];
+          {EQ_FREQUENCIES.map((freq) => {
+            const x = freqToX(freq, chartSize);
             return (
-              <ChartSegmentLine
-                key={`curve-${EQ_FREQUENCIES[index]}`}
-                x1={point.x}
-                y1={point.y}
-                x2={next.x}
-                y2={next.y}
-                color={colors.accent}
-                strokeWidth={CURVE_STROKE}
-                segmentLineStyle={styles.segmentLine}
+              <View
+                key={`vguide-${freq}`}
+                pointerEvents="none"
+                style={[
+                  styles.verticalGuide,
+                  {
+                    left: x,
+                    top: CHART_PADDING_Y,
+                    height: innerHeight,
+                    backgroundColor: colors.waveformInactive,
+                  },
+                ]}
               />
             );
           })}
-          {points.map((point, index) => (
+          {chartSize.width > 1 ? (
+            <Svg
+              pointerEvents="none"
+              style={StyleSheet.absoluteFill}
+              width={chartSize.width}
+              height={chartSize.height}>
+              <Path d={areaPath} fill={colors.accent} fillOpacity={FILL_OPACITY} />
+              <Path
+                d={curvePath}
+                fill="none"
+                stroke={colors.accent}
+                strokeWidth={CURVE_STROKE}
+                strokeLinejoin="round"
+                strokeLinecap="round"
+              />
+            </Svg>
+          ) : null}
+          {handlePoints.map((point, index) => (
             <ChartHandle
-              key={EQ_FREQUENCIES[index]}
+              key={`handle-${index}`}
               point={point}
-              isActive={activeIndex === index}
+              isActive={activeIndex === index || qEditIndex === index}
               handleStyle={styles.handle}
             />
           ))}
@@ -388,12 +553,34 @@ export function EqCurveChart({ bands, onChange }: Props) {
       <View style={styles.freqRow}>
         {EQ_FREQUENCIES.map((freq) => (
           <Text
-            key={freq}
-            style={[styles.freqLabel, { left: freqToX(freq, chartSize) - 12 }]}>
+            key={`freq-${freq}`}
+            style={[styles.freqLabel, { left: freqToX(freq, chartSize) - 14 }]}>
             {formatFrequency(freq)}
           </Text>
         ))}
       </View>
+      {qEditIndex != null ? (
+        <View style={styles.qPanel}>
+          <View style={styles.qSliderRow}>
+            <Text style={styles.qEndLabel}>Wide</Text>
+            <View style={styles.qSliderTrack}>
+              <EditorSlider
+                maximumValue={1}
+                minimumValue={0}
+                value={qToSliderPos(qValue)}
+                onSlidingComplete={(pos) =>
+                  onChange(qEditIndex, { q: sliderPosToQ(pos) })
+                }
+                onValueChange={(pos) =>
+                  onChange(qEditIndex, { q: sliderPosToQ(pos) })
+                }
+              />
+            </View>
+            <Text style={styles.qEndLabel}>Narrow</Text>
+            <Text style={styles.qValue}>{formatQ(qValue)}</Text>
+          </View>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -403,7 +590,7 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
     () =>
       StyleSheet.create({
         container: {
-          gap: 2,
+          gap: 6,
         },
         activeLabel: {
           fontSize: 11,
@@ -412,6 +599,29 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           textAlign: 'center',
           fontVariant: ['tabular-nums'],
           minHeight: 14,
+        },
+        qPanel: {
+          paddingTop: 4,
+        },
+        qSliderRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 6,
+        },
+        qEndLabel: {
+          fontSize: 11,
+          color: colors.secondaryText,
+          width: 40,
+        },
+        qSliderTrack: {
+          flex: 1,
+        },
+        qValue: {
+          width: 28,
+          fontSize: 12,
+          color: colors.secondaryText,
+          textAlign: 'right',
+          fontVariant: ['tabular-nums'],
         },
         chartTouchArea: {
           height: CHART_HEIGHT,
@@ -424,14 +634,10 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
         gridLine: {
           position: 'absolute',
         },
-        areaStrip: {
+        verticalGuide: {
           position: 'absolute',
-          width: 1,
-          backgroundColor: colors.accent,
-          opacity: 0.18,
-        },
-        segmentLine: {
-          position: 'absolute',
+          width: StyleSheet.hairlineWidth,
+          opacity: 0.55,
         },
         handle: {
           position: 'absolute',
@@ -445,7 +651,7 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
         },
         freqLabel: {
           position: 'absolute',
-          width: 24,
+          width: 28,
           fontSize: 10,
           color: colors.secondaryText,
           textAlign: 'center',
