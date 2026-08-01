@@ -16,6 +16,7 @@ import {
   getLayerActiveDuration,
   getLayerActiveStartTime,
   getLayerEffects,
+  getLayerFootprintDuration,
 } from '@/src/storage/types';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
@@ -32,6 +33,7 @@ type MiniTrack = {
   peaks?: number[];
   startTime: number;
   duration: number;
+  cycleDuration: number;
   color: string;
   isMuted: boolean;
   isSoloedOut: boolean;
@@ -52,6 +54,7 @@ function buildMiniTracks(memo: Memo): MiniTrack[] {
     .map((layer) => {
       const effects = getLayerEffects(layer);
       const activeDuration = getLayerActiveDuration(layer);
+      const footprintDuration = getLayerFootprintDuration(layer);
       return {
         id: layer.id,
         peaks: slicePeaksForTrim(
@@ -61,7 +64,8 @@ function buildMiniTracks(memo: Memo): MiniTrack[] {
           effects.trimOut
         ),
         startTime: getLayerActiveStartTime(layer),
-        duration: Math.max(activeDuration, 0.01),
+        duration: Math.max(footprintDuration, 0.01),
+        cycleDuration: Math.max(activeDuration, 0.01),
         color: resolveTrackColor(layer.color),
         isMuted: Boolean(effects.muted),
         isSoloedOut: anySoloActive && !effects.solo,
@@ -111,8 +115,16 @@ export function MiniWaveformTracks({ memo, currentTime, duration }: Props) {
           const trackWidth =
             width > 0 ? Math.max(0, (track.duration / duration) * width) : 0;
           const barCount = Math.max(0, Math.floor(trackWidth / BAR_STEP));
-          const normalized =
-            barCount > 0 ? normalizePeaksForBarCount(track.peaks, barCount) : [];
+          const cycleBarCount = Math.max(
+            1,
+            Math.floor(
+              ((track.cycleDuration / Math.max(track.duration, 0.01)) * trackWidth) / BAR_STEP
+            )
+          );
+          const cyclePeaks =
+            barCount > 0
+              ? normalizePeaksForBarCount(track.peaks, cycleBarCount)
+              : [];
           const maxBarHeight = Math.max(2, laneHeight - 2);
 
           return (
@@ -127,7 +139,8 @@ export function MiniWaveformTracks({ memo, currentTime, duration }: Props) {
               ]}>
               {trackWidth > 0 ? (
                 <View style={[styles.barsRow, { left, width: trackWidth, height: laneHeight }]}>
-                  {normalized.map((peak, index) => {
+                  {Array.from({ length: barCount }, (_, index) => {
+                    const peak = cyclePeaks[index % cycleBarCount] ?? 0;
                     const scaled = peakToAbsoluteScale(peak);
                     const barHeight =
                       scaled <= 0.01

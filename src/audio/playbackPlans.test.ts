@@ -38,3 +38,57 @@ test('filterPlaybackPlansBySilentLayer is a no-op without silentLayerId', () => 
   assert.equal(filterPlaybackPlansBySilentLayer(plans, null).length, 2);
   assert.equal(filterPlaybackPlansBySilentLayer(plans, undefined).length, 2);
 });
+
+test('buildLayerPlaybackPlans emits one plan without loopUntil', () => {
+  const layer = makeLayer('solo', 1, 4);
+  const plans = buildLayerPlaybackPlans([layer], 0, 20);
+  assert.equal(plans.length, 1);
+  assert.equal(plans[0].delay, 1);
+  assert.ok(Math.abs(plans[0].layerPlayLength - 4) < 0.001);
+  assert.equal(plans[0].bufferOffset, 0);
+});
+
+test('buildLayerPlaybackPlans tiles full cycles and a partial last cycle', () => {
+  // 2s cycle, looped until 5.5s → cycles at [0,2), [2,4), [4,5.5)
+  const layer = makeLayer('looped', 0, 2);
+  layer.loopUntil = 5.5;
+  const plans = buildLayerPlaybackPlans([layer], 0, 20);
+  assert.equal(plans.length, 3);
+  assert.deepEqual(
+    plans.map((plan) => [plan.delay, Number(plan.layerPlayLength.toFixed(3)), plan.bufferOffset]),
+    [
+      [0, 2, 0],
+      [2, 2, 0],
+      [4, 1.5, 0],
+    ]
+  );
+});
+
+test('buildLayerPlaybackPlans applies fades only on first and last segments', () => {
+  const layer = makeLayer('faded', 0, 2);
+  layer.loopUntil = 6;
+  layer.effects = {
+    ...createDefaultLayerEffects(2),
+    fadeInSec: 0.2,
+    fadeOutSec: 0.3,
+  };
+  const plans = buildLayerPlaybackPlans([layer], 0, 20);
+  assert.equal(plans.length, 3);
+  assert.equal(plans[0].playbackEffects.fadeInSec, 0.2);
+  assert.equal(plans[0].playbackEffects.fadeOutSec, 0);
+  assert.equal(plans[1].playbackEffects.fadeInSec, 0);
+  assert.equal(plans[1].playbackEffects.fadeOutSec, 0);
+  assert.equal(plans[2].playbackEffects.fadeInSec, 0);
+  assert.equal(plans[2].playbackEffects.fadeOutSec, 0.3);
+});
+
+test('buildLayerPlaybackPlans clips mid-loop play windows', () => {
+  const layer = makeLayer('mid', 0, 2);
+  layer.loopUntil = 6;
+  const plans = buildLayerPlaybackPlans([layer], 1.5, 4.5);
+  assert.equal(plans.length, 3);
+  assert.ok(Math.abs(plans[0].layerPlayLength - 0.5) < 0.001);
+  assert.ok(Math.abs(plans[0].bufferOffset - 1.5) < 0.001);
+  assert.ok(Math.abs(plans[1].layerPlayLength - 2) < 0.001);
+  assert.ok(Math.abs(plans[2].layerPlayLength - 0.5) < 0.001);
+});

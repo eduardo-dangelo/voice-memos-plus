@@ -6,6 +6,7 @@ import {
   NativeScrollEvent,
   NativeSyntheticEvent,
   PanResponder,
+  Pressable,
   StyleSheet,
   Text,
   View,
@@ -19,6 +20,7 @@ import { colorWithAlpha, type VoiceMemosColorScheme } from '@/constants/VoiceMem
 import { fadeEnvelopeGain } from '@/src/audio/fadeCurve';
 import { clampTrimValues, dbToLinear } from '@/src/audio/layerEffects';
 import { snapTimeToGrid } from '@/src/audio/loopSnap';
+import type { MetronomeGridLine } from '@/src/audio/metronome';
 import {
   applyPinchDeltaToPixelsPerSecond,
   applyPinchDeltaToTrackZoom,
@@ -54,15 +56,14 @@ import {
   type MetronomeGridBuffer,
 } from '@/src/components/MetronomeGridOverlay';
 import {
-  getVisibleBarIndexRange,
-  getVisibleMarkerSeconds,
-} from '@/src/components/waveformViewport';
-import {
   TrackFadeOverlay,
   type FadeOverlayConfig,
   type FadeRegionState,
 } from '@/src/components/track-editor/TrackFadeOverlay';
-import type { MetronomeGridLine } from '@/src/audio/metronome';
+import {
+  getVisibleBarIndexRange,
+  getVisibleMarkerSeconds,
+} from '@/src/components/waveformViewport';
 import type { MetronomeSettings } from '@/src/storage/types';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 import { formatMarkerTime } from '@/src/utils/format';
@@ -94,6 +95,9 @@ const TRIM_EXPAND_IDLE_MS = 3000;
 const MOVE_BORDER_WIDTH = 2;
 const MIN_PINCH_SPAN = 10;
 const TRACK_ZOOM_SCROLL_THRESHOLD = 1.01;
+/** Logic-style region header strip above the waveform body. */
+const REGION_HEADER_HEIGHT = 18;
+const TRACK_LOOP_EPSILON = 0.001;
 
 type ZoomGestureStart = {
   spanX: number;
@@ -228,14 +232,20 @@ export type TrackData = {
   id: string;
   peaks?: number[];
   startTime: number;
+  /** Visible footprint duration (includes loops). */
   duration: number;
+  /**
+   * One keep-region cycle length for peak tiling.
+   * Defaults to `duration` when unset (no loop).
+   */
+  cycleDuration?: number;
   isActive: boolean;
   isMuted?: boolean;
   isSoloed?: boolean;
   isSoloedOut?: boolean;
   /** Layer volume in dB; scales waveform bars for every track. */
   volumeDb?: number;
-  /** Fade envelope (active-region seconds); scales waveform bars. */
+  /** Fade envelope (footprint seconds); scales waveform bars. */
   fadeInSec?: number;
   fadeOutSec?: number;
   fadeInCurve?: number;
@@ -249,6 +259,13 @@ export type TrackData = {
     duration: number;
   };
   replaceTailDimFrom?: number;
+};
+
+/** Per-track loop dialog entry from the region header long-press. */
+export type TrackLoopOverlayConfig = {
+  onHeaderLongPress: (layerId: string) => void;
+  /** When false, header long-press is disabled (playing/recording). */
+  editable?: boolean;
 };
 
 type Props = {
@@ -275,8 +292,30 @@ type Props = {
   moveOverlay?: MoveOverlayConfig;
   fadeOverlay?: FadeOverlayConfig;
   loopOverlay?: LoopOverlayConfig;
+  /** Per-track loop dialog from region header (distinct from memo A–B loopOverlay). */
+  trackLoopOverlay?: TrackLoopOverlayConfig;
   metronome?: MetronomeSettings;
 };
+
+function mixHexTowardWhite(hex: string, amount: number, alpha = 1): string {
+  const normalized = hex.replace('#', '');
+  const value =
+    normalized.length === 3
+      ? normalized
+          .split('')
+          .map((char) => char + char)
+          .join('')
+      : normalized;
+  if (value.length !== 6) {
+    return hex;
+  }
+  const t = Math.max(0, Math.min(1, amount));
+  const a = Math.max(0, Math.min(1, alpha));
+  const r = Math.round(parseInt(value.slice(0, 2), 16) + (255 - parseInt(value.slice(0, 2), 16)) * t);
+  const g = Math.round(parseInt(value.slice(2, 4), 16) + (255 - parseInt(value.slice(2, 4), 16)) * t);
+  const b = Math.round(parseInt(value.slice(4, 6), 16) + (255 - parseInt(value.slice(4, 6), 16)) * t);
+  return `rgba(${r}, ${g}, ${b}, ${a})`;
+}
 
 function getMarkerInterval(pixelsPerSecond: number): number {
   if (pixelsPerSecond >= MIN_LABEL_SPACING) {
@@ -865,6 +904,9 @@ function areTrackDataEqual(a: TrackData, b: TrackData): boolean {
   if (a.duration !== b.duration) {
     return false;
   }
+  if ((a.cycleDuration ?? a.duration) !== (b.cycleDuration ?? b.duration)) {
+    return false;
+  }
   if (a.isActive !== b.isActive) {
     return false;
   }
@@ -928,6 +970,7 @@ type TrackWaveformRowProps = {
   trimOverlay?: TrimOverlayConfig;
   moveOverlay?: MoveOverlayConfig;
   fadeOverlay?: FadeOverlayConfig;
+  trackLoopOverlay?: TrackLoopOverlayConfig;
   trimScrollHelpers?: TrimScrollHelpers;
   showBottomDivider?: boolean;
 };
@@ -993,6 +1036,12 @@ function areTrackWaveformRowPropsEqual(
   ) {
     return false;
   }
+  if (
+    prev.trackLoopOverlay?.editable !== next.trackLoopOverlay?.editable ||
+    prev.trackLoopOverlay?.onHeaderLongPress !== next.trackLoopOverlay?.onHeaderLongPress
+  ) {
+    return false;
+  }
   const prevFade = resolveFadeForTrack(prev.fadeOverlay, prev.track.id);
   const nextFade = resolveFadeForTrack(next.fadeOverlay, next.track.id);
   if (
@@ -1028,6 +1077,7 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
   trimOverlay,
   moveOverlay,
   fadeOverlay,
+  trackLoopOverlay,
   trimScrollHelpers,
   showBottomDivider = false,
 }: TrackWaveformRowProps) {
@@ -1048,13 +1098,18 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
     }
   };
 
+  const cycleDuration = Math.max(
+    TRACK_LOOP_EPSILON,
+    track.cycleDuration ?? track.duration
+  );
   const barCount = getTrackBarCount(track.duration, contentWidth, pixelsPerSecond);
+  const cycleBarCount = getTrackBarCount(cycleDuration, contentWidth, pixelsPerSecond);
   const trackOffset = track.startTime * pixelsPerSecond;
   const trackWidth = barCount * BAR_STEP;
 
   const normalizedPeaks = useMemo(
-    () => normalizePeaksForBarCount(track.peaks, barCount),
-    [barCount, track.peaks]
+    () => normalizePeaksForBarCount(track.peaks, Math.max(1, cycleBarCount)),
+    [cycleBarCount, track.peaks]
   );
 
   const visibleBars = useMemo(() => {
@@ -1126,10 +1181,28 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
   const showMoveOverlay = moveOverlay?.layerId === track.id;
   const trackFadeState = resolveFadeForTrack(fadeOverlay, track.id);
   const showFadeOverlay = trackFadeState != null && fadeOverlay != null;
+  const showRegionChrome =
+    track.isActive && !showTrimOverlay && trackWidth > 0;
+  const headerHeight = showRegionChrome ? REGION_HEADER_HEIGHT : 0;
+  const bodyHeight = Math.max(0, trackHeight - headerHeight);
+  const bodyTop = headerHeight;
+  const headerLongPressEnabled =
+    Boolean(trackLoopOverlay) &&
+    trackLoopOverlay?.editable !== false &&
+    !showTrimOverlay &&
+    !showMoveOverlay;
   const barColor = getTrackBarColor(track, colors);
   const mutedBarColor = colors.waveformBar;
+  const loopedBarColor =
+    track.isMuted || track.isSoloedOut
+      ? mutedBarColor
+      : mixHexTowardWhite(track.color ?? colors.accent, 0.45);
   const bandBackground = getTrackBandBackground(track, colors);
   const trackColor = track.color ?? colors.accent;
+  // Lighter, slightly translucent track color — stronger than the body tint.
+  const headerColor = mixHexTowardWhite(trackColor, 0.35, 0.52);
+  // Keep selected region fill in the same ballpark as the pre-header selection tint.
+  const regionBodyColor = colorWithAlpha(trackColor, 0.08);
   const hasTrackBars = trackWidth > 0;
   const hasLiveBars = liveTrackWidth > 0;
   const fullSelectionStart =
@@ -1183,38 +1256,133 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
       />
       <View
         pointerEvents="none"
-        style={[styles.centerLine, { left: sidePadding, width: contentWidth }]}
+        style={[
+          styles.centerLine,
+          {
+            left: sidePadding,
+            width: contentWidth,
+            top: bodyTop + bodyHeight / 2,
+            marginTop: -0.5,
+          },
+        ]}
       />
-      {track.showLabel && track.label ? (
-        <Text
-          numberOfLines={1}
+      {showRegionChrome ? (
+        <View
           pointerEvents="none"
           style={[
-            styles.trackLabel,
+            styles.regionBodyFill,
             {
-              left: sidePadding + 4,
-              maxWidth: Math.max(0, bandWidth - sidePadding - 8),
+              left: sidePadding + trackOffset,
+              top: bodyTop,
+              width: trackWidth,
+              height: bodyHeight,
+              backgroundColor: regionBodyColor,
             },
-          ]}>
-          {track.label}
-        </Text>
+          ]}
+        />
       ) : null}
-      {track.isMuted ? (
-        <View
-          pointerEvents="none"
-          style={[styles.mutedBadge, { left: sidePadding + 6 }]}>
-          <Text style={styles.mutedBadgeText}>M</Text>
-        </View>
-      ) : null}
-      {track.isSoloed ? (
-        <View
-          pointerEvents="none"
+      {showRegionChrome ? (
+        <Pressable
+          delayLongPress={LONG_PRESS_DELAY_MS}
+          disabled={!headerLongPressEnabled}
           style={[
-            styles.soloBadge,
-            { left: track.isMuted ? sidePadding + 28 : sidePadding + 6 },
-          ]}>
-          <Text style={styles.soloBadgeText}>S</Text>
-        </View>
+            styles.regionHeader,
+            {
+              left: sidePadding + trackOffset,
+              width: trackWidth,
+              height: headerHeight,
+              backgroundColor: headerColor,
+            },
+          ]}
+          onLongPress={() => {
+            if (!headerLongPressEnabled || !trackLoopOverlay) {
+              return;
+            }
+            clearLongPressTimer();
+            longPressTriggeredRef.current = true;
+            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+            trackLoopOverlay.onHeaderLongPress(track.id);
+          }}>
+          {track.showLabel && track.label ? (
+            <Text
+              numberOfLines={1}
+              pointerEvents="none"
+              style={[
+                styles.regionHeaderLabel,
+                {
+                  maxWidth: Math.max(
+                    0,
+                    trackWidth - (track.isMuted || track.isSoloed ? 44 : 10)
+                  ),
+                },
+              ]}>
+              {track.label}
+            </Text>
+          ) : null}
+          {track.isMuted ? (
+            <View pointerEvents="none" style={[styles.regionHeaderBadge, styles.mutedBadge]}>
+              <Text style={styles.mutedBadgeText}>M</Text>
+            </View>
+          ) : null}
+          {track.isSoloed ? (
+            <View pointerEvents="none" style={[styles.regionHeaderBadge, styles.soloBadge]}>
+              <Text style={styles.soloBadgeText}>S</Text>
+            </View>
+          ) : null}
+        </Pressable>
+      ) : trackWidth > 0 ? (
+        <>
+          {track.isMuted ? (
+            <View
+              pointerEvents="none"
+              style={[
+                styles.floatingBadge,
+                styles.mutedBadge,
+                { left: sidePadding + trackOffset + 4 },
+              ]}>
+              <Text style={styles.mutedBadgeText}>M</Text>
+            </View>
+          ) : null}
+          {track.isSoloed ? (
+            <View
+              pointerEvents="none"
+              style={[
+                styles.floatingBadge,
+                styles.soloBadge,
+                {
+                  left:
+                    sidePadding + trackOffset + (track.isMuted ? 26 : 4),
+                },
+              ]}>
+              <Text style={styles.soloBadgeText}>S</Text>
+            </View>
+          ) : null}
+          {track.showLabel && track.label ? (
+            <Text
+              numberOfLines={1}
+              pointerEvents="none"
+              style={[
+                styles.floatingTrackLabel,
+                {
+                  left:
+                    sidePadding +
+                    trackOffset +
+                    4 +
+                    (track.isMuted ? 22 : 0) +
+                    (track.isSoloed ? 22 : 0),
+                  maxWidth: Math.max(
+                    0,
+                    trackWidth -
+                      8 -
+                      (track.isMuted ? 22 : 0) -
+                      (track.isSoloed ? 22 : 0)
+                  ),
+                },
+              ]}>
+              {track.label}
+            </Text>
+          ) : null}
+        </>
       ) : null}
       {trackWidth > 0 || liveTrackWidth > 0 || replaceTailDimWidth > 0 ? (
         <View pointerEvents="none" style={styles.barsOverlay}>
@@ -1225,8 +1393,8 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
                 {
                   position: 'absolute',
                   left: sidePadding + trackOffset,
-                  top: 0,
-                  height: trackHeight,
+                  top: bodyTop,
+                  height: bodyHeight,
                   width: trackWidth,
                 },
               ]}>
@@ -1234,7 +1402,9 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
                 { length: Math.max(0, visibleBars.endIndex - visibleBars.startIndex) },
                 (_, offset) => {
                   const index = visibleBars.startIndex + offset;
-                  const peak = normalizedPeaks[index] ?? 0;
+                  const peakIndex =
+                    cycleBarCount > 0 ? index % cycleBarCount : index;
+                  const peak = normalizedPeaks[peakIndex] ?? 0;
                   const barTime = (index * BAR_STEP) / pixelsPerSecond;
                   const inKeepRegion =
                     !showTrimOverlay ||
@@ -1270,10 +1440,17 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
                     }
                   }
                   const scaled = peakToAbsoluteScale(peak) * volumeScale * fadeScale;
+                  const maxBar = Math.max(4, bodyHeight - 8);
                   const barHeight =
                     scaled <= 0.01
                       ? 2
-                      : Math.max(4, Math.min(trackHeight - 16, scaled * (trackHeight - 16)));
+                      : Math.max(4, Math.min(maxBar, scaled * maxBar));
+                  const isLoopedCycle = barTime >= cycleDuration - TRACK_LOOP_EPSILON;
+                  const fillColor = !inKeepRegion
+                    ? mutedBarColor
+                    : isLoopedCycle
+                      ? loopedBarColor
+                      : barColor;
                   return (
                     <View
                       key={index}
@@ -1281,15 +1458,46 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
                         styles.bar,
                         {
                           left: index * BAR_STEP,
-                          top: (trackHeight - barHeight) / 2,
+                          top: (bodyHeight - barHeight) / 2,
                           height: barHeight,
-                          backgroundColor: inKeepRegion ? barColor : mutedBarColor,
+                          backgroundColor: fillColor,
                         },
                       ]}
                     />
                   );
                 }
               )}
+              {/* Cycle seams for looped footprints */}
+              {cycleDuration + TRACK_LOOP_EPSILON < track.duration
+                ? Array.from(
+                    {
+                      length: Math.max(
+                        0,
+                        Math.floor(track.duration / cycleDuration) - 1
+                      ),
+                    },
+                    (_, seamIndex) => {
+                      const seamTime = (seamIndex + 1) * cycleDuration;
+                      const seamX = seamTime * pixelsPerSecond;
+                      if (seamX <= 0 || seamX >= trackWidth) {
+                        return null;
+                      }
+                      return (
+                        <View
+                          key={`seam-${seamIndex}`}
+                          style={[
+                            styles.loopSeam,
+                            {
+                              left: seamX,
+                              height: bodyHeight,
+                              backgroundColor: colorWithAlpha('#000000', 0.18),
+                            },
+                          ]}
+                        />
+                      );
+                    }
+                  )
+                : null}
             </View>
           ) : null}
           {replaceTailDimWidth > 0 ? (
@@ -1298,8 +1506,9 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
                 styles.replaceTailDim,
                 {
                   left: replaceTailDimLeft,
+                  top: bodyTop,
                   width: replaceTailDimWidth,
-                  height: trackHeight,
+                  height: bodyHeight,
                 },
               ]}
             />
@@ -1311,8 +1520,8 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
                 {
                   position: 'absolute',
                   left: sidePadding + liveTrackOffset,
-                  top: 0,
-                  height: trackHeight,
+                  top: bodyTop,
+                  height: bodyHeight,
                   width: liveTrackWidth,
                 },
               ]}>
@@ -1322,10 +1531,11 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
                   const index = visibleLiveBars.startIndex + offset;
                   const peak = normalizedLivePeaks[index] ?? 0;
                   const scaled = peakToAbsoluteScale(peak);
+                  const maxBar = Math.max(4, bodyHeight - 8);
                   const barHeight =
                     scaled <= 0.01
                       ? 2
-                      : Math.max(4, Math.min(trackHeight - 16, scaled * (trackHeight - 16)));
+                      : Math.max(4, Math.min(maxBar, scaled * maxBar));
                   return (
                     <View
                       key={`live-${index}`}
@@ -1333,7 +1543,7 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
                         styles.bar,
                         {
                           left: index * BAR_STEP,
-                          top: (trackHeight - barHeight) / 2,
+                          top: (bodyHeight - barHeight) / 2,
                           height: barHeight,
                           backgroundColor: colors.recordRed,
                         },
@@ -1377,6 +1587,8 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
       ) : null}
       {showFadeOverlay && trackFadeState && fadeOverlay && trimScrollHelpers ? (
         <TrackFadeOverlay
+          bodyHeight={bodyHeight}
+          bodyTop={bodyTop}
           crossfade={fadeOverlay.crossfade}
           editable={fadeOverlay.layerId === track.id}
           fades={trackFadeState}
@@ -1405,7 +1617,10 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
             borderWidth: 2,
             borderColor: trackColor,
             borderRadius: 3,
-            backgroundColor: colorWithAlpha(trackColor, 0.08),
+            // Body tint already covers the region when chrome is shown — avoid stacking.
+            backgroundColor: showRegionChrome
+              ? 'transparent'
+              : colorWithAlpha(trackColor, 0.08),
             overflow: 'hidden',
           }}
         />
@@ -1479,6 +1694,7 @@ function WaveformViewComponent({
   moveOverlay,
   fadeOverlay,
   loopOverlay,
+  trackLoopOverlay,
   metronome,
 }: Props) {
   const colors = useVoiceMemosColors();
@@ -2417,6 +2633,7 @@ function WaveformViewComponent({
                     visibleTimeStart={barPaintTimeRange.start}
                     fadeOverlay={fadeOverlay}
                     moveOverlay={moveOverlay}
+                    trackLoopOverlay={trackLoopOverlay}
                     trimOverlay={trimOverlay}
                     trimScrollHelpers={trimScrollHelpers}
                     onLongPress={
@@ -2593,6 +2810,20 @@ function areWaveformViewPropsEqual(prev: Props, next: Props): boolean {
     }
   }
 
+  const prevTrackLoop = prev.trackLoopOverlay;
+  const nextTrackLoop = next.trackLoopOverlay;
+  if (prevTrackLoop !== nextTrackLoop) {
+    if (!prevTrackLoop || !nextTrackLoop) {
+      return false;
+    }
+    if (
+      prevTrackLoop.onHeaderLongPress !== nextTrackLoop.onHeaderLongPress ||
+      prevTrackLoop.editable !== nextTrackLoop.editable
+    ) {
+      return false;
+    }
+  }
+
   // While playing, ignore currentTime — RAF + getPlaybackTime own scroll.
   return true;
 }
@@ -2632,48 +2863,75 @@ function createWaveformStyles(colors: VoiceMemosColorScheme) {
     position: 'absolute',
     top: 0,
   },
-  trackLabel: {
+  regionHeader: {
+    position: 'absolute',
+    top: 0,
+    zIndex: 5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 6,
+    overflow: 'hidden',
+    borderTopLeftRadius: 3,
+    borderTopRightRadius: 3,
+  },
+  regionHeaderLabel: {
+    flexShrink: 1,
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  floatingTrackLabel: {
     position: 'absolute',
     top: 4,
     fontSize: 11,
     color: colors.secondaryText,
     zIndex: 5,
   },
-  mutedBadge: {
+  floatingBadge: {
     position: 'absolute',
-    top: 6,
+    top: 4,
+  },
+  regionHeaderBadge: {
+    marginLeft: 4,
+    position: 'relative',
+    top: 0,
+  },
+  regionBodyFill: {
+    position: 'absolute',
+    borderBottomLeftRadius: 3,
+    borderBottomRightRadius: 3,
+  },
+  mutedBadge: {
     zIndex: 6,
     minWidth: 18,
-    height: 18,
-    borderRadius: 4,
+    height: 16,
+    borderRadius: 3,
     paddingHorizontal: 4,
     backgroundColor: colors.secondaryText,
     alignItems: 'center',
     justifyContent: 'center',
   },
   mutedBadgeText: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '700',
     color: colors.background,
-    lineHeight: 13,
+    lineHeight: 12,
   },
   soloBadge: {
-    position: 'absolute',
-    top: 6,
     zIndex: 6,
     minWidth: 18,
-    height: 18,
-    borderRadius: 4,
+    height: 16,
+    borderRadius: 3,
     paddingHorizontal: 4,
     backgroundColor: colors.soloBadge,
     alignItems: 'center',
     justifyContent: 'center',
   },
   soloBadgeText: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '700',
     color: colors.soloBadgeText,
-    lineHeight: 13,
+    lineHeight: 12,
   },
   dimRegion: {
     position: 'absolute',
@@ -2681,7 +2939,6 @@ function createWaveformStyles(colors: VoiceMemosColorScheme) {
   },
   replaceTailDim: {
     position: 'absolute',
-    top: 0,
     backgroundColor: colorWithAlpha(colors.waveformDimBackground, 0.85),
   },
   barsOverlay: {
@@ -2689,13 +2946,16 @@ function createWaveformStyles(colors: VoiceMemosColorScheme) {
   },
   centerLine: {
     position: 'absolute',
-    top: '50%',
     height: 1,
-    marginTop: -0.5,
     backgroundColor: colors.waveformCenterLine,
   },
   barsRow: {
     height: '100%',
+  },
+  loopSeam: {
+    position: 'absolute',
+    top: 0,
+    width: StyleSheet.hairlineWidth,
   },
   bar: {
     position: 'absolute',

@@ -128,6 +128,8 @@ export type LoadedLayer = {
   path: string;
   startTime: number;
   duration: number;
+  /** Absolute timeline end of looped footprint; see Layer.loopUntil. */
+  loopUntil?: number;
   effects: LayerEffects;
 };
 
@@ -2206,7 +2208,29 @@ export class MemoAudioEngine {
     if (!layer) {
       return;
     }
+    const delta = startTime - layer.startTime;
     layer.startTime = startTime;
+    if (layer.loopUntil != null && Number.isFinite(layer.loopUntil) && delta !== 0) {
+      layer.loopUntil = layer.loopUntil + delta;
+    }
+  }
+
+  updateLayerLoopUntil(layerId: string, loopUntil: number | undefined): void {
+    const layer = this.loadedLayers.find((entry) => entry.id === layerId);
+    if (!layer) {
+      return;
+    }
+    if (loopUntil == null || !Number.isFinite(loopUntil)) {
+      delete layer.loopUntil;
+      return;
+    }
+    const effects = this.getLoadedLayerEffects(layer);
+    const contentEnd = layer.startTime + effects.trimOut;
+    if (loopUntil <= contentEnd + 0.001) {
+      delete layer.loopUntil;
+      return;
+    }
+    layer.loopUntil = loopUntil;
   }
 
   updateLayerStartTimes(updates: Record<string, number>): void {

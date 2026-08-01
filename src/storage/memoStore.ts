@@ -49,6 +49,7 @@ import {
   getMemoMetronomeSettings,
   getMemoTimelineDuration,
   getPlayableLayers,
+  normalizeLayerLoopUntil,
   normalizeLayers,
   normalizeLoopRegion,
   normalizeMetronomeSettings,
@@ -464,10 +465,43 @@ export async function updateLayerStartTimes(
   for (const entry of memo.layers) {
     const nextStartTime = updates[entry.id];
     if (nextStartTime !== undefined) {
+      const delta = nextStartTime - entry.startTime;
       entry.startTime = nextStartTime;
+      if (entry.loopUntil != null && Number.isFinite(entry.loopUntil) && delta !== 0) {
+        entry.loopUntil = entry.loopUntil + delta;
+      }
     }
   }
 
+  normalizeLayers(memo);
+  updateMemoTimeline(memo);
+  memo.updatedAt = new Date().toISOString();
+  writeManifest(memo);
+  return memo;
+}
+
+/** Persist per-track loop footprint end. Pass null/undefined to clear looping. */
+export async function updateLayerLoopUntil(
+  memoId: string,
+  layerId: string,
+  loopUntil: number | null | undefined
+): Promise<Memo> {
+  const memo = await getMemo(memoId);
+  if (!memo) {
+    throw new Error('Memo not found');
+  }
+
+  const layer = memo.layers.find((entry) => entry.id === layerId);
+  if (!layer) {
+    throw new Error('Layer not found');
+  }
+
+  if (loopUntil == null || !Number.isFinite(loopUntil)) {
+    delete layer.loopUntil;
+  } else {
+    layer.loopUntil = loopUntil;
+  }
+  normalizeLayerLoopUntil(layer);
   updateMemoTimeline(memo);
   memo.updatedAt = new Date().toISOString();
   writeManifest(memo);

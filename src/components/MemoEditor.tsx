@@ -62,6 +62,7 @@ import { MetronomeButton } from '@/src/components/MetronomeButton';
 import { MetronomeSettingsSheet } from '@/src/components/MetronomeSettingsSheet';
 import { NamePromptDialog } from '@/src/components/NamePromptDialog';
 import { PlaybackControls } from '@/src/components/PlaybackControls';
+import { TrackLoopDialog } from '@/src/components/TrackLoopDialog';
 import { PrecountButton } from '@/src/components/PrecountButton';
 import { PrecountOverlay } from '@/src/components/PrecountOverlay';
 import { TrackEditorShell } from '@/src/components/track-editor/TrackEditorShell';
@@ -95,6 +96,7 @@ import {
   updateLayerColor,
   updateLayerEffects,
   updateLayerLabel,
+  updateLayerLoopUntil,
   updateLayerStartTimes,
   updateLoopRegion,
   updateMetronomeSettings,
@@ -109,7 +111,9 @@ import {
   getEarliestTrimInTimelineDelta,
   getLayerActiveDuration,
   getLayerActiveStartTime,
+  getLayerContentEndTime,
   getLayerEffects,
+  getLayerFootprintDuration,
   getMemoMetronomeSettings,
   getMemoPrecountMode,
   getMemoTimelineDuration,
@@ -117,6 +121,7 @@ import {
   hasRecording,
   nextMetronomeMode,
   nextPrecountMode,
+  normalizeLayerLoopUntil,
   normalizeMetronomeSettings,
 } from '@/src/storage/types';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
@@ -414,6 +419,12 @@ export function MemoEditor({
   const persistEffectsTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const persistStartTimeTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const persistLoopTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const persistTrackLoopTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingTrackLoopPersist = useRef<{
+    memoId: string;
+    layerId: string;
+    loopUntil: number | null;
+  } | null>(null);
   const persistMetronomeTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingMetronomePersist = useRef<{
     memoId: string;
@@ -454,6 +465,7 @@ export function MemoEditor({
   const [metronomeSettingsVisible, setMetronomeSettingsVisible] = useState(false);
   const [headphonesConnected, setHeadphonesConnected] = useState(false);
   const [loopSettingsVisible, setLoopSettingsVisible] = useState(false);
+  const [loopDialogLayerId, setLoopDialogLayerId] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
   const [layoutReady, setLayoutReady] = useState(false);
   const [precountVisible, setPrecountVisible] = useState(false);
@@ -526,19 +538,42 @@ export function MemoEditor({
 
       const nextEffects = mergeLayerEffects(getLayerEffects(layer), partial, layer.duration);
       const trimInChanged = partial.trimIn !== undefined;
+      const trimChanged =
+        partial.trimIn !== undefined || partial.trimOut !== undefined;
       const timelineDelta = trimInChanged
         ? getEarliestTrimInTimelineDelta(layer, prev.layers, nextEffects.trimIn)
         : 0;
       const shiftedLayers = applyTimelineDeltaToLayers(prev.layers, timelineDelta);
-      const nextLayers = shiftedLayers.map((entry) =>
-        entry.id === layerId ? { ...entry, effects: nextEffects } : entry
-      );
+      const nextLayers = shiftedLayers.map((entry) => {
+        if (entry.id !== layerId) {
+          return entry;
+        }
+        const updated = { ...entry, effects: nextEffects };
+        if (trimChanged) {
+          normalizeLayerLoopUntil(updated);
+        }
+        return updated;
+      });
       const layerStartTimes =
         timelineDelta !== 0
           ? Object.fromEntries(nextLayers.map((entry) => [entry.id, entry.startTime]))
           : undefined;
       const memoId = prev.id;
-      const nextMemo = { ...prev, layers: nextLayers };
+      const nextTimeline = getMemoTimelineDuration({ ...prev, layers: nextLayers });
+      let trimEnd = prev.trimEnd;
+      if (nextTimeline <= 0) {
+        trimEnd = 0;
+      } else if (trimEnd === 0) {
+        trimEnd = nextTimeline;
+      } else if (trimEnd > nextTimeline) {
+        trimEnd = nextTimeline;
+      }
+      const nextMemo = {
+        ...prev,
+        layers: nextLayers,
+        duration: nextTimeline,
+        trimEnd,
+      };
 
       memoRef.current = nextMemo;
       setMemo(nextMemo);
@@ -551,6 +586,13 @@ export function MemoEditor({
       engine.updateLayerEffects(layerId, partial);
       if (layerStartTimes) {
         engine.updateLayerStartTimes(layerStartTimes);
+      }
+      if (trimChanged || nextTimeline !== prev.duration) {
+        const updatedLayer = nextLayers.find((entry) => entry.id === layerId);
+        if (trimChanged) {
+          engine.updateLayerLoopUntil(layerId, updatedLayer?.loopUntil);
+        }
+        engine.updateTimelineDuration(nextTimeline);
       }
 
       if (isDraftTrimUpdate) {
@@ -617,6 +659,19 @@ export function MemoEditor({
     }
     pendingStartTimePersist.current = null;
     void updateLayerStartTimes(pending.memoId, { [pending.layerId]: pending.startTime });
+  }, []);
+
+  const flushTrackLoopPersist = useCallback(() => {
+    if (persistTrackLoopTimeout.current) {
+      clearTimeout(persistTrackLoopTimeout.current);
+      persistTrackLoopTimeout.current = null;
+    }
+    const pending = pendingTrackLoopPersist.current;
+    if (!pending) {
+      return;
+    }
+    pendingTrackLoopPersist.current = null;
+    void updateLayerLoopUntil(pending.memoId, pending.layerId, pending.loopUntil);
   }, []);
 
   const clearDraftPersistTimers = useCallback(() => {
@@ -736,6 +791,7 @@ export function MemoEditor({
             activeLayerId,
             layerEffectsPersistPayload(effects)
           );
+          await updateLayerLoopUntil(current.id, activeLayerId, layer.loopUntil ?? null);
         }
       }
 
@@ -1040,9 +1096,17 @@ export function MemoEditor({
 
         const trimIn = getLayerEffects(layer).trimIn;
         const clampedStartTime = clampLayerStartTime(startTime, trimIn);
-        const nextLayers = prev.layers.map((entry) =>
-          entry.id === activeLayerId ? { ...entry, startTime: clampedStartTime } : entry
-        );
+        const startDelta = clampedStartTime - layer.startTime;
+        const nextLayers = prev.layers.map((entry) => {
+          if (entry.id !== activeLayerId) {
+            return entry;
+          }
+          const next: Layer = { ...entry, startTime: clampedStartTime };
+          if (entry.loopUntil != null && Number.isFinite(entry.loopUntil) && startDelta !== 0) {
+            next.loopUntil = entry.loopUntil + startDelta;
+          }
+          return next;
+        });
         const previousDuration = prev.duration;
         const nextTimeline = getMemoTimelineDuration({ ...prev, layers: nextLayers });
         let trimEnd = prev.trimEnd;
@@ -1122,6 +1186,80 @@ export function MemoEditor({
       }, 300);
     },
     [engine, memo]
+  );
+
+  const handleTrackLoopChange = useCallback(
+    (layerId: string, loopUntil: number | null) => {
+      const prev = memoRef.current;
+      if (!prev) {
+        return;
+      }
+      const layer = prev.layers.find((entry) => entry.id === layerId);
+      if (!layer) {
+        return;
+      }
+
+      const contentEnd = getLayerContentEndTime(layer);
+      const nextLoopUntil =
+        loopUntil != null && loopUntil > contentEnd + 0.001 ? loopUntil : undefined;
+      const nextLayers = prev.layers.map((entry) => {
+        if (entry.id !== layerId) {
+          return entry;
+        }
+        const next: Layer = { ...entry };
+        if (nextLoopUntil == null) {
+          delete next.loopUntil;
+        } else {
+          next.loopUntil = nextLoopUntil;
+        }
+        return next;
+      });
+      const previousDuration = prev.duration;
+      const nextTimeline = getMemoTimelineDuration({ ...prev, layers: nextLayers });
+      let trimEnd = prev.trimEnd;
+      if (nextTimeline <= 0) {
+        trimEnd = 0;
+      } else if (trimEnd === 0) {
+        trimEnd = nextTimeline;
+      } else if (trimEnd > nextTimeline) {
+        trimEnd = nextTimeline;
+      } else {
+        const trimWasAtPreviousEnd = prev.trimEnd >= previousDuration - 0.05;
+        if (nextTimeline > previousDuration && trimWasAtPreviousEnd) {
+          trimEnd = nextTimeline;
+        }
+      }
+      const nextMemo = {
+        ...prev,
+        layers: nextLayers,
+        duration: nextTimeline,
+        trimEnd,
+      };
+      memoRef.current = nextMemo;
+      setMemo(nextMemo);
+
+      engine.updateLayerLoopUntil(layerId, nextLoopUntil);
+      engine.updateTimelineDuration(nextTimeline);
+
+      pendingTrackLoopPersist.current = {
+        memoId: prev.id,
+        layerId,
+        loopUntil: nextLoopUntil ?? null,
+      };
+      if (persistTrackLoopTimeout.current) {
+        clearTimeout(persistTrackLoopTimeout.current);
+      }
+      persistTrackLoopTimeout.current = setTimeout(() => {
+        const pending = pendingTrackLoopPersist.current;
+        pendingTrackLoopPersist.current = null;
+        persistTrackLoopTimeout.current = null;
+        if (!pending) {
+          return;
+        }
+        void updateLayerLoopUntil(pending.memoId, pending.layerId, pending.loopUntil);
+      }, 300);
+    },
+    [engine]
   );
 
   const handleLoopSettingsChange = useCallback(
@@ -1518,6 +1656,7 @@ export function MemoEditor({
         { id: 'export', title: 'Export', systemImage: 'square.and.arrow.up' },
         { id: 'rename', title: 'Rename Track', systemImage: 'pencil' },
         { id: 'changeColor', title: 'Change Color', systemImage: 'paintpalette' },
+        { id: 'loop', title: 'Loop Track', systemImage: 'repeat' },
         {
           id: 'mute',
           title: effects.muted ? 'Unmute' : 'Mute',
@@ -1644,6 +1783,13 @@ export function MemoEditor({
           selectLayerIfNeeded();
           setColorPickerLayerId(layerId);
           break;
+        case 'loop':
+          if (engineState.isPlaying || engineState.isRecording) {
+            break;
+          }
+          selectLayerIfNeeded();
+          setLoopDialogLayerId(layerId);
+          break;
         case 'mute':
           applyLayerEffectsChange(layerId, { muted: !effects.muted });
           break;
@@ -1673,7 +1819,14 @@ export function MemoEditor({
           break;
       }
     },
-    [activeLayerId, applyLayerEffectsChange, handleDeleteTrack, memo]
+    [
+      activeLayerId,
+      applyLayerEffectsChange,
+      engineState.isPlaying,
+      engineState.isRecording,
+      handleDeleteTrack,
+      memo,
+    ]
   );
 
   const dismissTrackMenu = useCallback(() => {
@@ -2218,13 +2371,21 @@ export function MemoEditor({
         clearTimeout(persistLoopTimeout.current);
         persistLoopTimeout.current = null;
       }
+      flushTrackLoopPersist();
       flushMetronomePersist();
       const current = memoRef.current;
       if (current) {
         deactivateLoopForMemo(engine, current, setMemo);
       }
     };
-  }, [clearEditDraftIdleTimer, engine, flushMetronomePersist, loadMemo, resetLayoutReady]);
+  }, [
+    clearEditDraftIdleTimer,
+    engine,
+    flushMetronomePersist,
+    flushTrackLoopPersist,
+    loadMemo,
+    resetLayoutReady,
+  ]);
 
   const handleDone = useCallback(async () => {
     if (!memo) {
@@ -2238,6 +2399,7 @@ export function MemoEditor({
     await cancelEditDraft();
     flushEffectsPersist();
     flushStartTimePersist();
+    flushTrackLoopPersist();
     flushMetronomePersist();
     if (persistLoopTimeout.current) {
       clearTimeout(persistLoopTimeout.current);
@@ -2258,6 +2420,7 @@ export function MemoEditor({
     flushEffectsPersist,
     flushMetronomePersist,
     flushStartTimePersist,
+    flushTrackLoopPersist,
     memo,
     onDismiss,
     stopAndSaveActiveRecording,
@@ -2929,6 +3092,7 @@ export function MemoEditor({
         if (isMoveEditing) {
           const effects = getLayerEffects(layer);
           const activeDuration = getLayerActiveDuration(layer);
+          const footprintDuration = getLayerFootprintDuration(layer);
           const selectable = isLayerSelectable(effects, anySoloActive);
 
           return {
@@ -2940,7 +3104,8 @@ export function MemoEditor({
               effects.trimOut
             ),
             startTime: getLayerActiveStartTime(layer),
-            duration: Math.max(activeDuration, 0.01),
+            duration: Math.max(footprintDuration, 0.01),
+            cycleDuration: Math.max(activeDuration, 0.01),
             isActive: layer.id === activeLayerId && selectable,
             isMuted: effects.muted,
             isSoloed: effects.solo,
@@ -2953,6 +3118,7 @@ export function MemoEditor({
 
         const effects = getLayerEffects(layer);
         const activeDuration = getLayerActiveDuration(layer);
+        const footprintDuration = getLayerFootprintDuration(layer);
         const selectable = isLayerSelectable(effects, anySoloActive);
         return {
           id: layer.id,
@@ -2963,7 +3129,8 @@ export function MemoEditor({
             effects.trimOut
           ),
           startTime: getLayerActiveStartTime(layer),
-          duration: Math.max(activeDuration, 0.01),
+          duration: Math.max(footprintDuration, 0.01),
+          cycleDuration: Math.max(activeDuration, 0.01),
           isActive: layer.id === activeLayerId && selectable,
           isMuted: effects.muted,
           isSoloed: effects.solo,
@@ -3287,6 +3454,73 @@ export function MemoEditor({
     waveformDuration,
   ]);
 
+  const handleRegionHeaderLongPress = useCallback(
+    (layerId: string) => {
+      if (engineState.isPlaying || isRecording) {
+        return;
+      }
+      setLoopDialogLayerId(layerId);
+    },
+    [engineState.isPlaying, isRecording]
+  );
+
+  const trackLoopOverlay = useMemo(() => {
+    if (!memo || waveformDuration <= 0) {
+      return undefined;
+    }
+    return {
+      onHeaderLongPress: handleRegionHeaderLongPress,
+      editable: !engineState.isPlaying && !isRecording && activeEditor == null,
+    };
+  }, [
+    activeEditor,
+    engineState.isPlaying,
+    handleRegionHeaderLongPress,
+    isRecording,
+    memo,
+    waveformDuration,
+  ]);
+
+  const loopDialogLayer = useMemo(() => {
+    if (!memo || !loopDialogLayerId) {
+      return null;
+    }
+    return memo.layers.find((entry) => entry.id === loopDialogLayerId) ?? null;
+  }, [loopDialogLayerId, memo]);
+
+  const loopDialogInitialCount = useMemo(() => {
+    if (!loopDialogLayer) {
+      return 1;
+    }
+    const cycle = getLayerActiveDuration(loopDialogLayer);
+    if (cycle <= 0) {
+      return 1;
+    }
+    const footprint = getLayerFootprintDuration(loopDialogLayer);
+    return Math.max(1, Math.min(64, Math.round(footprint / cycle)));
+  }, [loopDialogLayer]);
+
+  const handleTrackLoopDialogChange = useCallback(
+    (count: number) => {
+      const layerId = loopDialogLayerId;
+      if (!layerId) {
+        return;
+      }
+      const layer = memoRef.current?.layers.find((entry) => entry.id === layerId);
+      if (!layer) {
+        return;
+      }
+      const cycle = getLayerActiveDuration(layer);
+      if (cycle <= 0 || count <= 1) {
+        handleTrackLoopChange(layerId, null);
+        return;
+      }
+      const loopUntil = getLayerActiveStartTime(layer) + count * cycle;
+      handleTrackLoopChange(layerId, loopUntil);
+    },
+    [handleTrackLoopChange, loopDialogLayerId]
+  );
+
   const loopSettingsValues = useMemo(() => {
     if (!memo) {
       return null;
@@ -3320,6 +3554,7 @@ export function MemoEditor({
               moveOverlay={moveOverlay}
               fadeOverlay={fadeOverlay}
               loopOverlay={loopOverlay}
+              trackLoopOverlay={trackLoopOverlay}
               metronome={metronomeSettings}
               onSeek={handleWaveformSeek}
               onPlaybackScrubStart={handlePlaybackScrubStart}
@@ -3421,6 +3656,13 @@ export function MemoEditor({
           onClose={() => setLoopSettingsVisible(false)}
         />
       ) : null}
+      <TrackLoopDialog
+        initialCount={loopDialogInitialCount}
+        trackLabel={loopDialogLayer?.label}
+        visible={loopDialogLayerId != null}
+        onCancel={() => setLoopDialogLayerId(null)}
+        onChange={handleTrackLoopDialogChange}
+      />
       <PrecountOverlay
         count={precountNumber}
         preparing={precountPreparing}

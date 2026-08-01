@@ -62,6 +62,8 @@ type TrackLike = {
   id: string;
   startTime: number;
   duration: number;
+  /** One keep-region cycle; fades clamp to this when looping. */
+  cycleDuration?: number;
   color?: string;
 };
 
@@ -69,6 +71,10 @@ type Props = {
   track: TrackLike;
   sidePadding: number;
   trackHeight: number;
+  /** Top inset for the waveform body (region header height). */
+  bodyTop?: number;
+  /** Height of the waveform body; defaults to trackHeight - bodyTop. */
+  bodyHeight?: number;
   pixelsPerSecond: number;
   layoutDuration: number;
   fades: FadeRegionState;
@@ -87,14 +93,15 @@ function curveHandleSampleT(curve: number): number {
 function curveHandlePosition(
   originX: number,
   fadeWidth: number,
-  trackHeight: number,
+  bodyTop: number,
+  bodyHeight: number,
   curve: number
 ): { left: number; top: number } {
   const t = curveHandleSampleT(curve);
   return {
     left: originX + fadeWidth * t - FADE_CURVE_HANDLE / 2,
-    // Fixed vertical center — knob only travels sideways with curve.
-    top: (trackHeight - FADE_CURVE_HANDLE) / 2,
+    // Fixed vertical center of the waveform body — knob only travels sideways.
+    top: bodyTop + (bodyHeight - FADE_CURVE_HANDLE) / 2,
   };
 }
 
@@ -102,6 +109,8 @@ export function TrackFadeOverlay({
   track,
   sidePadding,
   trackHeight,
+  bodyTop = 0,
+  bodyHeight,
   pixelsPerSecond,
   layoutDuration,
   fades,
@@ -114,12 +123,23 @@ export function TrackFadeOverlay({
 }: Props) {
   const colors = useVoiceMemosColors();
   const accent = track.color ?? colors.accent;
+  const resolvedBodyHeight = bodyHeight ?? Math.max(0, trackHeight - bodyTop);
   const trackLeft = sidePadding + track.startTime * pixelsPerSecond;
   const trackWidth = Math.max(0, track.duration * pixelsPerSecond);
   const fadeInWidth = Math.max(0, fades.fadeInSec * pixelsPerSecond);
   const fadeOutWidth = Math.max(0, fades.fadeOutSec * pixelsPerSecond);
-  const fadeInPath = buildFadeSvgPath(fadeInWidth, trackHeight, fades.fadeInCurve, 'in');
-  const fadeOutPath = buildFadeSvgPath(fadeOutWidth, trackHeight, fades.fadeOutCurve, 'out');
+  const fadeInPath = buildFadeSvgPath(
+    fadeInWidth,
+    resolvedBodyHeight,
+    fades.fadeInCurve,
+    'in'
+  );
+  const fadeOutPath = buildFadeSvgPath(
+    fadeOutWidth,
+    resolvedBodyHeight,
+    fades.fadeOutCurve,
+    'out'
+  );
   const fillColor = colorWithAlpha(accent, 0.12);
   const strokeColor = colorWithAlpha(accent, 0.55);
 
@@ -230,12 +250,17 @@ export function TrackFadeOverlay({
   };
 
   const emitFades = (next: FadeRegionState) => {
+    const trackSnapshot = trackRef.current;
+    const clampDuration = Math.max(
+      0,
+      trackSnapshot.cycleDuration ?? trackSnapshot.duration
+    );
     const clamped = clampFadeValues(
       next.fadeInSec,
       next.fadeOutSec,
       next.fadeInCurve,
       next.fadeOutCurve,
-      trackRef.current.duration
+      clampDuration
     );
     onChangeRef.current?.(clamped);
   };
@@ -368,13 +393,15 @@ export function TrackFadeOverlay({
   const fadeInHandleStyle = useAnimatedStyle(() => ({
     width: handleTouchSV.value,
     left: trackLeft + fadeInWidth - handleTouchSV.value / 2,
-    height: trackHeight,
+    top: bodyTop,
+    height: resolvedBodyHeight,
   }));
 
   const fadeOutHandleStyle = useAnimatedStyle(() => ({
     width: handleTouchSV.value,
     left: trackLeft + trackWidth - fadeOutWidth - handleTouchSV.value / 2,
-    height: trackHeight,
+    top: bodyTop,
+    height: resolvedBodyHeight,
   }));
 
   const isCrossfadeLane =
@@ -393,13 +420,15 @@ export function TrackFadeOverlay({
   const fadeInCurvePos = curveHandlePosition(
     trackLeft,
     fadeInWidth,
-    trackHeight,
+    bodyTop,
+    resolvedBodyHeight,
     fades.fadeInCurve
   );
   const fadeOutCurvePos = curveHandlePosition(
     trackLeft + trackWidth - fadeOutWidth,
     fadeOutWidth,
-    trackHeight,
+    bodyTop,
+    resolvedBodyHeight,
     fades.fadeOutCurve
   );
 
@@ -408,8 +437,16 @@ export function TrackFadeOverlay({
       {fadeInWidth > 1 ? (
         <View
           pointerEvents="none"
-          style={[styles.fadeRegion, { left: trackLeft, width: fadeInWidth, height: trackHeight }]}>
-          <Svg width={fadeInWidth} height={trackHeight}>
+          style={[
+            styles.fadeRegion,
+            {
+              left: trackLeft,
+              top: bodyTop,
+              width: fadeInWidth,
+              height: resolvedBodyHeight,
+            },
+          ]}>
+          <Svg width={fadeInWidth} height={resolvedBodyHeight}>
             <Path d={fadeInPath} fill={fillColor} stroke={strokeColor} strokeWidth={1.5} />
           </Svg>
         </View>
@@ -421,11 +458,12 @@ export function TrackFadeOverlay({
             styles.fadeRegion,
             {
               left: trackLeft + trackWidth - fadeOutWidth,
+              top: bodyTop,
               width: fadeOutWidth,
-              height: trackHeight,
+              height: resolvedBodyHeight,
             },
           ]}>
-          <Svg width={fadeOutWidth} height={trackHeight}>
+          <Svg width={fadeOutWidth} height={resolvedBodyHeight}>
             <Path d={fadeOutPath} fill={fillColor} stroke={strokeColor} strokeWidth={1.5} />
           </Svg>
         </View>
@@ -438,8 +476,9 @@ export function TrackFadeOverlay({
             styles.crossfadeZone,
             {
               left: crossfadeLeft,
+              top: bodyTop,
               width: crossfadeWidth,
-              height: trackHeight,
+              height: resolvedBodyHeight,
               borderColor: colorWithAlpha(accent, crossfade?.linked ? 0.9 : 0.45),
               backgroundColor: colorWithAlpha(accent, 0.08),
             },
@@ -490,7 +529,8 @@ export function TrackFadeOverlay({
                 styles.crossfadeHandle,
                 {
                   left: crossfadeLeft + crossfadeWidth - FADE_HANDLE_TOUCH / 2,
-                  height: trackHeight,
+                  top: bodyTop,
+                  height: resolvedBodyHeight,
                 },
               ]}
             />
@@ -504,12 +544,10 @@ export function TrackFadeOverlay({
 const styles = StyleSheet.create({
   fadeRegion: {
     position: 'absolute',
-    top: 0,
     overflow: 'hidden',
   },
   lengthHandle: {
     position: 'absolute',
-    top: 0,
     zIndex: 6,
     alignItems: 'center',
     justifyContent: 'center',
@@ -525,14 +563,12 @@ const styles = StyleSheet.create({
   },
   crossfadeZone: {
     position: 'absolute',
-    top: 0,
     borderWidth: 1.5,
     borderStyle: 'dashed',
     borderRadius: 3,
   },
   crossfadeHandle: {
     position: 'absolute',
-    top: 0,
     width: FADE_HANDLE_TOUCH,
     zIndex: 8,
   },

@@ -99,6 +99,7 @@ export function getMemoLayersForPlayback(memo: Memo): LoadedLayer[] {
       path: file.uri,
       startTime: layer.startTime,
       duration: layer.duration,
+      loopUntil: layer.loopUntil,
       effects: getLayerEffects(layer),
     };
   });

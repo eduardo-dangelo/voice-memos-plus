@@ -14,6 +14,11 @@ export type Layer = {
   color?: string;
   startTime: number;
   duration: number;
+  /**
+   * Absolute timeline end of the looped footprint.
+   * When greater than the keep-region content end, the region loops.
+   */
+  loopUntil?: number;
   waveformPeaks?: number[];
   effects?: LayerEffects;
 };
@@ -217,14 +222,22 @@ export function normalizeLoopRegion(memo: Memo, timelineDuration: number): void 
   }
 }
 
+const TIMELINE_EPSILON = 0.001;
+
 export function getLayerActiveStartTime(layer: Layer): number {
   const effects = getLayerEffects(layer);
   return layer.startTime + effects.trimIn;
 }
 
-export function getLayerActiveEndTime(layer: Layer): number {
+/** Timeline end of one keep-region cycle (no looping). */
+export function getLayerContentEndTime(layer: Layer): number {
   const effects = getLayerEffects(layer);
   return layer.startTime + effects.trimOut;
+}
+
+/** @deprecated Prefer getLayerContentEndTime; kept as alias for one-cycle end. */
+export function getLayerActiveEndTime(layer: Layer): number {
+  return getLayerContentEndTime(layer);
 }
 
 export function getLayerActiveDuration(layer: Layer): number {
@@ -232,12 +245,45 @@ export function getLayerActiveDuration(layer: Layer): number {
   return Math.max(0, effects.trimOut - effects.trimIn);
 }
 
+/** Timeline end of the audible footprint, including loops. */
+export function getLayerFootprintEndTime(layer: Layer): number {
+  const contentEnd = getLayerContentEndTime(layer);
+  if (layer.loopUntil == null || !Number.isFinite(layer.loopUntil)) {
+    return contentEnd;
+  }
+  return Math.max(contentEnd, layer.loopUntil);
+}
+
+export function getLayerFootprintDuration(layer: Layer): number {
+  return Math.max(0, getLayerFootprintEndTime(layer) - getLayerActiveStartTime(layer));
+}
+
+/** Normalize or clear invalid loopUntil on a layer (mutates). */
+export function normalizeLayerLoopUntil(layer: Layer): void {
+  const contentEnd = getLayerContentEndTime(layer);
+  if (layer.loopUntil == null || !Number.isFinite(layer.loopUntil)) {
+    delete layer.loopUntil;
+    return;
+  }
+  if (layer.loopUntil <= contentEnd + TIMELINE_EPSILON) {
+    delete layer.loopUntil;
+    return;
+  }
+  layer.loopUntil = layer.loopUntil;
+}
+
 export function getLayerFileOffsetAtTimeline(layer: Layer, timelineTime: number): number {
   const effects = getLayerEffects(layer);
-  const activeDuration = Math.max(0, effects.trimOut - effects.trimIn);
-  const offsetInActiveRegion = timelineTime - getLayerActiveStartTime(layer);
-  const clampedActiveOffset = Math.max(0, Math.min(offsetInActiveRegion, activeDuration));
-  return effects.trimIn + clampedActiveOffset;
+  const cycleDuration = Math.max(0, effects.trimOut - effects.trimIn);
+  if (cycleDuration <= 0) {
+    return effects.trimIn;
+  }
+  const footprintEnd = getLayerFootprintEndTime(layer);
+  const activeStart = getLayerActiveStartTime(layer);
+  const clampedTimeline = Math.max(activeStart, Math.min(timelineTime, footprintEnd));
+  const offsetInFootprint = clampedTimeline - activeStart;
+  const offsetInCycle = offsetInFootprint % cycleDuration;
+  return effects.trimIn + offsetInCycle;
 }
 
 /** Reject in-track replaces shorter than this after latency skip. */
@@ -250,8 +296,8 @@ export function getReplaceSpliceParams(
   replacementSkipSeconds = 0
 ): { trimStart: number; trimEnd: number; leadingPadSeconds: number } {
   const effects = getLayerEffects(layer);
-  const activeEnd = getLayerActiveEndTime(layer);
-  const timelineGap = Math.max(0, timelineStart - activeEnd);
+  const footprintEnd = getLayerFootprintEndTime(layer);
+  const timelineGap = Math.max(0, timelineStart - footprintEnd);
 
   if (timelineGap > 0) {
     return {
@@ -274,14 +320,15 @@ export function getReplaceSpliceParams(
 }
 
 export function getLayerEndTime(layer: Layer): number {
-  return getLayerActiveEndTime(layer);
+  return getLayerFootprintEndTime(layer);
 }
 
 export function getMemoTimelineDuration(memo: Memo): number {
   if (memo.layers.length === 0) {
     return memo.duration;
   }
-  return Math.max(memo.duration, ...memo.layers.map(getLayerEndTime));
+  // Crop to content — do not ratchet stored duration upward past last footprint.
+  return Math.max(0, ...memo.layers.map(getLayerEndTime));
 }
 
 export function normalizeLayers(memo: Memo): Memo {
@@ -296,6 +343,7 @@ export function normalizeLayers(memo: Memo): Memo {
     if (layer.duration > 0 && layer.effects.trimOut <= 0) {
       layer.effects.trimOut = layer.duration;
     }
+    normalizeLayerLoopUntil(layer);
   }
   return memo;
 }
@@ -315,8 +363,6 @@ export function getPlayableLayers(memo: Memo): Layer[] {
 export function clampLayerStartTime(startTime: number, trimIn = 0): number {
   return Math.max(-trimIn, startTime);
 }
-
-const TIMELINE_EPSILON = 0.001;
 
 function getGlobalEarliestActiveStart(layers: Layer[]): number {
   const playable = layers.filter((entry) => entry.duration > 0);
@@ -408,8 +454,14 @@ export function applyTimelineDeltaToLayers(layers: Layer[], delta: number): Laye
   if (Math.abs(delta) <= TIMELINE_EPSILON) {
     return layers;
   }
-  return layers.map((entry) => ({
-    ...entry,
-    startTime: entry.startTime + delta,
-  }));
+  return layers.map((entry) => {
+    const next: Layer = {
+      ...entry,
+      startTime: entry.startTime + delta,
+    };
+    if (entry.loopUntil != null && Number.isFinite(entry.loopUntil)) {
+      next.loopUntil = entry.loopUntil + delta;
+    }
+    return next;
+  });
 }
