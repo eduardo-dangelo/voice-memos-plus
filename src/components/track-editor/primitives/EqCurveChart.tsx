@@ -50,6 +50,8 @@ const TAP_MOVE_THRESHOLD = 6;
 const TAP_DURATION_MS = 280;
 const LONG_PRESS_MS = 350;
 const LONG_PRESS_MOVE_THRESHOLD = 8;
+/** Center band (1 kHz) is pre-selected when the custom EQ editor mounts. */
+const DEFAULT_SELECTED_BAND = 2;
 
 export type EqBandChange = {
   gain?: number;
@@ -307,7 +309,7 @@ export function EqCurveChart({ bands, frequencies, qFactors, onChange }: Props) 
   const styles = useStyles(colors);
   const [chartSize, setChartSize] = useState<ChartSize>({ width: 1, height: CHART_HEIGHT });
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
-  const [qEditIndex, setQEditIndex] = useState<number | null>(null);
+  const [qEditIndex, setQEditIndex] = useState<number | null>(DEFAULT_SELECTED_BAND);
 
   const bandsRef = useRef(bands);
   const frequenciesRef = useRef(frequencies);
@@ -398,11 +400,11 @@ export function EqCurveChart({ bands, frequencies, qFactors, onChange }: Props) 
           frequenciesRef.current,
           chartSizeRef.current
         );
-        // Dismiss Q panel on chart touch; long-press can reopen it.
-        setQEditIndex(null);
-        qEditIndexRef.current = null;
         activeIndexRef.current = index;
         setActiveIndex(index);
+        // Selecting / moving a knob reveals the Wide–Narrow Q slider for that band.
+        setQEditIndex(index);
+        qEditIndexRef.current = index;
         startDbRef.current = bandsRef.current[index];
         startFreqRef.current = frequenciesRef.current[index];
         grantTimeRef.current = Date.now();
@@ -413,8 +415,6 @@ export function EqCurveChart({ bands, frequencies, qFactors, onChange }: Props) 
           longPressFiredRef.current = true;
           dragStartedRef.current = false;
           void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-          setQEditIndex(index);
-          qEditIndexRef.current = index;
           setActiveIndex(null);
           activeIndexRef.current = null;
         }, LONG_PRESS_MS);
@@ -477,7 +477,8 @@ export function EqCurveChart({ bands, frequencies, qFactors, onChange }: Props) 
         ? `${formatFrequency(frequencies[qEditIndex])}  Q ${formatQ(qFactors[qEditIndex])}`
         : ' ';
 
-  const qValue = qEditIndex != null ? qFactors[qEditIndex] : EQ_DEFAULT_Q;
+  const qSliderEnabled = qEditIndex != null;
+  const qValue = qSliderEnabled ? qFactors[qEditIndex] : EQ_DEFAULT_Q;
 
   return (
     <View style={styles.container}>
@@ -559,28 +560,35 @@ export function EqCurveChart({ bands, frequencies, qFactors, onChange }: Props) 
           </Text>
         ))}
       </View>
-      {qEditIndex != null ? (
-        <View style={styles.qPanel}>
-          <View style={styles.qSliderRow}>
-            <Text style={styles.qEndLabel}>Wide</Text>
-            <View style={styles.qSliderTrack}>
-              <EditorSlider
-                maximumValue={1}
-                minimumValue={0}
-                value={qToSliderPos(qValue)}
-                onSlidingComplete={(pos) =>
-                  onChange(qEditIndex, { q: sliderPosToQ(pos) })
+      <View style={styles.qPanel}>
+        <View style={styles.qSliderRow}>
+          <Text style={[styles.qEndLabel, !qSliderEnabled && styles.qLabelDisabled]}>Wide</Text>
+          <View style={styles.qSliderTrack}>
+            <EditorSlider
+              disabled={!qSliderEnabled}
+              maximumValue={1}
+              minimumValue={0}
+              value={qToSliderPos(qValue)}
+              onSlidingComplete={(pos) => {
+                if (qEditIndex == null) {
+                  return;
                 }
-                onValueChange={(pos) =>
-                  onChange(qEditIndex, { q: sliderPosToQ(pos) })
+                onChange(qEditIndex, { q: sliderPosToQ(pos) });
+              }}
+              onValueChange={(pos) => {
+                if (qEditIndex == null) {
+                  return;
                 }
-              />
-            </View>
-            <Text style={styles.qEndLabel}>Narrow</Text>
-            <Text style={styles.qValue}>{formatQ(qValue)}</Text>
+                onChange(qEditIndex, { q: sliderPosToQ(pos) });
+              }}
+            />
           </View>
+          <Text style={[styles.qEndLabel, !qSliderEnabled && styles.qLabelDisabled]}>Narrow</Text>
+          <Text style={[styles.qValue, !qSliderEnabled && styles.qLabelDisabled]}>
+            {qSliderEnabled ? formatQ(qValue) : '—'}
+          </Text>
         </View>
-      ) : null}
+      </View>
     </View>
   );
 }
@@ -612,6 +620,9 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           fontSize: 11,
           color: colors.secondaryText,
           width: 40,
+        },
+        qLabelDisabled: {
+          opacity: 0.45,
         },
         qSliderTrack: {
           flex: 1,

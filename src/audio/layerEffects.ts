@@ -50,13 +50,8 @@ export type EqPreset =
   | 'voice'
   | 'warm'
   | 'bright'
-  | 'podcast'
   | 'bass'
-  | 'treble'
-  | 'air'
-  | 'muffled'
   | 'highPass'
-  | 'lowPass'
   | 'custom';
 
 export const EQ_PRESET_IDS: EqPreset[] = [
@@ -64,15 +59,13 @@ export const EQ_PRESET_IDS: EqPreset[] = [
   'voice',
   'warm',
   'bright',
-  'podcast',
   'bass',
-  'treble',
-  'air',
-  'muffled',
   'highPass',
-  'lowPass',
   'custom',
 ];
+
+/** Removed from UI; stored IDs remap to `custom` on load (bands preserved). */
+const DEPRECATED_EQ_PRESET_IDS = ['podcast', 'treble', 'air', 'muffled', 'lowPass'] as const;
 
 export type LayerReverbEffects = {
   preset: ReverbPreset;
@@ -233,13 +226,8 @@ export const EQ_PRESETS: Record<NamedEqPreset, [number, number, number, number, 
   voice: [-2, -1, 2, 3, 1],
   warm: [3, 2, 0, -2, -3],
   bright: [-2, 0, 2, 4, 5],
-  podcast: [-1, 2, 4, 3, 1],
   bass: [4, 3, 0, -2, -2],
-  treble: [-3, -1, 0, 3, 5],
-  air: [-1, 0, 1, 3, 4],
-  muffled: [2, 1, 0, -4, -6],
   highPass: [-8, -4, -1, 0, 0],
-  lowPass: [0, 0, -1, -4, -8],
 };
 
 type NamedDelayPreset = Exclude<DelayPreset, 'off' | 'custom'>;
@@ -409,6 +397,12 @@ export function normalizeLayerEffects(
 
   const eqPreset = (() => {
     const storedPreset = layer.effects.eq?.preset;
+    if (
+      typeof storedPreset === 'string' &&
+      (DEPRECATED_EQ_PRESET_IDS as readonly string[]).includes(storedPreset)
+    ) {
+      return 'custom';
+    }
     if (storedPreset != null && isEqPreset(storedPreset)) {
       return storedPreset;
     }

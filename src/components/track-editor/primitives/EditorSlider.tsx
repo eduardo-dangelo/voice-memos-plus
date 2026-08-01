@@ -26,6 +26,7 @@ type Props = {
   showCenterTick?: boolean;
   stepCount?: number;
   gestureSensitivity?: number;
+  disabled?: boolean;
 };
 
 function clamp(value: number, min: number, max: number): number {
@@ -72,6 +73,7 @@ export function EditorSlider({
   showCenterTick = false,
   stepCount,
   gestureSensitivity = DEFAULT_GESTURE_SENSITIVITY,
+  disabled = false,
 }: Props) {
   const colors = useVoiceMemosColors();
   const styles = useStyles(colors);
@@ -89,6 +91,7 @@ export function EditorSlider({
   const orientationRef = useRef(orientation);
   const onValueChangeRef = useRef(onValueChange);
   const onSlidingCompleteRef = useRef(onSlidingComplete);
+  const disabledRef = useRef(disabled);
 
   valueRef.current = value;
   minimumValueRef.current = minimumValue;
@@ -99,6 +102,7 @@ export function EditorSlider({
   orientationRef.current = orientation;
   onValueChangeRef.current = onValueChange;
   onSlidingCompleteRef.current = onSlidingComplete;
+  disabledRef.current = disabled;
 
   const applyGesture = (gesture: PanResponderGestureState, isComplete: boolean) => {
     const { width, height } = trackSize.current;
@@ -142,16 +146,25 @@ export function EditorSlider({
 
   const panResponder = useRef(
     PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
+      onStartShouldSetPanResponder: () => !disabledRef.current,
+      onMoveShouldSetPanResponder: () => !disabledRef.current,
       onPanResponderGrant: () => {
+        if (disabledRef.current) {
+          return;
+        }
         startValue.current = valueRef.current;
         lastSnapped.current = null;
       },
       onPanResponderMove: (_event: GestureResponderEvent, gesture: PanResponderGestureState) => {
+        if (disabledRef.current) {
+          return;
+        }
         applyGesture(gesture, false);
       },
       onPanResponderRelease: (_event: GestureResponderEvent, gesture: PanResponderGestureState) => {
+        if (disabledRef.current) {
+          return;
+        }
         applyGesture(gesture, true);
       },
       onPanResponderTerminationRequest: () => false,
@@ -210,7 +223,13 @@ export function EditorSlider({
   return (
     <View
       accessibilityRole="adjustable"
-      style={[styles.trackContainer, isVertical && styles.trackContainerVertical]}
+      accessibilityState={{ disabled }}
+      pointerEvents={disabled ? 'none' : 'auto'}
+      style={[
+        styles.trackContainer,
+        isVertical && styles.trackContainerVertical,
+        disabled && styles.disabled,
+      ]}
       {...panResponder.panHandlers}>
       {isVertical ? (
         <View style={styles.trackLane} onLayout={handleLayout}>
@@ -298,6 +317,9 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           shadowRadius: 4,
           shadowOffset: { width: 0, height: 2 },
           elevation: 3,
+        },
+        disabled: {
+          opacity: 0.4,
         },
       }),
     [colors]
