@@ -1,5 +1,6 @@
+import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
 import { SymbolView } from 'expo-symbols';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Modal,
   Pressable,
@@ -11,6 +12,7 @@ import {
 } from 'react-native';
 import type { SFSymbol } from 'sf-symbols-typescript';
 
+import { useColorScheme } from '@/components/useColorScheme';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
 export type IconActionSheetItem = {
@@ -59,6 +61,8 @@ type Props = {
 
 type Selection = NonNullable<TextInputProps['selection']>;
 
+const useGlass = isGlassEffectAPIAvailable();
+
 export function IconActionSheet({
   visible,
   actions,
@@ -71,7 +75,8 @@ export function IconActionSheet({
   onDismiss,
 }: Props) {
   const colors = useVoiceMemosColors();
-  const styles = useStyles(colors);
+  const colorScheme = useColorScheme();
+  const styles = useStyles(colors, colorScheme);
   const inputRef = useRef<TextInput>(null);
   const valueRef = useRef(rename?.initialValue ?? '');
   const [value, setValue] = useState(rename?.initialValue ?? '');
@@ -137,128 +142,151 @@ export function IconActionSheet({
     });
   }, []);
 
-  return (
-    <Modal animationType="fade" transparent visible={visible} onRequestClose={onDismiss}>
-      <Pressable accessibilityRole="button" style={styles.backdrop} onPress={onDismiss}>
-        <Pressable style={styles.card} onPress={(event) => event.stopPropagation()}>
-          {renameActive && rename ? (
-            <>
-              <Text style={styles.renameTitle}>{rename.title}</Text>
-              <TextInput
-                key={inputInstance}
-                ref={inputRef}
-                autoFocus
-                selectTextOnFocus
-                selection={selection}
-                style={styles.renameInput}
-                value={value}
-                onChangeText={setValue}
-                onFocus={() => {
-                  selectAllText();
-                  requestAnimationFrame(selectAllText);
+  let body: ReactNode;
+  if (renameActive && rename) {
+    body = (
+      <>
+        <Text style={styles.renameTitle}>{rename.title}</Text>
+        <TextInput
+          key={inputInstance}
+          ref={inputRef}
+          autoFocus
+          selectTextOnFocus
+          selection={selection}
+          style={styles.renameInput}
+          value={value}
+          onChangeText={setValue}
+          onFocus={() => {
+            selectAllText();
+            requestAnimationFrame(selectAllText);
+          }}
+          onSelectionChange={(event) => {
+            setSelection(event.nativeEvent.selection);
+          }}
+          onSubmitEditing={() => onRenameSave?.(value)}
+        />
+        <View style={styles.renameActions}>
+          <Pressable accessibilityRole="button" hitSlop={8} onPress={onDismiss}>
+            <Text style={styles.cancelText}>Cancel</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            hitSlop={8}
+            onPress={() => onRenameSave?.(value)}>
+            <Text style={styles.saveText}>Save</Text>
+          </Pressable>
+        </View>
+      </>
+    );
+  } else if (multiSelectActive && multiSelect) {
+    body = (
+      <>
+        <Text style={styles.formatTitle}>{multiSelect.title}</Text>
+        {multiSelect.options.map((option) => {
+          const checked = selectedIds.has(option.id);
+          return (
+            <Pressable
+              key={option.id}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked }}
+              style={styles.row}
+              onPress={() => toggleSelected(option.id)}>
+              <SymbolView
+                name={{
+                  ios: (checked ? 'checkmark.circle.fill' : 'circle') as SFSymbol,
                 }}
-                onSelectionChange={(event) => {
-                  setSelection(event.nativeEvent.selection);
-                }}
-                onSubmitEditing={() => onRenameSave?.(value)}
+                size={20}
+                tintColor={checked ? colors.accent : colors.secondaryText}
               />
-              <View style={styles.renameActions}>
-                <Pressable accessibilityRole="button" hitSlop={8} onPress={onDismiss}>
-                  <Text style={styles.cancelText}>Cancel</Text>
-                </Pressable>
-                <Pressable
-                  accessibilityRole="button"
-                  hitSlop={8}
-                  onPress={() => onRenameSave?.(value)}>
-                  <Text style={styles.saveText}>Save</Text>
-                </Pressable>
-              </View>
-            </>
-          ) : multiSelectActive && multiSelect ? (
-            <>
-              <Text style={styles.formatTitle}>{multiSelect.title}</Text>
-              {multiSelect.options.map((option) => {
-                const checked = selectedIds.has(option.id);
-                return (
-                  <Pressable
-                    key={option.id}
-                    accessibilityRole="checkbox"
-                    accessibilityState={{ checked }}
-                    style={styles.row}
-                    onPress={() => toggleSelected(option.id)}>
-                    <SymbolView
-                      name={{
-                        ios: (checked
-                          ? 'checkmark.circle.fill'
-                          : 'circle') as SFSymbol,
-                      }}
-                      size={20}
-                      tintColor={checked ? colors.accent : colors.secondaryText}
-                    />
-                    <Text style={styles.rowLabel}>{option.title}</Text>
-                  </Pressable>
-                );
-              })}
-              <View style={styles.renameActions}>
-                <Pressable accessibilityRole="button" hitSlop={8} onPress={onDismiss}>
-                  <Text style={styles.cancelText}>Cancel</Text>
-                </Pressable>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityState={{ disabled: !canConfirmMulti }}
-                  disabled={!canConfirmMulti}
-                  hitSlop={8}
-                  onPress={() => {
-                    if (!canConfirmMulti) {
-                      return;
-                    }
-                    onMultiSelectConfirm?.([...selectedIds]);
-                  }}>
-                  <Text
-                    style={[
-                      styles.saveText,
-                      !canConfirmMulti && styles.confirmDisabled,
-                    ]}>
-                    {multiSelect.confirmTitle ?? 'Merge'}
-                  </Text>
-                </Pressable>
-              </View>
-            </>
+              <Text style={styles.rowLabel}>{option.title}</Text>
+            </Pressable>
+          );
+        })}
+        <View style={styles.renameActions}>
+          <Pressable accessibilityRole="button" hitSlop={8} onPress={onDismiss}>
+            <Text style={styles.cancelText}>Cancel</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ disabled: !canConfirmMulti }}
+            disabled={!canConfirmMulti}
+            hitSlop={8}
+            onPress={() => {
+              if (!canConfirmMulti) {
+                return;
+              }
+              onMultiSelectConfirm?.([...selectedIds]);
+            }}>
+            <Text
+              style={[styles.saveText, !canConfirmMulti && styles.confirmDisabled]}>
+              {multiSelect.confirmTitle ?? 'Merge'}
+            </Text>
+          </Pressable>
+        </View>
+      </>
+    );
+  } else {
+    body = (
+      <>
+        {formatPickerActive && formatPicker ? (
+          <Text style={styles.formatTitle}>{formatPicker.title}</Text>
+        ) : null}
+        {listActions.map((action) => (
+          <Pressable
+            key={action.id}
+            accessibilityRole="button"
+            style={styles.row}
+            onPress={() => {
+              onSelect(action.id);
+              // Stay open for rename/export/merge so the same Modal can switch views.
+              if (
+                action.id !== 'rename' &&
+                action.id !== 'export' &&
+                action.id !== 'merge'
+              ) {
+                onDismiss();
+              }
+            }}>
+            {action.systemImage ? (
+              <SymbolView
+                name={{ ios: action.systemImage as SFSymbol }}
+                size={20}
+                tintColor={action.destructive ? colors.recordRed : colors.text}
+              />
+            ) : null}
+            <Text
+              style={[styles.rowLabel, action.destructive && styles.rowLabelDestructive]}>
+              {action.title}
+            </Text>
+          </Pressable>
+        ))}
+      </>
+    );
+  }
+
+  return (
+    <Modal
+      animationType={useGlass ? 'none' : 'fade'}
+      transparent
+      visible={visible}
+      onRequestClose={onDismiss}>
+      <Pressable
+        accessibilityRole="button"
+        style={[styles.backdrop, useGlass && styles.backdropGlass]}
+        onPress={onDismiss}>
+        <Pressable
+          style={styles.cardPressable}
+          onPress={(event) => event.stopPropagation()}>
+          {useGlass ? (
+            <GlassView
+              colorScheme={colorScheme === 'dark' ? 'dark' : 'light'}
+              glassEffectStyle="regular"
+              isInteractive
+              style={styles.cardGlass}>
+              {body}
+            </GlassView>
           ) : (
-            <>
-              {formatPickerActive && formatPicker ? (
-                <Text style={styles.formatTitle}>{formatPicker.title}</Text>
-              ) : null}
-              {listActions.map((action) => (
-                <Pressable
-                  key={action.id}
-                  accessibilityRole="button"
-                  style={styles.row}
-                  onPress={() => {
-                    onSelect(action.id);
-                    // Stay open for rename/export/merge so the same Modal can switch views.
-                    if (
-                      action.id !== 'rename' &&
-                      action.id !== 'export' &&
-                      action.id !== 'merge'
-                    ) {
-                      onDismiss();
-                    }
-                  }}>
-                  {action.systemImage ? (
-                    <SymbolView
-                      name={{ ios: action.systemImage as SFSymbol }}
-                      size={20}
-                      tintColor={action.destructive ? colors.recordRed : colors.text}
-                    />
-                  ) : null}
-                  <Text
-                    style={[styles.rowLabel, action.destructive && styles.rowLabelDestructive]}>
-                    {action.title}
-                  </Text>
-                </Pressable>
-              ))}
-            </>
+            <View style={styles.cardFallback}>{body}</View>
           )}
         </Pressable>
       </Pressable>
@@ -266,7 +294,13 @@ export function IconActionSheet({
   );
 }
 
-function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
+function useStyles(
+  colors: ReturnType<typeof useVoiceMemosColors>,
+  colorScheme: 'light' | 'dark' | null | undefined
+) {
+  const cardSurface =
+    colorScheme === 'dark' ? colors.sheetBackground : colors.background;
+
   return useMemo(
     () =>
       StyleSheet.create({
@@ -277,12 +311,27 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           backgroundColor: colors.overlayBackground,
           padding: 24,
         },
-        card: {
+        backdropGlass: {
+          backgroundColor:
+            colorScheme === 'dark' ? 'rgba(0, 0, 0, 0.35)' : 'rgba(0, 0, 0, 0.22)',
+        },
+        cardPressable: {
           width: '100%',
           maxWidth: 280,
-          backgroundColor: colors.sheetBackground,
-          borderRadius: 14,
+        },
+        cardGlass: {
+          borderRadius: 20,
           overflow: 'hidden',
+        },
+        cardFallback: {
+          backgroundColor: cardSurface,
+          borderRadius: 20,
+          overflow: 'hidden',
+          shadowColor: '#000000',
+          shadowOffset: { width: 0, height: 8 },
+          shadowOpacity: colorScheme === 'dark' ? 0.45 : 0.18,
+          shadowRadius: 24,
+          elevation: 8,
         },
         row: {
           minHeight: 52,
@@ -348,6 +397,6 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           opacity: 0.4,
         },
       }),
-    [colors]
+    [cardSurface, colorScheme, colors]
   );
 }

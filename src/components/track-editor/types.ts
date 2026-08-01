@@ -1,5 +1,3 @@
-import type { LayerEffects } from '@/src/audio/layerEffects';
-
 export type EditorTool = 'trim' | 'move' | 'volume' | 'reverb' | 'delay' | 'eq';
 
 export const EDITOR_TOOLS: {
@@ -23,16 +21,13 @@ export const EDITOR_TOOLS: {
 
 export const EDITOR_CANVAS_HEIGHT = 132;
 export const EDITOR_CANVAS_HEIGHT_VOLUME = 78;
-export const EDITOR_CANVAS_HEIGHT_REVERB = 148;
 export const EDITOR_CANVAS_HEIGHT_REVERB_COMPACT = 50;
-export const EDITOR_CANVAS_HEIGHT_DELAY = 200;
 export const EDITOR_CANVAS_HEIGHT_DELAY_COMPACT = 50;
-export const EDITOR_CANVAS_HEIGHT_EQ = 208;
 export const EDITOR_CANVAS_HEIGHT_EQ_COMPACT = 50;
 export const EDITOR_CANVAS_HEIGHT_DRAFT_ACTIONS = 50;
 export const EDITOR_STRIP_HEIGHT = 56;
 
-export function getEditorCanvasHeight(tool: EditorTool | null, effects?: LayerEffects): number {
+export function getEditorCanvasHeight(tool: EditorTool | null): number {
   if (!tool) {
     return 0;
   }
@@ -41,19 +36,13 @@ export function getEditorCanvasHeight(tool: EditorTool | null, effects?: LayerEf
     case 'move':
       return EDITOR_CANVAS_HEIGHT_DRAFT_ACTIONS;
     case 'reverb':
-      return effects?.reverb.preset === 'custom'
-        ? EDITOR_CANVAS_HEIGHT_REVERB
-        : EDITOR_CANVAS_HEIGHT_REVERB_COMPACT;
+      return EDITOR_CANVAS_HEIGHT_REVERB_COMPACT;
     case 'delay':
-      return effects?.delay.preset === 'custom'
-        ? EDITOR_CANVAS_HEIGHT_DELAY
-        : EDITOR_CANVAS_HEIGHT_DELAY_COMPACT;
+      return EDITOR_CANVAS_HEIGHT_DELAY_COMPACT;
     case 'volume':
       return EDITOR_CANVAS_HEIGHT_VOLUME;
     case 'eq':
-      return effects?.eq.preset === 'custom'
-        ? EDITOR_CANVAS_HEIGHT_EQ
-        : EDITOR_CANVAS_HEIGHT_EQ_COMPACT;
+      return EDITOR_CANVAS_HEIGHT_EQ_COMPACT;
     default:
       return EDITOR_CANVAS_HEIGHT;
   }

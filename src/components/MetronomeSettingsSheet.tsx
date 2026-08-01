@@ -1,6 +1,8 @@
+import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
 import { useMemo } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { useColorScheme } from '@/components/useColorScheme';
 import type { MetronomeSettings, TimeSignaturePreset } from '@/src/storage/types';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
@@ -27,73 +29,104 @@ const ACCENT_OPTIONS: { id: 'on' | 'off'; label: string }[] = [
   { id: 'off', label: 'Off' },
 ];
 
+const useGlass = isGlassEffectAPIAvailable();
+
 export function MetronomeSettingsSheet({ visible, settings, onChange, onClose }: Props) {
   const colors = useVoiceMemosColors();
-  const styles = useStyles(colors);
+  const colorScheme = useColorScheme();
+  const styles = useStyles(colors, colorScheme);
+
+  const body = (
+    <>
+      <Text style={styles.title}>Metronome</Text>
+
+      <View style={styles.section}>
+        <View style={styles.sliderRow}>
+          <Text style={styles.sliderLabel}>Tempo</Text>
+          <View style={styles.sliderTrack}>
+            <EditorSlider
+              maximumValue={240}
+              minimumValue={40}
+              stepCount={200}
+              value={settings.bpm}
+              onSlidingComplete={(bpm) => onChange({ bpm })}
+              onValueChange={(bpm) => onChange({ bpm })}
+            />
+          </View>
+          <Text style={styles.sliderValue}>{Math.round(settings.bpm)}</Text>
+        </View>
+      </View>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionLabel}>Time signature</Text>
+        <PresetPills
+          options={TIME_SIGNATURE_OPTIONS}
+          selectedId={settings.timeSignature}
+          onSelect={(timeSignature) => onChange({ timeSignature })}
+        />
+      </View>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionLabel}>Accent</Text>
+        <PresetPills
+          options={ACCENT_OPTIONS}
+          selectedId={settings.accentEnabled ? 'on' : 'off'}
+          onSelect={(value) => onChange({ accentEnabled: value === 'on' })}
+        />
+      </View>
+
+      <View style={styles.section}>
+        <View style={styles.sliderRow}>
+          <Text style={styles.sliderLabel}>Volume</Text>
+          <View style={styles.sliderTrack}>
+            <EditorSlider
+              maximumValue={100}
+              minimumValue={0}
+              value={settings.volume}
+              onSlidingComplete={(volume) => onChange({ volume })}
+              onValueChange={(volume) => onChange({ volume })}
+            />
+          </View>
+          <Text style={styles.sliderValue}>{Math.round(settings.volume)}%</Text>
+        </View>
+      </View>
+    </>
+  );
 
   return (
-    <Modal animationType="fade" transparent visible={visible} onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose}>
-        <Pressable style={styles.card} onPress={() => {}}>
-          <Text style={styles.title}>Metronome</Text>
-
-          <View style={styles.section}>
-            <View style={styles.sliderRow}>
-              <Text style={styles.sliderLabel}>Tempo</Text>
-              <View style={styles.sliderTrack}>
-                <EditorSlider
-                  maximumValue={240}
-                  minimumValue={40}
-                  stepCount={200}
-                  value={settings.bpm}
-                  onSlidingComplete={(bpm) => onChange({ bpm })}
-                  onValueChange={(bpm) => onChange({ bpm })}
-                />
-              </View>
-              <Text style={styles.sliderValue}>{Math.round(settings.bpm)}</Text>
-            </View>
-          </View>
-
-          <View style={styles.section}>
-            <Text style={styles.sectionLabel}>Time signature</Text>
-            <PresetPills
-              options={TIME_SIGNATURE_OPTIONS}
-              selectedId={settings.timeSignature}
-              onSelect={(timeSignature) => onChange({ timeSignature })}
-            />
-          </View>
-
-          <View style={styles.section}>
-            <Text style={styles.sectionLabel}>Accent</Text>
-            <PresetPills
-              options={ACCENT_OPTIONS}
-              selectedId={settings.accentEnabled ? 'on' : 'off'}
-              onSelect={(value) => onChange({ accentEnabled: value === 'on' })}
-            />
-          </View>
-
-          <View style={styles.section}>
-            <View style={styles.sliderRow}>
-              <Text style={styles.sliderLabel}>Volume</Text>
-              <View style={styles.sliderTrack}>
-                <EditorSlider
-                  maximumValue={100}
-                  minimumValue={0}
-                  value={settings.volume}
-                  onSlidingComplete={(volume) => onChange({ volume })}
-                  onValueChange={(volume) => onChange({ volume })}
-                />
-              </View>
-              <Text style={styles.sliderValue}>{Math.round(settings.volume)}%</Text>
-            </View>
-          </View>
+    <Modal
+      animationType={useGlass ? 'none' : 'fade'}
+      transparent
+      visible={visible}
+      onRequestClose={onClose}>
+      <Pressable
+        style={[styles.backdrop, useGlass && styles.backdropGlass]}
+        onPress={onClose}>
+        <Pressable style={styles.cardPressable} onPress={() => {}}>
+          {useGlass ? (
+            <GlassView
+              colorScheme={colorScheme === 'dark' ? 'dark' : 'light'}
+              glassEffectStyle="regular"
+              isInteractive
+              style={styles.cardGlass}>
+              {body}
+            </GlassView>
+          ) : (
+            <View style={styles.cardFallback}>{body}</View>
+          )}
         </Pressable>
       </Pressable>
     </Modal>
   );
 }
 
-function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
+function useStyles(
+  colors: ReturnType<typeof useVoiceMemosColors>,
+  colorScheme: 'light' | 'dark' | null | undefined
+) {
+  const cardSurface =
+    colorScheme === 'dark' ? colors.sheetBackground : colors.background;
+
   return useMemo(
     () =>
       StyleSheet.create({
@@ -104,14 +137,31 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           alignItems: 'center',
           padding: 24,
         },
-        card: {
+        backdropGlass: {
+          backgroundColor:
+            colorScheme === 'dark' ? 'rgba(0, 0, 0, 0.35)' : 'rgba(0, 0, 0, 0.22)',
+        },
+        cardPressable: {
           width: '100%',
           maxWidth: 340,
-          backgroundColor: colors.background,
-          borderRadius: 14,
+        },
+        cardGlass: {
+          borderRadius: 20,
           paddingHorizontal: 20,
           paddingVertical: 18,
           gap: 14,
+        },
+        cardFallback: {
+          backgroundColor: cardSurface,
+          borderRadius: 20,
+          paddingHorizontal: 20,
+          paddingVertical: 18,
+          gap: 14,
+          shadowColor: '#000000',
+          shadowOffset: { width: 0, height: 8 },
+          shadowOpacity: colorScheme === 'dark' ? 0.45 : 0.18,
+          shadowRadius: 24,
+          elevation: 8,
         },
         title: {
           fontSize: 17,
@@ -148,6 +198,6 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           fontVariant: ['tabular-nums'],
         },
       }),
-    [colors]
+    [cardSurface, colorScheme, colors]
   );
 }

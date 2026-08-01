@@ -6,12 +6,12 @@ import {
   type LayerEffects,
 } from '@/src/audio/layerEffects';
 
-import { EqCurveChart } from '../primitives/EqCurveChart';
 import { PresetPills } from '../primitives/PresetPills';
 
 type Props = {
   effects: LayerEffects;
   onChange: (partial: Partial<LayerEffects['eq']>) => void;
+  onRequestCustomEdit?: () => void;
 };
 
 const PRESETS: { id: EqPreset; label: string }[] = [
@@ -31,16 +31,9 @@ const PRESETS: { id: EqPreset; label: string }[] = [
 
 const FLAT_BANDS: LayerEffects['eq']['bands'] = [0, 0, 0, 0, 0];
 
-export function EQEditor({ effects, onChange }: Props) {
+export function EQEditor({ effects, onChange, onRequestCustomEdit }: Props) {
   const { eq } = effects;
   const { bands, preset } = eq;
-  const showBands = preset === 'custom';
-
-  const updateBand = (index: number, value: number) => {
-    const next = [...bands] as LayerEffects['eq']['bands'];
-    next[index] = value;
-    onChange({ bands: next });
-  };
 
   const handlePreset = (nextPreset: EqPreset) => {
     if (nextPreset === 'off') {
@@ -53,6 +46,7 @@ export function EQEditor({ effects, onChange }: Props) {
       } else {
         onChange({ preset: 'custom', bands });
       }
+      onRequestCustomEdit?.();
       return;
     }
     onChange({
@@ -62,13 +56,10 @@ export function EQEditor({ effects, onChange }: Props) {
   };
 
   return (
-    <View style={[styles.container, !showBands && styles.containerCompact]}>
+    <View style={styles.container}>
       <View style={styles.presetRow}>
         <PresetPills options={PRESETS} selectedId={preset} onSelect={handlePreset} />
       </View>
-      {showBands ? (
-        <EqCurveChart bands={bands} onChange={updateBand} />
-      ) : null}
     </View>
   );
 }
@@ -76,10 +67,6 @@ export function EQEditor({ effects, onChange }: Props) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    justifyContent: 'center',
-    gap: 4,
-  },
-  containerCompact: {
     justifyContent: 'center',
   },
   presetRow: {

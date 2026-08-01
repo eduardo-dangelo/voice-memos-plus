@@ -1,11 +1,12 @@
 import * as Haptics from 'expo-haptics';
 import { SymbolView } from 'expo-symbols';
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import type { LayerEffects, LayerEffectsChange } from '@/src/audio/layerEffects';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
+import { EffectCustomDialog, type EffectCustomKind } from './EffectCustomDialog';
 import { DelayEditor } from './editors/DelayEditor';
 import { EQEditor } from './editors/EQEditor';
 import { ReverbEditor } from './editors/ReverbEditor';
@@ -23,6 +24,13 @@ type Props = {
   onCancel?: () => void;
 };
 
+function effectKindForTool(tool: EditorTool | null): EffectCustomKind | null {
+  if (tool === 'reverb' || tool === 'delay' || tool === 'eq') {
+    return tool;
+  }
+  return null;
+}
+
 export function EditorCanvas({
   activeTool,
   effects,
@@ -33,89 +41,104 @@ export function EditorCanvas({
 }: Props) {
   const colors = useVoiceMemosColors();
   const styles = useStyles(colors);
-  const canvasHeight = getEditorCanvasHeight(activeTool, effects);
-  const reverbCompact = activeTool === 'reverb' && effects.reverb.preset !== 'custom';
-  const delayCompact = activeTool === 'delay' && effects.delay.preset !== 'custom';
-  const eqCompact = activeTool === 'eq' && effects.eq.preset !== 'custom';
+  const canvasHeight = getEditorCanvasHeight(activeTool);
   const volumeCompact = activeTool === 'volume';
   const draftActions = activeTool === 'trim' || activeTool === 'move';
+  const effectKind = effectKindForTool(activeTool);
+  const [customDialogVisible, setCustomDialogVisible] = useState(false);
+
+  useEffect(() => {
+    setCustomDialogVisible(false);
+  }, [activeTool]);
 
   if (canvasHeight === 0) {
     return null;
   }
 
   return (
-    <View style={[styles.container, { height: canvasHeight }]}>
-      <View
-        style={[
-          styles.content,
-          { height: canvasHeight },
-          reverbCompact && styles.contentReverbCompact,
-          delayCompact && styles.contentReverbCompact,
-          eqCompact && styles.contentReverbCompact,
-          volumeCompact && styles.contentVolumeCompact,
-          draftActions && styles.contentDraftActions,
-        ]}>
-        {draftActions && onConfirm && onCancel ? (
-          <View style={styles.draftActions}>
-            <Pressable
-              accessibilityLabel="Cancel"
-              accessibilityRole="button"
-              hitSlop={8}
-              onPress={() => {
-                void Haptics.selectionAsync();
-                onCancel();
-              }}
-              style={styles.pill}>
-              <SymbolView
-                name={{ ios: 'xmark' }}
-                size={16}
-                tintColor={colors.text}
-              />
-            </Pressable>
-            <Pressable
-              accessibilityLabel="Confirm"
-              accessibilityRole="button"
-              hitSlop={8}
-              onPress={() => {
-                void Haptics.selectionAsync();
-                onConfirm();
-              }}
-              style={[styles.pill, styles.pillSelected]}>
-              <SymbolView
-                name={{ ios: 'checkmark' }}
-                size={16}
-                tintColor={colors.pillTextSelected}
-              />
-            </Pressable>
-          </View>
-        ) : null}
-        {activeTool === 'volume' ? (
-          <VolumeEditor
-            effects={effects}
-            onChange={(volumeDb) => onEffectsChange({ volumeDb })}
-          />
-        ) : null}
-        {activeTool === 'reverb' ? (
-          <ReverbEditor
-            effects={effects}
-            onChange={(reverb) => onEffectsChange({ reverb })}
-          />
-        ) : null}
-        {activeTool === 'delay' ? (
-          <DelayEditor
-            effects={effects}
-            onChange={(delay) => onEffectsChange({ delay })}
-          />
-        ) : null}
-        {activeTool === 'eq' ? (
-          <EQEditor
-            effects={effects}
-            onChange={(eq) => onEffectsChange({ eq })}
-          />
-        ) : null}
+    <>
+      <View style={[styles.container, { height: canvasHeight }]}>
+        <View
+          style={[
+            styles.content,
+            { height: canvasHeight },
+            effectKind != null && styles.contentEffectsCompact,
+            volumeCompact && styles.contentVolumeCompact,
+            draftActions && styles.contentDraftActions,
+          ]}>
+          {draftActions && onConfirm && onCancel ? (
+            <View style={styles.draftActions}>
+              <Pressable
+                accessibilityLabel="Cancel"
+                accessibilityRole="button"
+                hitSlop={8}
+                onPress={() => {
+                  void Haptics.selectionAsync();
+                  onCancel();
+                }}
+                style={styles.pill}>
+                <SymbolView
+                  name={{ ios: 'xmark' }}
+                  size={16}
+                  tintColor={colors.text}
+                />
+              </Pressable>
+              <Pressable
+                accessibilityLabel="Confirm"
+                accessibilityRole="button"
+                hitSlop={8}
+                onPress={() => {
+                  void Haptics.selectionAsync();
+                  onConfirm();
+                }}
+                style={[styles.pill, styles.pillSelected]}>
+                <SymbolView
+                  name={{ ios: 'checkmark' }}
+                  size={16}
+                  tintColor={colors.pillTextSelected}
+                />
+              </Pressable>
+            </View>
+          ) : null}
+          {activeTool === 'volume' ? (
+            <VolumeEditor
+              effects={effects}
+              onChange={(volumeDb) => onEffectsChange({ volumeDb })}
+            />
+          ) : null}
+          {activeTool === 'reverb' ? (
+            <ReverbEditor
+              effects={effects}
+              onChange={(reverb) => onEffectsChange({ reverb })}
+              onRequestCustomEdit={() => setCustomDialogVisible(true)}
+            />
+          ) : null}
+          {activeTool === 'delay' ? (
+            <DelayEditor
+              effects={effects}
+              onChange={(delay) => onEffectsChange({ delay })}
+              onRequestCustomEdit={() => setCustomDialogVisible(true)}
+            />
+          ) : null}
+          {activeTool === 'eq' ? (
+            <EQEditor
+              effects={effects}
+              onChange={(eq) => onEffectsChange({ eq })}
+              onRequestCustomEdit={() => setCustomDialogVisible(true)}
+            />
+          ) : null}
+        </View>
       </View>
-    </View>
+      {effectKind != null ? (
+        <EffectCustomDialog
+          effect={effectKind}
+          effects={effects}
+          visible={customDialogVisible}
+          onChange={onEffectsChange}
+          onClose={() => setCustomDialogVisible(false)}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -132,7 +155,7 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           paddingHorizontal: 16,
           paddingVertical: 4,
         },
-        contentReverbCompact: {
+        contentEffectsCompact: {
           paddingVertical: 2,
         },
         contentVolumeCompact: {
