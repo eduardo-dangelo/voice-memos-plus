@@ -16,6 +16,7 @@ import { ScrollView as GHScrollView } from 'react-native-gesture-handler';
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 
 import { colorWithAlpha, type VoiceMemosColorScheme } from '@/constants/VoiceMemosColors';
+import { fadeEnvelopeGain } from '@/src/audio/fadeCurve';
 import { clampTrimValues, dbToLinear } from '@/src/audio/layerEffects';
 import { snapTimeToGrid } from '@/src/audio/loopSnap';
 import {
@@ -56,10 +57,17 @@ import {
   getVisibleBarIndexRange,
   getVisibleMarkerSeconds,
 } from '@/src/components/waveformViewport';
+import {
+  TrackFadeOverlay,
+  type FadeOverlayConfig,
+  type FadeRegionState,
+} from '@/src/components/track-editor/TrackFadeOverlay';
 import type { MetronomeGridLine } from '@/src/audio/metronome';
 import type { MetronomeSettings } from '@/src/storage/types';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 import { formatMarkerTime } from '@/src/utils/format';
+
+export type { FadeOverlayConfig, FadeRegionState };
 
 const BAR_WIDTH = WAVEFORM_BAR_WIDTH;
 const BAR_GAP = WAVEFORM_BAR_GAP;
@@ -178,6 +186,28 @@ export type MoveOverlayConfig = {
   snapIntervalSec?: number | null;
 };
 
+function resolveFadeForTrack(
+  fadeOverlay: FadeOverlayConfig | undefined,
+  trackId: string
+): FadeRegionState | null {
+  if (!fadeOverlay) {
+    return null;
+  }
+  if (fadeOverlay.layerId === trackId) {
+    return fadeOverlay.fades;
+  }
+  const peer = fadeOverlay.peerFades?.find((entry) => entry.layerId === trackId);
+  if (!peer) {
+    return null;
+  }
+  return {
+    fadeInSec: peer.fadeInSec,
+    fadeOutSec: peer.fadeOutSec,
+    fadeInCurve: peer.fadeInCurve,
+    fadeOutCurve: peer.fadeOutCurve,
+  };
+}
+
 function getLayoutDuration(
   duration: number,
   currentTime: number,
@@ -205,6 +235,11 @@ export type TrackData = {
   isSoloedOut?: boolean;
   /** Layer volume in dB; scales waveform bars for every track. */
   volumeDb?: number;
+  /** Fade envelope (active-region seconds); scales waveform bars. */
+  fadeInSec?: number;
+  fadeOutSec?: number;
+  fadeInCurve?: number;
+  fadeOutCurve?: number;
   label?: string;
   showLabel?: boolean;
   color?: string;
@@ -238,6 +273,7 @@ type Props = {
   onEditGestureActive?: (active: boolean) => void;
   trimOverlay?: TrimOverlayConfig;
   moveOverlay?: MoveOverlayConfig;
+  fadeOverlay?: FadeOverlayConfig;
   loopOverlay?: LoopOverlayConfig;
   metronome?: MetronomeSettings;
 };
@@ -844,6 +880,14 @@ function areTrackDataEqual(a: TrackData, b: TrackData): boolean {
   if (a.volumeDb !== b.volumeDb) {
     return false;
   }
+  if (
+    a.fadeInSec !== b.fadeInSec ||
+    a.fadeOutSec !== b.fadeOutSec ||
+    a.fadeInCurve !== b.fadeInCurve ||
+    a.fadeOutCurve !== b.fadeOutCurve
+  ) {
+    return false;
+  }
   if (a.color !== b.color) {
     return false;
   }
@@ -883,6 +927,7 @@ type TrackWaveformRowProps = {
   onLongPress?: () => void;
   trimOverlay?: TrimOverlayConfig;
   moveOverlay?: MoveOverlayConfig;
+  fadeOverlay?: FadeOverlayConfig;
   trimScrollHelpers?: TrimScrollHelpers;
   showBottomDivider?: boolean;
 };
@@ -948,6 +993,23 @@ function areTrackWaveformRowPropsEqual(
   ) {
     return false;
   }
+  const prevFade = resolveFadeForTrack(prev.fadeOverlay, prev.track.id);
+  const nextFade = resolveFadeForTrack(next.fadeOverlay, next.track.id);
+  if (
+    prev.fadeOverlay?.layerId !== next.fadeOverlay?.layerId ||
+    prev.fadeOverlay?.snapIntervalSec !== next.fadeOverlay?.snapIntervalSec ||
+    prev.fadeOverlay?.crossfade?.outgoingLayerId !== next.fadeOverlay?.crossfade?.outgoingLayerId ||
+    prev.fadeOverlay?.crossfade?.incomingLayerId !== next.fadeOverlay?.crossfade?.incomingLayerId ||
+    prev.fadeOverlay?.crossfade?.overlapStart !== next.fadeOverlay?.crossfade?.overlapStart ||
+    prev.fadeOverlay?.crossfade?.overlapEnd !== next.fadeOverlay?.crossfade?.overlapEnd ||
+    prev.fadeOverlay?.crossfade?.linked !== next.fadeOverlay?.crossfade?.linked ||
+    prevFade?.fadeInSec !== nextFade?.fadeInSec ||
+    prevFade?.fadeOutSec !== nextFade?.fadeOutSec ||
+    prevFade?.fadeInCurve !== nextFade?.fadeInCurve ||
+    prevFade?.fadeOutCurve !== nextFade?.fadeOutCurve
+  ) {
+    return false;
+  }
   return areTrackDataEqual(prev.track, next.track);
 }
 
@@ -965,6 +1027,7 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
   onLongPress,
   trimOverlay,
   moveOverlay,
+  fadeOverlay,
   trimScrollHelpers,
   showBottomDivider = false,
 }: TrackWaveformRowProps) {
@@ -1061,6 +1124,8 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
   const volumeScale = dbToLinear(track.volumeDb ?? 0);
   const showTrimOverlay = trimOverlay?.layerId === track.id;
   const showMoveOverlay = moveOverlay?.layerId === track.id;
+  const trackFadeState = resolveFadeForTrack(fadeOverlay, track.id);
+  const showFadeOverlay = trackFadeState != null && fadeOverlay != null;
   const barColor = getTrackBarColor(track, colors);
   const mutedBarColor = colors.waveformBar;
   const bandBackground = getTrackBandBackground(track, colors);
@@ -1170,16 +1235,45 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
                 (_, offset) => {
                   const index = visibleBars.startIndex + offset;
                   const peak = normalizedPeaks[index] ?? 0;
-                  const scaled = peakToAbsoluteScale(peak) * volumeScale;
-                  const barHeight =
-                    scaled <= 0.01
-                      ? 2
-                      : Math.max(4, Math.min(trackHeight - 16, scaled * (trackHeight - 16)));
                   const barTime = (index * BAR_STEP) / pixelsPerSecond;
                   const inKeepRegion =
                     !showTrimOverlay ||
                     !trimOverlay ||
                     (barTime >= trimOverlay.trimIn && barTime < trimOverlay.trimOut);
+                  const trackFades = {
+                    fadeInSec: track.fadeInSec ?? 0,
+                    fadeOutSec: track.fadeOutSec ?? 0,
+                    fadeInCurve: track.fadeInCurve ?? 0,
+                    fadeOutCurve: track.fadeOutCurve ?? 0,
+                  };
+                  let fadeScale = 1;
+                  if (
+                    trackFades.fadeInSec > 0 ||
+                    trackFades.fadeOutSec > 0
+                  ) {
+                    if (showTrimOverlay && trimOverlay) {
+                      const activeDuration = Math.max(
+                        0,
+                        trimOverlay.trimOut - trimOverlay.trimIn
+                      );
+                      const activeTime = barTime - trimOverlay.trimIn;
+                      fadeScale =
+                        inKeepRegion && activeDuration > 0
+                          ? fadeEnvelopeGain(activeTime, activeDuration, trackFades)
+                          : 1;
+                    } else {
+                      fadeScale = fadeEnvelopeGain(
+                        barTime,
+                        track.duration,
+                        trackFades
+                      );
+                    }
+                  }
+                  const scaled = peakToAbsoluteScale(peak) * volumeScale * fadeScale;
+                  const barHeight =
+                    scaled <= 0.01
+                      ? 2
+                      : Math.max(4, Math.min(trackHeight - 16, scaled * (trackHeight - 16)));
                   return (
                     <View
                       key={index}
@@ -1281,6 +1375,24 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
           onChange={moveOverlay.onChange}
         />
       ) : null}
+      {showFadeOverlay && trackFadeState && fadeOverlay && trimScrollHelpers ? (
+        <TrackFadeOverlay
+          crossfade={fadeOverlay.crossfade}
+          editable={fadeOverlay.layerId === track.id}
+          fades={trackFadeState}
+          layoutDuration={layoutDuration}
+          pixelsPerSecond={pixelsPerSecond}
+          sidePadding={sidePadding}
+          snapIntervalSec={fadeOverlay.snapIntervalSec}
+          track={track}
+          trackHeight={trackHeight}
+          trimScrollHelpers={trimScrollHelpers}
+          onChange={fadeOverlay.layerId === track.id ? fadeOverlay.onChange : undefined}
+          onCrossfadeChange={
+            fadeOverlay.layerId === track.id ? fadeOverlay.onCrossfadeChange : undefined
+          }
+        />
+      ) : null}
       {track.isActive && selectionWidth > 0 ? (
         <View
           pointerEvents="none"
@@ -1365,6 +1477,7 @@ function WaveformViewComponent({
   onEditGestureActive,
   trimOverlay,
   moveOverlay,
+  fadeOverlay,
   loopOverlay,
   metronome,
 }: Props) {
@@ -2302,6 +2415,7 @@ function WaveformViewComponent({
                     trackHeight={trackHeight}
                     visibleTimeEnd={barPaintTimeRange.end}
                     visibleTimeStart={barPaintTimeRange.start}
+                    fadeOverlay={fadeOverlay}
                     moveOverlay={moveOverlay}
                     trimOverlay={trimOverlay}
                     trimScrollHelpers={trimScrollHelpers}

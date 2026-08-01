@@ -20,6 +20,7 @@ import {
     logRouteSnapshot,
     pinBuiltInMicrophone,
 } from '@/src/audio/audioInputRouting';
+import { schedulePathFades } from '@/src/audio/fadeCurve';
 import {
     clearReverbIrCache,
     isDelayPathActive,
@@ -999,7 +1000,8 @@ export class MemoAudioEngine {
           buffer,
           layerStartWhen,
           stopWhen,
-          bufferOffset
+          bufferOffset,
+          { effects: playbackEffects, playLength: layerPlayLength }
         ),
       ];
       scheduledSources += 1;
@@ -1607,7 +1609,8 @@ export class MemoAudioEngine {
     buffer: AudioBuffer,
     startWhen: number,
     stopWhen: number,
-    bufferOffset: number
+    bufferOffset: number,
+    fadeSchedule?: { effects: LayerEffects; playLength: number } | null
   ): AudioBufferSourceNode {
     const source = context.createBufferSource();
     source.buffer = buffer;
@@ -1615,6 +1618,15 @@ export class MemoAudioEngine {
     source.start(startWhen, bufferOffset);
     source.stop(stopWhen);
     this.sources.push(source);
+    if (fadeSchedule) {
+      schedulePathFades(
+        path,
+        fadeSchedule.effects,
+        startWhen,
+        fadeSchedule.playLength,
+        bufferOffset
+      );
+    }
     return source;
   }
 
@@ -1711,7 +1723,8 @@ export class MemoAudioEngine {
           active.buffer,
           startWhen,
           stopWhen,
-          bufferOffset
+          bufferOffset,
+          { effects: nextEffects, playLength: layerPlayLength }
         )
       );
     }
@@ -1729,7 +1742,8 @@ export class MemoAudioEngine {
           active.buffer,
           startWhen,
           stopWhen,
-          bufferOffset
+          bufferOffset,
+          { effects: nextEffects, playLength: layerPlayLength }
         )
       );
     }
@@ -2141,7 +2155,49 @@ export class MemoAudioEngine {
       );
       if (active) {
         active.playbackEffects = nextEffects;
+        const fadesChanged =
+          partial.fadeInSec !== undefined ||
+          partial.fadeOutSec !== undefined ||
+          partial.fadeInCurve !== undefined ||
+          partial.fadeOutCurve !== undefined ||
+          partial.trimIn !== undefined ||
+          partial.trimOut !== undefined;
+        if (fadesChanged && this.state.isPlaying) {
+          this.rescheduleActiveLayerFades(this.context, layerId, nextEffects);
+        }
       }
+    }
+  }
+
+  private rescheduleActiveLayerFades(
+    context: AudioContext,
+    layerId: string,
+    effects: LayerEffects
+  ): void {
+    const active = this.activeLayerPlayback.get(layerId);
+    const channel = this.mixGraph.getChannel(layerId);
+    if (!active || !channel || this.playbackContextStartWhen <= 0) {
+      return;
+    }
+
+    const elapsed = this.getElapsedPlaybackTime(context);
+    const playedInLayer = Math.max(
+      0,
+      elapsed - (this.playbackStartAt + active.scheduleDelay)
+    );
+    const remaining = active.layerPlayLength - playedInLayer;
+    if (remaining <= PLAYBACK_END_TOLERANCE) {
+      return;
+    }
+
+    const startWhen = context.currentTime + PLAYBACK_SCHEDULE_LEAD;
+    const bufferOffset = active.bufferOffset + playedInLayer;
+    schedulePathFades(channel.dry, effects, startWhen, remaining, bufferOffset);
+    if (active.hasDelay && channel.delay) {
+      schedulePathFades(channel.delay, effects, startWhen, remaining, bufferOffset);
+    }
+    if (active.hasReverb && channel.reverb) {
+      schedulePathFades(channel.reverb, effects, startWhen, remaining, bufferOffset);
     }
   }
 
@@ -2937,6 +2993,11 @@ export class MemoAudioEngine {
         const hasDelay = isDelayPathActive(plan.playbackEffects);
         const hasReverb = isReverbPathActive(plan.playbackEffects);
 
+        const fadeSchedule = {
+          effects: plan.playbackEffects,
+          playLength: plan.layerPlayLength,
+        };
+
         // Separate sources per path — react-native-audio-api only processes one output per node.
         const drySources = [
           this.schedulePathSource(
@@ -2945,7 +3006,8 @@ export class MemoAudioEngine {
             plan.buffer,
             startWhen,
             stopWhen,
-            plan.bufferOffset
+            plan.bufferOffset,
+            fadeSchedule
           ),
         ];
         scheduledSources += 1;
@@ -2959,7 +3021,8 @@ export class MemoAudioEngine {
               plan.buffer,
               startWhen,
               stopWhen,
-              plan.bufferOffset
+              plan.bufferOffset,
+              fadeSchedule
             )
           );
           scheduledSources += 1;
@@ -2974,7 +3037,8 @@ export class MemoAudioEngine {
               plan.buffer,
               startWhen,
               stopWhen,
-              plan.bufferOffset
+              plan.bufferOffset,
+              fadeSchedule
             )
           );
           scheduledSources += 1;

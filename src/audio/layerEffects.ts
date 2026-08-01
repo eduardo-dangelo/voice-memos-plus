@@ -105,6 +105,13 @@ export type LayerEffects = {
   volumeDb: number;
   muted?: boolean;
   solo?: boolean;
+  /** Fade-in length in seconds from the start of the keep region. */
+  fadeInSec: number;
+  /** Fade-out length in seconds before the end of the keep region. */
+  fadeOutSec: number;
+  /** Bipolar curve −1…1 (0 = linear). */
+  fadeInCurve: number;
+  fadeOutCurve: number;
   reverb: LayerReverbEffects;
   delay: LayerDelayEffects;
   eq: LayerEqEffects;
@@ -298,6 +305,10 @@ export function createDefaultLayerEffects(duration: number): LayerEffects {
     volumeDb: 0,
     muted: false,
     solo: false,
+    fadeInSec: 0,
+    fadeOutSec: 0,
+    fadeInCurve: 0,
+    fadeOutCurve: 0,
     reverb: { preset: 'off', mix: 0, decay: 0.8 },
     delay: { preset: 'off', sync: 'off', timeMs: 320, mix: 0, feedback: 40 },
     eq: {
@@ -307,6 +318,10 @@ export function createDefaultLayerEffects(duration: number): LayerEffects {
       qFactors: defaultEqQFactors(),
     },
   };
+}
+
+export function hasActiveFade(effects: LayerEffects): boolean {
+  return effects.fadeInSec > 0 || effects.fadeOutSec > 0;
 }
 
 export function hasFullEffectChain(effects: LayerEffects): boolean {
@@ -400,12 +415,29 @@ export function normalizeLayerEffects(
     return inferEqPreset(eqBands, eqFrequencies);
   })();
 
+  const activeDuration = Math.max(0, (layer.duration > 0 ? trimOut : defaults.trimOut) - trimIn);
+  const fadeInSec = Math.max(0, layer.effects.fadeInSec ?? 0);
+  const fadeOutSec = Math.max(0, layer.effects.fadeOutSec ?? 0);
+  const fadeBudget = fadeInSec + fadeOutSec;
+  const scaledFadeIn =
+    fadeBudget > activeDuration && fadeBudget > 0
+      ? (fadeInSec / fadeBudget) * activeDuration
+      : Math.min(fadeInSec, activeDuration);
+  const scaledFadeOut =
+    fadeBudget > activeDuration && fadeBudget > 0
+      ? (fadeOutSec / fadeBudget) * activeDuration
+      : Math.min(fadeOutSec, activeDuration - scaledFadeIn);
+
   return {
     trimIn,
     trimOut: layer.duration > 0 ? trimOut : defaults.trimOut,
     volumeDb: layer.effects.volumeDb ?? 0,
     muted: layer.effects.muted ?? false,
     solo: layer.effects.solo ?? false,
+    fadeInSec: scaledFadeIn,
+    fadeOutSec: scaledFadeOut,
+    fadeInCurve: clampFadeCurveValue(layer.effects.fadeInCurve ?? 0),
+    fadeOutCurve: clampFadeCurveValue(layer.effects.fadeOutCurve ?? 0),
     reverb: {
       preset: reverbPreset,
       mix:
@@ -431,6 +463,13 @@ export function normalizeLayerEffects(
       qFactors: eqQFactors,
     },
   };
+}
+
+function clampFadeCurveValue(curve: number): number {
+  if (!Number.isFinite(curve)) {
+    return 0;
+  }
+  return Math.max(-1, Math.min(1, curve));
 }
 
 type DeepPartial<T> = {
@@ -486,6 +525,22 @@ export function mergeLayerEffects(
       Math.max(merged.trimIn + MIN_TRIM_SELECTION, merged.trimOut)
     );
   }
+
+  const activeDuration = Math.max(0, merged.trimOut - merged.trimIn);
+  let fadeInSec = Math.max(0, merged.fadeInSec ?? 0);
+  let fadeOutSec = Math.max(0, merged.fadeOutSec ?? 0);
+  if (fadeInSec + fadeOutSec > activeDuration && fadeInSec + fadeOutSec > 0) {
+    const total = fadeInSec + fadeOutSec;
+    fadeInSec = (fadeInSec / total) * activeDuration;
+    fadeOutSec = (fadeOutSec / total) * activeDuration;
+  } else {
+    fadeInSec = Math.min(fadeInSec, activeDuration);
+    fadeOutSec = Math.min(fadeOutSec, activeDuration - fadeInSec);
+  }
+  merged.fadeInSec = fadeInSec;
+  merged.fadeOutSec = fadeOutSec;
+  merged.fadeInCurve = clampFadeCurveValue(merged.fadeInCurve ?? 0);
+  merged.fadeOutCurve = clampFadeCurveValue(merged.fadeOutCurve ?? 0);
 
   return merged;
 }

@@ -115,6 +115,7 @@ export class MemoMixGraph {
 
     try {
       channel.dry.gain.disconnect();
+      channel.dry.fadeGain.disconnect();
       channel.dry.dryGain.disconnect();
     } catch {
       // Nodes may already be torn down.
@@ -189,6 +190,7 @@ export class MemoMixGraph {
     }
     try {
       path.gain.disconnect();
+      path.fadeGain.disconnect();
       path.send.disconnect();
     } catch {
       // Already torn down.

@@ -17,6 +17,8 @@ import {
 
 export type LayerEffectPathNodes = {
   gain: GainNode;
+  /** Dedicated fade automation node (after volume gain). */
+  fadeGain: GainNode;
   eqFilters: BiquadFilterNode[];
 };
 
@@ -134,6 +136,8 @@ export function getOrCreateImpulseResponse(
 
 export function buildInputEqPath(context: AudioContext): LayerEffectPathNodes {
   const gain = context.createGain();
+  const fadeGain = context.createGain();
+  fadeGain.gain.value = 1;
   const eqFilters = EQ_FREQUENCIES.map((frequency) => {
     const filter = context.createBiquadFilter();
     filter.type = 'peaking';
@@ -142,12 +146,13 @@ export function buildInputEqPath(context: AudioContext): LayerEffectPathNodes {
     return filter;
   });
 
-  gain.connect(eqFilters[0]);
+  gain.connect(fadeGain);
+  fadeGain.connect(eqFilters[0]);
   for (let i = 0; i < eqFilters.length - 1; i += 1) {
     eqFilters[i].connect(eqFilters[i + 1]);
   }
 
-  return { gain, eqFilters };
+  return { gain, fadeGain, eqFilters };
 }
 
 function assignReverbImpulse(

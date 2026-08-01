@@ -6,12 +6,14 @@ import {
   type AudioContext,
 } from 'react-native-audio-api';
 
+import { schedulePathFades } from '@/src/audio/fadeCurve';
 import {
   clearReverbIrCache,
   isDelayPathActive,
   isReverbPathActive,
   type LayerEffectPathNodes,
 } from '@/src/audio/layerEffectChain';
+import type { LayerEffects } from '@/src/audio/layerEffects';
 import type { LoadedLayer } from '@/src/audio/MemoAudioEngine';
 import { MemoMixGraph } from '@/src/audio/memoMixGraph';
 import { prepareLayersForMix } from '@/src/audio/mergeLayersLogic';
@@ -65,13 +67,23 @@ function schedulePathSource(
   buffer: AudioBuffer,
   startWhen: number,
   stopWhen: number,
-  bufferOffset: number
+  bufferOffset: number,
+  fadeSchedule?: { effects: LayerEffects; playLength: number } | null
 ): AudioBufferSourceNode {
   const source = context.createBufferSource();
   source.buffer = buffer;
   mixGraph.connectSourceToPath(source, path);
   source.start(startWhen, bufferOffset);
   source.stop(stopWhen);
+  if (fadeSchedule) {
+    schedulePathFades(
+      path,
+      fadeSchedule.effects,
+      startWhen,
+      fadeSchedule.playLength,
+      bufferOffset
+    );
+  }
   return source;
 }
 
@@ -150,6 +162,10 @@ async function renderLayersOffline(
       const stopWhen = startWhen + plan.layerPlayLength;
       const hasDelay = isDelayPathActive(plan.playbackEffects);
       const hasReverb = isReverbPathActive(plan.playbackEffects);
+      const fadeSchedule = {
+        effects: plan.playbackEffects,
+        playLength: plan.layerPlayLength,
+      };
 
       schedulePathSource(
         offlineCtx,
@@ -158,7 +174,8 @@ async function renderLayersOffline(
         plan.buffer,
         startWhen,
         stopWhen,
-        plan.bufferOffset
+        plan.bufferOffset,
+        fadeSchedule
       );
 
       if (hasDelay && channel.delay) {
@@ -169,7 +186,8 @@ async function renderLayersOffline(
           plan.buffer,
           startWhen,
           stopWhen,
-          plan.bufferOffset
+          plan.bufferOffset,
+          fadeSchedule
         );
       }
 
@@ -181,7 +199,8 @@ async function renderLayersOffline(
           plan.buffer,
           startWhen,
           stopWhen,
-          plan.bufferOffset
+          plan.bufferOffset,
+          fadeSchedule
         );
       }
     }

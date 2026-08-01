@@ -29,6 +29,12 @@ import {
   subscribeHeadphonesConnected,
 } from '@/src/audio/headphoneDetection';
 import { getClickIntervalSec, getQuarterIntervalSec } from '@/src/audio/metronome';
+import {
+  applyLinkedCrossfade,
+  areFadesLinkedForCrossfade,
+  findCrossfadePeer,
+} from '@/src/audio/crossfade';
+import { clampFadeValues } from '@/src/audio/fadeCurve';
 import type { LayerEffects, LayerEffectsChange } from '@/src/audio/layerEffects';
 import { hasAnySoloActive, isLayerSelectable, mergeLayerEffects } from '@/src/audio/layerEffects';
 import { loadMemoIntoEngine } from '@/src/audio/loadMemoIntoEngine';
@@ -61,6 +67,7 @@ import { PrecountOverlay } from '@/src/components/PrecountOverlay';
 import { TrackEditorShell } from '@/src/components/track-editor/TrackEditorShell';
 import type { EditorTool } from '@/src/components/track-editor/types';
 import { resolveTrackColor, TrackColorPicker } from '@/src/components/TrackColorPicker';
+import type { FadeRegionState } from '@/src/components/track-editor/TrackFadeOverlay';
 import { WaveformView, type TrackData } from '@/src/components/WaveformView';
 import { applyLocationTitleIfEnabled } from '@/src/location/locationNaming';
 import {
@@ -316,6 +323,32 @@ type EditDraftSnapshot = {
   generation: number;
 };
 
+function layerEffectsPersistPayload(effects: LayerEffects): LayerEffectsChange {
+  return {
+    trimIn: effects.trimIn,
+    trimOut: effects.trimOut,
+    volumeDb: effects.volumeDb,
+    muted: effects.muted,
+    solo: effects.solo,
+    fadeInSec: effects.fadeInSec,
+    fadeOutSec: effects.fadeOutSec,
+    fadeInCurve: effects.fadeInCurve,
+    fadeOutCurve: effects.fadeOutCurve,
+    reverb: effects.reverb,
+    delay: effects.delay,
+    eq: effects.eq,
+  };
+}
+
+function trackFadeFields(effects: LayerEffects) {
+  return {
+    fadeInSec: effects.fadeInSec,
+    fadeOutSec: effects.fadeOutSec,
+    fadeInCurve: effects.fadeInCurve,
+    fadeOutCurve: effects.fadeOutCurve,
+  };
+}
+
 const EDIT_DRAFT_IDLE_AUTOSAVE_MS = 3000;
 
 function cloneLayers(layers: Layer[]): Layer[] {
@@ -535,16 +568,7 @@ export function MemoEditor({
         clearTimeout(persistEffectsTimeout.current);
       }
       persistEffectsTimeout.current = setTimeout(() => {
-        void updateLayerEffects(memoId, layerId, {
-          trimIn: nextEffects.trimIn,
-          trimOut: nextEffects.trimOut,
-          volumeDb: nextEffects.volumeDb,
-          muted: nextEffects.muted,
-          solo: nextEffects.solo,
-          reverb: nextEffects.reverb,
-          delay: nextEffects.delay,
-          eq: nextEffects.eq,
-        });
+        void updateLayerEffects(memoId, layerId, layerEffectsPersistPayload(nextEffects));
         if (layerStartTimes) {
           void updateLayerStartTimes(memoId, layerStartTimes);
         }
@@ -572,16 +596,11 @@ export function MemoEditor({
     if (!pending) {
       return;
     }
-    void updateLayerEffects(pending.memoId, pending.layerId, {
-      trimIn: pending.effects.trimIn,
-      trimOut: pending.effects.trimOut,
-      volumeDb: pending.effects.volumeDb,
-      muted: pending.effects.muted,
-      solo: pending.effects.solo,
-      reverb: pending.effects.reverb,
-      delay: pending.effects.delay,
-      eq: pending.effects.eq,
-    });
+    void updateLayerEffects(
+      pending.memoId,
+      pending.layerId,
+      layerEffectsPersistPayload(pending.effects)
+    );
     if (pending.layerStartTimes) {
       void updateLayerStartTimes(pending.memoId, pending.layerStartTimes);
     }
@@ -712,16 +731,11 @@ export function MemoEditor({
         const layer = current.layers.find((entry) => entry.id === activeLayerId);
         if (layer) {
           const effects = getLayerEffects(layer);
-          await updateLayerEffects(current.id, activeLayerId, {
-            trimIn: effects.trimIn,
-            trimOut: effects.trimOut,
-            volumeDb: effects.volumeDb,
-            muted: effects.muted,
-            solo: effects.solo,
-            reverb: effects.reverb,
-            delay: effects.delay,
-            eq: effects.eq,
-          });
+          await updateLayerEffects(
+            current.id,
+            activeLayerId,
+            layerEffectsPersistPayload(effects)
+          );
         }
       }
 
@@ -804,6 +818,197 @@ export function MemoEditor({
       scheduleEditDraftIdleAutosave();
     },
     [handleEffectsChange, scheduleEditDraftIdleAutosave]
+  );
+
+  const applyFadeUpdates = useCallback(
+    (updates: Record<string, FadeRegionState>) => {
+      const prev = memoRef.current;
+      if (!prev) {
+        return;
+      }
+
+      let nextLayers = prev.layers;
+      const changedIds: string[] = [];
+      for (const [layerId, fades] of Object.entries(updates)) {
+        const layer = nextLayers.find((entry) => entry.id === layerId);
+        if (!layer) {
+          continue;
+        }
+        const currentEffects = getLayerEffects(layer);
+        const activeDuration = Math.max(0, currentEffects.trimOut - currentEffects.trimIn);
+        const clamped = clampFadeValues(
+          fades.fadeInSec,
+          fades.fadeOutSec,
+          fades.fadeInCurve,
+          fades.fadeOutCurve,
+          activeDuration
+        );
+        const nextEffects = mergeLayerEffects(currentEffects, clamped, layer.duration);
+        nextLayers = nextLayers.map((entry) =>
+          entry.id === layerId ? { ...entry, effects: nextEffects } : entry
+        );
+        engine.updateLayerEffects(layerId, clamped);
+        changedIds.push(layerId);
+      }
+
+      if (changedIds.length === 0) {
+        return;
+      }
+
+      const nextMemo = { ...prev, layers: nextLayers };
+      memoRef.current = nextMemo;
+      setMemo(nextMemo);
+
+      const memoId = prev.id;
+      pendingEffectsPersist.current = null;
+      if (persistEffectsTimeout.current) {
+        clearTimeout(persistEffectsTimeout.current);
+      }
+      persistEffectsTimeout.current = setTimeout(() => {
+        persistEffectsTimeout.current = null;
+        const current = memoRef.current;
+        if (!current) {
+          return;
+        }
+        for (const layerId of changedIds) {
+          const layer = current.layers.find((entry) => entry.id === layerId);
+          if (!layer) {
+            continue;
+          }
+          void updateLayerEffects(
+            memoId,
+            layerId,
+            layerEffectsPersistPayload(getLayerEffects(layer))
+          );
+        }
+      }, 300);
+    },
+    [engine]
+  );
+
+  const handleFadeChange = useCallback(
+    (next: FadeRegionState) => {
+      if (!activeLayerId || !memoRef.current) {
+        return;
+      }
+
+      const activeLayer = memoRef.current.layers.find((entry) => entry.id === activeLayerId);
+      if (!activeLayer) {
+        return;
+      }
+
+      const peer = findCrossfadePeer(activeLayer, memoRef.current.layers);
+      const activeEffects = getLayerEffects(activeLayer);
+      const updates: Record<string, FadeRegionState> = {
+        [activeLayerId]: next,
+      };
+
+      if (peer) {
+        const outgoing =
+          peer.outgoingLayerId === activeLayerId
+            ? activeLayer
+            : memoRef.current.layers.find((entry) => entry.id === peer.outgoingLayerId);
+        const incoming =
+          peer.incomingLayerId === activeLayerId
+            ? activeLayer
+            : memoRef.current.layers.find((entry) => entry.id === peer.incomingLayerId);
+        if (outgoing && incoming) {
+          const outgoingEffects =
+            peer.outgoingLayerId === activeLayerId
+              ? { ...activeEffects, ...next }
+              : getLayerEffects(outgoing);
+          const incomingEffects =
+            peer.incomingLayerId === activeLayerId
+              ? { ...activeEffects, ...next }
+              : getLayerEffects(incoming);
+          const wasLinked = areFadesLinkedForCrossfade(
+            getLayerEffects(outgoing),
+            getLayerEffects(incoming),
+            peer.overlapDuration
+          );
+          const editingOutgoingFadeOut =
+            peer.outgoingLayerId === activeLayerId &&
+            (next.fadeOutSec !== activeEffects.fadeOutSec ||
+              next.fadeOutCurve !== activeEffects.fadeOutCurve);
+          const editingIncomingFadeIn =
+            peer.incomingLayerId === activeLayerId &&
+            (next.fadeInSec !== activeEffects.fadeInSec ||
+              next.fadeInCurve !== activeEffects.fadeInCurve);
+
+          if (wasLinked && (editingOutgoingFadeOut || editingIncomingFadeIn)) {
+            const duration = editingOutgoingFadeOut ? next.fadeOutSec : next.fadeInSec;
+            const curve = editingIncomingFadeIn ? next.fadeInCurve : -next.fadeOutCurve;
+            const linked = applyLinkedCrossfade(
+              outgoingEffects,
+              incomingEffects,
+              getLayerActiveDuration(outgoing),
+              getLayerActiveDuration(incoming),
+              Math.min(duration, peer.overlapDuration),
+              curve
+            );
+            updates[outgoing.id] = {
+              fadeInSec: linked.outgoing.fadeInSec,
+              fadeOutSec: linked.outgoing.fadeOutSec,
+              fadeInCurve: linked.outgoing.fadeInCurve,
+              fadeOutCurve: linked.outgoing.fadeOutCurve,
+            };
+            updates[incoming.id] = {
+              fadeInSec: linked.incoming.fadeInSec,
+              fadeOutSec: linked.incoming.fadeOutSec,
+              fadeInCurve: linked.incoming.fadeInCurve,
+              fadeOutCurve: linked.incoming.fadeOutCurve,
+            };
+          }
+        }
+      }
+
+      applyFadeUpdates(updates);
+    },
+    [activeLayerId, applyFadeUpdates]
+  );
+
+  const handleCrossfadeChange = useCallback(
+    (durationSec: number, curve: number) => {
+      if (!activeLayerId || !memoRef.current) {
+        return;
+      }
+      const activeLayer = memoRef.current.layers.find((entry) => entry.id === activeLayerId);
+      if (!activeLayer) {
+        return;
+      }
+      const peer = findCrossfadePeer(activeLayer, memoRef.current.layers);
+      if (!peer) {
+        return;
+      }
+      const outgoing = memoRef.current.layers.find((entry) => entry.id === peer.outgoingLayerId);
+      const incoming = memoRef.current.layers.find((entry) => entry.id === peer.incomingLayerId);
+      if (!outgoing || !incoming) {
+        return;
+      }
+      const linked = applyLinkedCrossfade(
+        getLayerEffects(outgoing),
+        getLayerEffects(incoming),
+        getLayerActiveDuration(outgoing),
+        getLayerActiveDuration(incoming),
+        Math.min(durationSec, peer.overlapDuration),
+        curve
+      );
+      applyFadeUpdates({
+        [outgoing.id]: {
+          fadeInSec: linked.outgoing.fadeInSec,
+          fadeOutSec: linked.outgoing.fadeOutSec,
+          fadeInCurve: linked.outgoing.fadeInCurve,
+          fadeOutCurve: linked.outgoing.fadeOutCurve,
+        },
+        [incoming.id]: {
+          fadeInSec: linked.incoming.fadeInSec,
+          fadeOutSec: linked.incoming.fadeOutSec,
+          fadeInCurve: linked.incoming.fadeInCurve,
+          fadeOutCurve: linked.incoming.fadeOutCurve,
+        },
+      });
+    },
+    [activeLayerId, applyFadeUpdates]
   );
 
   const handleLayerStartTimeChange = useCallback(
@@ -2716,6 +2921,7 @@ export function MemoEditor({
             isSoloed: effects.solo,
             isSoloedOut: anySoloActive && !effects.solo,
             volumeDb: effects.volumeDb,
+            ...trackFadeFields(effects),
             ...trackMeta,
           };
         }
@@ -2740,6 +2946,7 @@ export function MemoEditor({
             isSoloed: effects.solo,
             isSoloedOut: anySoloActive && !effects.solo,
             volumeDb: effects.volumeDb,
+            ...trackFadeFields(effects),
             ...trackMeta,
           };
         }
@@ -2762,6 +2969,7 @@ export function MemoEditor({
           isSoloed: effects.solo,
           isSoloedOut: anySoloActive && !effects.solo,
           volumeDb: effects.volumeDb,
+          ...trackFadeFields(effects),
           ...trackMeta,
         };
       });
@@ -2972,6 +3180,90 @@ export function MemoEditor({
     timelineSnapIntervalSec,
   ]);
 
+  const fadeOverlay = useMemo(() => {
+    if (
+      !activeLayer ||
+      !activeLayerEffects ||
+      !memo ||
+      savingTrim ||
+      activeEditor === 'trim' ||
+      activeEditor === 'move'
+    ) {
+      return undefined;
+    }
+
+    const peer = findCrossfadePeer(activeLayer, memo.layers);
+    const peerFades =
+      peer != null
+        ? [peer.outgoingLayerId, peer.incomingLayerId]
+            .filter((id) => id !== activeLayer.id)
+            .map((layerId) => {
+              const layer = memo.layers.find((entry) => entry.id === layerId);
+              if (!layer) {
+                return null;
+              }
+              const effects = getLayerEffects(layer);
+              return {
+                layerId,
+                fadeInSec: effects.fadeInSec,
+                fadeOutSec: effects.fadeOutSec,
+                fadeInCurve: effects.fadeInCurve,
+                fadeOutCurve: effects.fadeOutCurve,
+              };
+            })
+            .filter((entry): entry is NonNullable<typeof entry> => entry != null)
+        : [];
+
+    const outgoing =
+      peer != null
+        ? memo.layers.find((entry) => entry.id === peer.outgoingLayerId)
+        : undefined;
+    const incoming =
+      peer != null
+        ? memo.layers.find((entry) => entry.id === peer.incomingLayerId)
+        : undefined;
+    const linked =
+      peer != null && outgoing != null && incoming != null
+        ? areFadesLinkedForCrossfade(
+            getLayerEffects(outgoing),
+            getLayerEffects(incoming),
+            peer.overlapDuration
+          )
+        : false;
+
+    return {
+      layerId: activeLayer.id,
+      fades: {
+        fadeInSec: activeLayerEffects.fadeInSec,
+        fadeOutSec: activeLayerEffects.fadeOutSec,
+        fadeInCurve: activeLayerEffects.fadeInCurve,
+        fadeOutCurve: activeLayerEffects.fadeOutCurve,
+      },
+      onChange: handleFadeChange,
+      snapIntervalSec: timelineSnapIntervalSec,
+      peerFades,
+      crossfade: peer
+        ? {
+            outgoingLayerId: peer.outgoingLayerId,
+            incomingLayerId: peer.incomingLayerId,
+            overlapStart: peer.overlapStart,
+            overlapEnd: peer.overlapEnd,
+            linked,
+          }
+        : null,
+      onCrossfadeChange: peer ? handleCrossfadeChange : undefined,
+    };
+  }, [
+    activeEditor,
+    activeLayer,
+    activeLayerEffects,
+    handleCrossfadeChange,
+    handleFadeChange,
+    memo,
+    savingTrim,
+    timelineSnapIntervalSec,
+  ]);
+
   const loopOverlay = useMemo(() => {
     if (!memo || waveformDuration <= 0) {
       return undefined;
@@ -3026,6 +3318,7 @@ export function MemoEditor({
               tracks={waveformTracks}
               trimOverlay={trimOverlay}
               moveOverlay={moveOverlay}
+              fadeOverlay={fadeOverlay}
               loopOverlay={loopOverlay}
               metronome={metronomeSettings}
               onSeek={handleWaveformSeek}
