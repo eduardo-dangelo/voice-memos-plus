@@ -113,6 +113,7 @@ function RecordingRowComponent({
   const playable = hasRecording(memo);
   const displayTime = isActive ? playback.currentTime : 0;
   const wasExpandedRef = useRef(expanded);
+  const resumeAfterScrubRef = useRef(false);
 
   useEffect(() => {
     const wasExpanded = wasExpandedRef.current;
@@ -155,6 +156,47 @@ function RecordingRowComponent({
       return;
     }
     engine.skip(seconds);
+  };
+
+  const handleMiniSeek = (time: number) => {
+    if (engine.getState().memoId === memo.id) {
+      engine.seek(time);
+      return;
+    }
+    void ensureLoaded().then((ok) => {
+      if (ok) {
+        engine.seek(time);
+      }
+    });
+  };
+
+  const handleMiniScrubStart = () => {
+    // Pause synchronously when already loaded so the first seek does not auto-resume.
+    if (engine.getState().memoId === memo.id) {
+      engine.setLoopEnabled(false);
+      if (engine.getState().isPlaying) {
+        resumeAfterScrubRef.current = true;
+        engine.pause();
+      }
+      return;
+    }
+    void ensureLoaded().then((ok) => {
+      if (!ok) {
+        return;
+      }
+      if (engine.getState().isPlaying) {
+        resumeAfterScrubRef.current = true;
+        engine.pause();
+      }
+    });
+  };
+
+  const handleMiniScrubEnd = () => {
+    if (!resumeAfterScrubRef.current) {
+      return;
+    }
+    resumeAfterScrubRef.current = false;
+    void engine.play();
   };
 
   const handleShare = () => {
@@ -256,13 +298,15 @@ function RecordingRowComponent({
         <Collapsible expanded={expanded}>
           <View style={styles.expanded}>
             {!isRegularWidth ? (
-              <Pressable accessibilityLabel="Edit Recording" onPress={onOpenEditor}>
-                <MiniWaveformTracks
-                  currentTime={displayTime}
-                  duration={duration}
-                  memo={memo}
-                />
-              </Pressable>
+              <MiniWaveformTracks
+                currentTime={displayTime}
+                duration={duration}
+                memo={memo}
+                onPress={onOpenEditor}
+                onScrubEnd={handleMiniScrubEnd}
+                onScrubStart={handleMiniScrubStart}
+                onSeek={handleMiniSeek}
+              />
             ) : null}
             <PlaybackControls
               compact
