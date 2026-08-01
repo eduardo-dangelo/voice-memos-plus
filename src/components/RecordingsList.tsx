@@ -440,6 +440,12 @@ export function RecordingsList({
         style={styles.list}
         ListEmptyComponent={
           <View style={styles.empty}>
+            <SymbolView
+              name={{ ios: isTrash ? 'trash' : 'folder' }}
+              size={56}
+              tintColor={colors.secondaryText}
+              style={styles.emptyIcon}
+            />
             <Text style={styles.emptyTitle}>{emptyTitle}</Text>
             <Text style={styles.emptySubtitle}>{emptySubtitle}</Text>
           </View>
@@ -575,9 +581,12 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           flex: 1,
         },
         empty: {
-          padding: 32,
+          padding: 48,
           alignItems: 'center',
           gap: 8,
+        },
+        emptyIcon: {
+          marginBottom: 4,
         },
         emptyTitle: {
           fontSize: 20,
