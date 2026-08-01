@@ -222,6 +222,8 @@ export class MemoAudioEngine {
   /** Resampled playback buffers keyed by `${path}@${contextSampleRate}`. */
   private resampledLayerBuffers = new Map<string, AudioBuffer>();
   private playInFlight: Promise<void> | null = null;
+  /** Request id that owns `playInFlight`; used so pause-cancelled plays are not coalesced. */
+  private playInFlightRequestId = 0;
   private playRequestId = 0;
   private activeRecordingSampleRate: number | null = null;
   private recordingUsedWavFormat = false;
@@ -2871,23 +2873,33 @@ export class MemoAudioEngine {
   }
 
   async play(options?: { loopRestart?: boolean }): Promise<void> {
-    if (this.playInFlight && !options?.loopRestart) {
-      // Coalesce duplicate cold starts onto the in-flight play.
+    // Only coalesce onto a still-valid in-flight play. pause()/seek bump playRequestId
+    // without clearing playInFlight; coalescing onto that cancelled promise would no-op.
+    if (
+      this.playInFlight &&
+      !options?.loopRestart &&
+      this.playInFlightRequestId === this.playRequestId
+    ) {
       return this.playInFlight;
     }
 
     const requestId = ++this.playRequestId;
 
     if (this.playInFlight) {
-      await this.playInFlight;
+      try {
+        await this.playInFlight;
+      } catch {
+        // Ignore errors from a superseded/cancelled play.
+      }
       if (requestId !== this.playRequestId) {
-        // A newer play() superseded this loop restart.
+        // A newer play() superseded this request.
         return;
       }
     }
 
     const playPromise = this.runPlay(requestId);
     this.playInFlight = playPromise;
+    this.playInFlightRequestId = requestId;
     try {
       await playPromise;
     } finally {
@@ -3182,6 +3194,29 @@ export class MemoAudioEngine {
     if (wasPlaying) {
       void this.play();
     }
+  }
+
+  /**
+   * Update playhead position while paused without tearing down sources.
+   * While playing, falls back to seek() (stop + resume).
+   */
+  setPlaybackTime(time: number): void {
+    if (this.state.isPlaying) {
+      this.seek(time);
+      return;
+    }
+    const bounds = this.getPlaybackBounds(this.state.duration);
+    const minTime =
+      this.state.loopEnabled && this.hasValidLoop() ? bounds.start : this.state.trimStart;
+    const maxTime =
+      this.state.loopEnabled && this.hasValidLoop()
+        ? bounds.end
+        : this.state.trimEnd || this.state.duration;
+    const clamped = Math.max(minTime, Math.min(time, maxTime));
+    if (clamped === this.state.currentTime) {
+      return;
+    }
+    this.emit({ currentTime: clamped });
   }
 
   skip(seconds: number): void {

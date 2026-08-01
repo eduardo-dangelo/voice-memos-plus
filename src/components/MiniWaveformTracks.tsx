@@ -30,7 +30,10 @@ const PLAYHEAD_CAP_SIZE = 6;
 const UNPLAYED_SATURATION = 0.12;
 const UNPLAYED_ALPHA = 0.45;
 const PAN_ACTIVE_OFFSET_X = 8;
-const PAN_FAIL_OFFSET_Y = 12;
+/** Slightly loose so minor diagonal scrubs still win over vertical list scroll. */
+const PAN_FAIL_OFFSET_Y = 24;
+const TAP_MAX_DISTANCE = 10;
+const SCRUB_ENGINE_THROTTLE_MS = 32;
 
 type MiniTrack = {
   id: string;
@@ -81,6 +84,14 @@ function buildMiniTracks(memo: Memo): MiniTrack[] {
     });
 }
 
+function timeFromX(x: number, width: number, duration: number): number {
+  if (width <= 0 || duration <= 0) {
+    return 0;
+  }
+  const ratio = Math.max(0, Math.min(1, x / width));
+  return ratio * duration;
+}
+
 export function MiniWaveformTracks({
   memo,
   currentTime,
@@ -93,6 +104,7 @@ export function MiniWaveformTracks({
   const colors = useVoiceMemosColors();
   const styles = useStyles(colors);
   const [width, setWidth] = useState(0);
+  const [scrubTime, setScrubTime] = useState<number | null>(null);
   const tracks = useMemo(() => buildMiniTracks(memo), [memo]);
   const widthRef = useRef(width);
   const durationRef = useRef(duration);
@@ -101,6 +113,8 @@ export function MiniWaveformTracks({
   const onScrubEndRef = useRef(onScrubEnd);
   const onPressRef = useRef(onPress);
   const scrubActiveRef = useRef(false);
+  const scrubTimeRef = useRef<number | null>(null);
+  const lastEngineSeekAtRef = useRef(0);
 
   widthRef.current = width;
   durationRef.current = duration;
@@ -109,20 +123,34 @@ export function MiniWaveformTracks({
   onScrubEndRef.current = onScrubEnd;
   onPressRef.current = onPress;
 
-  const seekFromX = (x: number) => {
-    const trackWidth = widthRef.current;
-    const trackDuration = durationRef.current;
-    if (trackWidth <= 0 || trackDuration <= 0) {
+  const pushEngineSeek = (time: number, force: boolean) => {
+    const now = Date.now();
+    if (!force && now - lastEngineSeekAtRef.current < SCRUB_ENGINE_THROTTLE_MS) {
       return;
     }
-    const ratio = Math.max(0, Math.min(1, x / trackWidth));
-    onSeekRef.current(ratio * trackDuration);
+    lastEngineSeekAtRef.current = now;
+    onSeekRef.current(time);
+  };
+
+  const applyScrubX = (x: number, forceEngine: boolean) => {
+    const time = timeFromX(x, widthRef.current, durationRef.current);
+    scrubTimeRef.current = time;
+    setScrubTime(time);
+    pushEngineSeek(time, forceEngine);
   };
 
   const handlePanStart = (x: number) => {
     scrubActiveRef.current = true;
+    lastEngineSeekAtRef.current = 0;
     onScrubStartRef.current?.();
-    seekFromX(x);
+    applyScrubX(x, true);
+  };
+
+  const handlePanUpdate = (x: number) => {
+    if (!scrubActiveRef.current) {
+      return;
+    }
+    applyScrubX(x, false);
   };
 
   const handlePanEnd = () => {
@@ -130,7 +158,13 @@ export function MiniWaveformTracks({
       return;
     }
     scrubActiveRef.current = false;
+    const time = scrubTimeRef.current;
+    if (time != null) {
+      pushEngineSeek(time, true);
+    }
     onScrubEndRef.current?.();
+    scrubTimeRef.current = null;
+    setScrubTime(null);
   };
 
   const handleTap = () => {
@@ -147,7 +181,7 @@ export function MiniWaveformTracks({
             runOnJS(handlePanStart)(event.x);
           })
           .onUpdate((event) => {
-            runOnJS(seekFromX)(event.x);
+            runOnJS(handlePanUpdate)(event.x);
           })
           .onEnd(() => {
             runOnJS(handlePanEnd)();
@@ -157,9 +191,11 @@ export function MiniWaveformTracks({
               runOnJS(handlePanEnd)();
             }
           }),
-        Gesture.Tap().onEnd(() => {
-          runOnJS(handleTap)();
-        })
+        Gesture.Tap()
+          .maxDistance(TAP_MAX_DISTANCE)
+          .onEnd(() => {
+            runOnJS(handleTap)();
+          })
       ),
     // Handlers close over refs; gesture instance is stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional
@@ -173,14 +209,91 @@ export function MiniWaveformTracks({
     }
   };
 
+  const playheadTime = scrubTime ?? currentTime;
+  const barStepTime = width > 0 && duration > 0 ? (BAR_STEP / width) * duration : 0;
+  // Keep played coloring; only skip redundant bar style rebuilds within the same bar.
+  // Playhead still uses full-precision playheadTime above.
+  const rawColorTime = scrubTime ?? currentTime;
+  const colorTime =
+    barStepTime > 0 ? Math.floor(rawColorTime / barStepTime) * barStepTime : rawColorTime;
+
+  const lanes = useMemo(() => {
+    if (tracks.length === 0 || duration <= 0 || width <= 0) {
+      return null;
+    }
+    const laneHeight = LANE_HEIGHT;
+    return tracks.map((track) => {
+      const activeColor =
+        track.isMuted || track.isSoloedOut ? colors.waveformBar : track.color;
+      const unplayedColor = colorDesaturatedWithAlpha(
+        activeColor,
+        UNPLAYED_SATURATION,
+        UNPLAYED_ALPHA
+      );
+      const left = (track.startTime / duration) * width;
+      const trackWidth = Math.max(0, (track.duration / duration) * width);
+      const barCount = Math.max(0, Math.floor(trackWidth / BAR_STEP));
+      const cycleBarCount = Math.max(
+        1,
+        Math.floor(
+          ((track.cycleDuration / Math.max(track.duration, 0.01)) * trackWidth) / BAR_STEP
+        )
+      );
+      const cyclePeaks =
+        barCount > 0 ? normalizePeaksForBarCount(track.peaks, cycleBarCount) : [];
+      const maxBarHeight = Math.max(2, laneHeight - 2);
+
+      return (
+        <View
+          key={track.id}
+          style={[
+            styles.lane,
+            {
+              height: laneHeight,
+              backgroundColor: colors.waveformBandBackground,
+            },
+          ]}>
+          {trackWidth > 0 ? (
+            <View style={[styles.barsRow, { left, width: trackWidth, height: laneHeight }]}>
+              {Array.from({ length: barCount }, (_, index) => {
+                const peak = cyclePeaks[index % cycleBarCount] ?? 0;
+                const scaled = peakToAbsoluteScale(peak);
+                const barHeight =
+                  scaled <= 0.01
+                    ? 1
+                    : Math.max(1.5, Math.min(maxBarHeight, scaled * maxBarHeight));
+                const barTime = ((left + index * BAR_STEP) / width) * duration;
+                const backgroundColor = barTime < colorTime ? activeColor : unplayedColor;
+                return (
+                  <View
+                    key={index}
+                    style={[
+                      styles.bar,
+                      {
+                        left: index * BAR_STEP,
+                        top: (laneHeight - barHeight) / 2,
+                        width: WAVEFORM_BAR_WIDTH,
+                        height: barHeight,
+                        backgroundColor,
+                      },
+                    ]}
+                  />
+                );
+              })}
+            </View>
+          ) : null}
+        </View>
+      );
+    });
+  }, [tracks, width, duration, colorTime, colors, styles]);
+
   if (tracks.length === 0 || duration <= 0) {
     return null;
   }
 
   const totalHeight = tracks.length * LANE_HEIGHT;
-  const laneHeight = LANE_HEIGHT;
   const playheadLeft =
-    width > 0 ? Math.max(0, Math.min(1, currentTime / duration)) * width : 0;
+    width > 0 ? Math.max(0, Math.min(1, playheadTime / duration)) * width : 0;
 
   return (
     <GestureDetector gesture={gesture}>
@@ -190,78 +303,11 @@ export function MiniWaveformTracks({
         importantForAccessibility="yes"
         style={[styles.container, { height: totalHeight }]}
         onLayout={onLayout}>
-        <View style={[styles.lanesClip, { height: totalHeight }]}>
-          {tracks.map((track) => {
-            const activeColor =
-              track.isMuted || track.isSoloedOut ? colors.waveformBar : track.color;
-            const unplayedColor = colorDesaturatedWithAlpha(
-              activeColor,
-              UNPLAYED_SATURATION,
-              UNPLAYED_ALPHA
-            );
-            const left = width > 0 ? (track.startTime / duration) * width : 0;
-            const trackWidth =
-              width > 0 ? Math.max(0, (track.duration / duration) * width) : 0;
-            const barCount = Math.max(0, Math.floor(trackWidth / BAR_STEP));
-            const cycleBarCount = Math.max(
-              1,
-              Math.floor(
-                ((track.cycleDuration / Math.max(track.duration, 0.01)) * trackWidth) / BAR_STEP
-              )
-            );
-            const cyclePeaks =
-              barCount > 0
-                ? normalizePeaksForBarCount(track.peaks, cycleBarCount)
-                : [];
-            const maxBarHeight = Math.max(2, laneHeight - 2);
-
-            return (
-              <View
-                key={track.id}
-                style={[
-                  styles.lane,
-                  {
-                    height: laneHeight,
-                    backgroundColor: colors.waveformBandBackground,
-                  },
-                ]}>
-                {trackWidth > 0 ? (
-                  <View style={[styles.barsRow, { left, width: trackWidth, height: laneHeight }]}>
-                    {Array.from({ length: barCount }, (_, index) => {
-                      const peak = cyclePeaks[index % cycleBarCount] ?? 0;
-                      const scaled = peakToAbsoluteScale(peak);
-                      const barHeight =
-                        scaled <= 0.01
-                          ? 1
-                          : Math.max(1.5, Math.min(maxBarHeight, scaled * maxBarHeight));
-                      const barTime =
-                        width > 0 ? ((left + index * BAR_STEP) / width) * duration : 0;
-                      const backgroundColor =
-                        barTime < currentTime ? activeColor : unplayedColor;
-                      return (
-                        <View
-                          key={index}
-                          style={[
-                            styles.bar,
-                            {
-                              left: index * BAR_STEP,
-                              top: (laneHeight - barHeight) / 2,
-                              width: WAVEFORM_BAR_WIDTH,
-                              height: barHeight,
-                              backgroundColor,
-                            },
-                          ]}
-                        />
-                      );
-                    })}
-                  </View>
-                ) : null}
-              </View>
-            );
-          })}
-        </View>
+        <View style={[styles.lanesClip, { height: totalHeight }]}>{lanes}</View>
         {width > 0 ? (
-          <View pointerEvents="none" style={[styles.playhead, { left: playheadLeft, height: totalHeight }]}>
+          <View
+            pointerEvents="none"
+            style={[styles.playhead, { left: playheadLeft, height: totalHeight }]}>
             <View style={styles.playheadCapTop} />
             <View style={styles.playheadLine} />
             <View style={styles.playheadCapBottom} />

@@ -124,9 +124,37 @@ export type ScheduleLayerFadesOptions = {
 
 type AudioParamLike = {
   cancelScheduledValues: (time: number) => void;
+  cancelAndHoldAtTime?: (time: number) => void;
   setValueAtTime: (value: number, time: number) => unknown;
   setValueCurveAtTime: (values: Float32Array, startTime: number, duration: number) => unknown;
 };
+
+const FADE_EVENT_EPSILON = 1e-4;
+
+function safeSetValueAtTime(param: AudioParamLike, value: number, time: number): void {
+  try {
+    param.setValueAtTime(value, time);
+  } catch {
+    // Ignore conflicts; caller may have already set a curve covering this time.
+  }
+}
+
+/**
+ * Clear prior automation that could overlap `startWhen`.
+ * `cancelScheduledValues(t)` only removes events with start ≥ t, so a curve that
+ * began earlier and still spans `startWhen` survives — clear from 0 instead.
+ */
+function clearFadeAutomation(param: AudioParamLike, startWhen: number): void {
+  if (typeof param.cancelAndHoldAtTime === 'function') {
+    try {
+      param.cancelAndHoldAtTime(startWhen);
+    } catch {
+      // Fall through to full cancel.
+    }
+  }
+  // Always cancel from 0 so leftover setValueCurveAtTime ranges cannot overlap.
+  param.cancelScheduledValues(0);
+}
 
 /**
  * Schedule fade-in/out automation on a dedicated fade GainNode.
@@ -154,15 +182,15 @@ export function scheduleLayerFades(param: AudioParamLike, options: ScheduleLayer
     activeDuration
   );
 
-  param.cancelScheduledValues(startWhen);
+  clearFadeAutomation(param, startWhen);
 
   if (safePlayLength <= 0) {
-    param.setValueAtTime(0, startWhen);
+    safeSetValueAtTime(param, 0, startWhen);
     return;
   }
 
   if (clamped.fadeInSec <= 0 && clamped.fadeOutSec <= 0) {
-    param.setValueAtTime(1, startWhen);
+    safeSetValueAtTime(param, 1, startWhen);
     return;
   }
 
@@ -177,50 +205,76 @@ export function scheduleLayerFades(param: AudioParamLike, options: ScheduleLayer
     const t = (activeOffset - fadeOutStartActive) / clamped.fadeOutSec;
     startGain = fadeGainAt(t, clamped.fadeOutCurve, 'out');
   }
-  param.setValueAtTime(startGain, startWhen);
 
-  // Remaining fade-in.
-  if (clamped.fadeInSec > 0 && activeOffset < clamped.fadeInSec) {
-    const remainingIn = clamped.fadeInSec - activeOffset;
-    const curveDuration = Math.min(remainingIn, safePlayLength);
-    if (curveDuration > 0) {
-      const startT = activeOffset / clamped.fadeInSec;
-      const endT = Math.min(1, (activeOffset + curveDuration) / clamped.fadeInSec);
-      const samples = sampleFadeSegment(clamped.fadeInCurve, 'in', startT, endT);
-      try {
-        param.setValueCurveAtTime(samples, startWhen, curveDuration);
-      } catch {
-        param.setValueAtTime(fadeGainAt(endT, clamped.fadeInCurve, 'in'), startWhen + curveDuration);
-      }
-      if (endT >= 1 && startWhen + curveDuration < stopWhen - 1e-4) {
-        param.setValueAtTime(1, startWhen + curveDuration);
-      }
+  const willScheduleFadeInCurve =
+    clamped.fadeInSec > 0 &&
+    activeOffset < clamped.fadeInSec &&
+    Math.min(clamped.fadeInSec - activeOffset, safePlayLength) > 0;
+
+  // Fade-out window in audio time (needed before hold-at-1 to avoid overlaps).
+  let fadeOutAudioStart = Number.POSITIVE_INFINITY;
+  let fadeOutDuration = 0;
+  if (clamped.fadeOutSec > 0 && endActive > fadeOutStartActive && activeOffset < activeDuration) {
+    fadeOutAudioStart = startWhen + Math.max(0, fadeOutStartActive - activeOffset);
+    const fadeOutAudioEnd = Math.min(
+      stopWhen,
+      startWhen + Math.max(0, activeDuration - activeOffset)
+    );
+    fadeOutDuration = fadeOutAudioEnd - fadeOutAudioStart;
+    if (!(fadeOutDuration > FADE_EVENT_EPSILON && fadeOutAudioStart < stopWhen)) {
+      fadeOutAudioStart = Number.POSITIVE_INFINITY;
+      fadeOutDuration = 0;
     }
   }
 
+  // Remaining fade-in. Curve's first sample is startGain — do not also setValueAtTime
+  // at the same instant (conflicts on some engines).
+  if (willScheduleFadeInCurve) {
+    const remainingIn = clamped.fadeInSec - activeOffset;
+    const curveDuration = Math.min(remainingIn, safePlayLength);
+    const startT = activeOffset / clamped.fadeInSec;
+    const endT = Math.min(1, (activeOffset + curveDuration) / clamped.fadeInSec);
+    const samples = sampleFadeSegment(clamped.fadeInCurve, 'in', startT, endT);
+    try {
+      param.setValueCurveAtTime(samples, startWhen, curveDuration);
+    } catch {
+      safeSetValueAtTime(
+        param,
+        fadeGainAt(endT, clamped.fadeInCurve, 'in'),
+        startWhen + curveDuration
+      );
+    }
+    const holdAt = startWhen + curveDuration + FADE_EVENT_EPSILON;
+    const fadeOutCoversHold =
+      fadeOutDuration > 0 &&
+      holdAt >= fadeOutAudioStart - FADE_EVENT_EPSILON &&
+      holdAt <= fadeOutAudioStart + fadeOutDuration + FADE_EVENT_EPSILON;
+    if (endT >= 1 && holdAt < stopWhen - FADE_EVENT_EPSILON && !fadeOutCoversHold) {
+      safeSetValueAtTime(param, 1, holdAt);
+    }
+  } else {
+    safeSetValueAtTime(param, startGain, startWhen);
+  }
+
   // Fade-out overlapping this schedule window.
-  if (clamped.fadeOutSec > 0 && endActive > fadeOutStartActive && activeOffset < activeDuration) {
-    const fadeOutAudioStart = startWhen + Math.max(0, fadeOutStartActive - activeOffset);
-    const fadeOutAudioEnd = Math.min(stopWhen, startWhen + Math.max(0, activeDuration - activeOffset));
-    const fadeOutDuration = fadeOutAudioEnd - fadeOutAudioStart;
-    if (fadeOutDuration > 1e-4 && fadeOutAudioStart < stopWhen) {
-      const startT = Math.max(
-        0,
-        Math.min(1, (Math.max(activeOffset, fadeOutStartActive) - fadeOutStartActive) / clamped.fadeOutSec)
+  if (fadeOutDuration > 0) {
+    const startT = Math.max(
+      0,
+      Math.min(1, (Math.max(activeOffset, fadeOutStartActive) - fadeOutStartActive) / clamped.fadeOutSec)
+    );
+    const endT = Math.max(
+      startT,
+      Math.min(1, (Math.min(endActive, activeDuration) - fadeOutStartActive) / clamped.fadeOutSec)
+    );
+    const samples = sampleFadeSegment(clamped.fadeOutCurve, 'out', startT, endT);
+    try {
+      param.setValueCurveAtTime(samples, fadeOutAudioStart, fadeOutDuration);
+    } catch {
+      safeSetValueAtTime(
+        param,
+        fadeGainAt(endT, clamped.fadeOutCurve, 'out'),
+        fadeOutAudioStart + fadeOutDuration
       );
-      const endT = Math.max(
-        startT,
-        Math.min(1, (Math.min(endActive, activeDuration) - fadeOutStartActive) / clamped.fadeOutSec)
-      );
-      const samples = sampleFadeSegment(clamped.fadeOutCurve, 'out', startT, endT);
-      try {
-        param.setValueCurveAtTime(samples, fadeOutAudioStart, fadeOutDuration);
-      } catch {
-        param.setValueAtTime(
-          fadeGainAt(endT, clamped.fadeOutCurve, 'out'),
-          fadeOutAudioStart + fadeOutDuration
-        );
-      }
     }
   }
 }

@@ -138,6 +138,8 @@ function RecordingRowComponent({
   };
 
   const handlePlayPause = async () => {
+    // Manual transport cancels scrub-end auto-resume.
+    resumeAfterScrubRef.current = false;
     if (!(await ensureLoaded())) {
       return;
     }
@@ -160,18 +162,18 @@ function RecordingRowComponent({
 
   const handleMiniSeek = (time: number) => {
     if (engine.getState().memoId === memo.id) {
-      engine.seek(time);
+      engine.setPlaybackTime(time);
       return;
     }
     void ensureLoaded().then((ok) => {
       if (ok) {
-        engine.seek(time);
+        engine.setPlaybackTime(time);
       }
     });
   };
 
   const handleMiniScrubStart = () => {
-    // Pause synchronously when already loaded so the first seek does not auto-resume.
+    // Pause synchronously when already loaded so scrub moves stay on the light path.
     if (engine.getState().memoId === memo.id) {
       engine.setLoopEnabled(false);
       if (engine.getState().isPlaying) {
@@ -196,7 +198,9 @@ function RecordingRowComponent({
       return;
     }
     resumeAfterScrubRef.current = false;
-    void engine.play();
+    void engine.play().catch(() => {
+      // Play may race with a later pause; surface via the play button path if needed.
+    });
   };
 
   const handleShare = () => {
