@@ -6,6 +6,8 @@ import { runOnJS } from 'react-native-reanimated';
 import { colorDesaturatedWithAlpha } from '@/constants/VoiceMemosColors';
 import { hasAnySoloActive } from '@/src/audio/layerEffects';
 import {
+  barsPerCycleAtPps,
+  loopPeakIndex,
   normalizePeaksForBarCount,
   peakToAbsoluteScale,
   slicePeaksForTrim,
@@ -233,12 +235,9 @@ export function MiniWaveformTracks({
       const left = (track.startTime / duration) * width;
       const trackWidth = Math.max(0, (track.duration / duration) * width);
       const barCount = Math.max(0, Math.floor(trackWidth / BAR_STEP));
-      const cycleBarCount = Math.max(
-        1,
-        Math.floor(
-          ((track.cycleDuration / Math.max(track.duration, 0.01)) * trackWidth) / BAR_STEP
-        )
-      );
+      const effectivePps = duration > 0 ? width / duration : 0;
+      const barsPerCycle = barsPerCycleAtPps(track.cycleDuration, effectivePps, BAR_STEP);
+      const cycleBarCount = Math.max(1, Math.floor(barsPerCycle));
       const cyclePeaks =
         barCount > 0 ? normalizePeaksForBarCount(track.peaks, cycleBarCount) : [];
       const maxBarHeight = Math.max(2, laneHeight - 2);
@@ -256,7 +255,8 @@ export function MiniWaveformTracks({
           {trackWidth > 0 ? (
             <View style={[styles.barsRow, { left, width: trackWidth, height: laneHeight }]}>
               {Array.from({ length: barCount }, (_, index) => {
-                const peak = cyclePeaks[index % cycleBarCount] ?? 0;
+                const peak =
+                  cyclePeaks[loopPeakIndex(index, barsPerCycle, cycleBarCount)] ?? 0;
                 const scaled = peakToAbsoluteScale(peak);
                 const barHeight =
                   scaled <= 0.01

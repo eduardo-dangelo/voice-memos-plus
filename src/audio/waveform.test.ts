@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import {
   CAPTURED_PEAKS_MIN_DENSITY,
   computeWaveformPeaksFromChannelData,
+  loopPeakIndex,
   normalizePeaksForBarCount,
   peakCountForDuration,
   peakToAbsoluteScale,
@@ -122,4 +123,36 @@ test('computeWaveformPeaksFromChannelData matches peakCount and finds loud sampl
   assert.equal(peaks[1], 0);
   assert.ok(Math.abs(peaks[2]! - 0.6) < 1e-6);
   assert.equal(peaks[3], 0);
+});
+
+test('loopPeakIndex avoids phase drift on non-integer barsPerCycle', () => {
+  // List-row density example: ~14.625 bars/cycle → floor = 14.
+  const barsPerCycle = 14.625;
+  const cycleBarCount = Math.floor(barsPerCycle);
+
+  let mismatches = 0;
+  for (let i = 0; i < 45; i += 1) {
+    const phasePos = ((i % barsPerCycle) + barsPerCycle) % barsPerCycle;
+    const expected = Math.min(
+      cycleBarCount - 1,
+      Math.floor((phasePos / barsPerCycle) * cycleBarCount)
+    );
+    assert.equal(loopPeakIndex(i, barsPerCycle, cycleBarCount), expected);
+    if (i % cycleBarCount !== expected) {
+      mismatches += 1;
+    }
+  }
+  // Integer modulo drifts once barsPerCycle is non-integer.
+  assert.ok(mismatches > 0);
+
+  // Each cycle restart maps near peak 0 (not a drifted mid-cycle index).
+  assert.equal(loopPeakIndex(0, barsPerCycle, cycleBarCount), 0);
+  assert.equal(loopPeakIndex(15, barsPerCycle, cycleBarCount), 0);
+  assert.equal(loopPeakIndex(30, barsPerCycle, cycleBarCount), 0);
+});
+
+test('loopPeakIndex handles edge cases', () => {
+  assert.equal(loopPeakIndex(5, 14.625, 0), 0);
+  assert.equal(loopPeakIndex(5, 0, 14), 5);
+  assert.equal(loopPeakIndex(20, 0, 14), 13);
 });

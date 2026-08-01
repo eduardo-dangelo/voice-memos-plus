@@ -150,6 +150,39 @@ export function normalizePeaksForBarCount(
   return resamplePeaks(getPeaksForMemo(peaks, barCount), barCount);
 }
 
+/**
+ * Map a bar index within a looped footprint to an index in a one-cycle peak array.
+ * Uses fractional `barsPerCycle` so later cycles do not drift when that value is
+ * non-integer (common at list-row density where `floor(barsPerCycle)` truncates).
+ */
+export function loopPeakIndex(
+  barIndex: number,
+  barsPerCycle: number,
+  cycleBarCount: number
+): number {
+  if (cycleBarCount <= 0) {
+    return 0;
+  }
+  if (!(barsPerCycle > 0) || !Number.isFinite(barsPerCycle)) {
+    return Math.min(cycleBarCount - 1, Math.max(0, Math.floor(barIndex)));
+  }
+  const phasePos = ((barIndex % barsPerCycle) + barsPerCycle) % barsPerCycle;
+  const phase = phasePos / barsPerCycle;
+  return Math.min(cycleBarCount - 1, Math.floor(phase * cycleBarCount));
+}
+
+/** Float bar count spanning one loop cycle at the given pixels-per-second. */
+export function barsPerCycleAtPps(
+  cycleDuration: number,
+  pixelsPerSecond: number,
+  barStep: number = WAVEFORM_BAR_WIDTH + WAVEFORM_BAR_GAP
+): number {
+  if (!(cycleDuration > 0) || !(pixelsPerSecond > 0) || !(barStep > 0)) {
+    return 0;
+  }
+  return (cycleDuration * pixelsPerSecond) / barStep;
+}
+
 export function slicePeaksForTrim(
   peaks: number[] | undefined,
   duration: number,

@@ -30,6 +30,8 @@ import {
   TIMELINE_DEFAULT_PIXELS_PER_SECOND,
 } from '@/src/audio/timelineZoom';
 import {
+  barsPerCycleAtPps,
+  loopPeakIndex,
   normalizePeaksForBarCount,
   peakToAbsoluteScale,
   WAVEFORM_BAR_GAP,
@@ -1103,7 +1105,11 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
     track.cycleDuration ?? track.duration
   );
   const barCount = getTrackBarCount(track.duration, contentWidth, pixelsPerSecond);
-  const cycleBarCount = getTrackBarCount(cycleDuration, contentWidth, pixelsPerSecond);
+  const barsPerCycle = Math.min(
+    contentWidth / BAR_STEP,
+    barsPerCycleAtPps(cycleDuration, pixelsPerSecond, BAR_STEP)
+  );
+  const cycleBarCount = Math.max(1, Math.floor(barsPerCycle));
   const trackOffset = track.startTime * pixelsPerSecond;
   const trackWidth = barCount * BAR_STEP;
 
@@ -1402,8 +1408,7 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
                 { length: Math.max(0, visibleBars.endIndex - visibleBars.startIndex) },
                 (_, offset) => {
                   const index = visibleBars.startIndex + offset;
-                  const peakIndex =
-                    cycleBarCount > 0 ? index % cycleBarCount : index;
+                  const peakIndex = loopPeakIndex(index, barsPerCycle, cycleBarCount);
                   const peak = normalizedPeaks[peakIndex] ?? 0;
                   const barTime = (index * BAR_STEP) / pixelsPerSecond;
                   const inKeepRegion =
