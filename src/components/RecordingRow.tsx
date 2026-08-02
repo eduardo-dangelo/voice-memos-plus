@@ -354,7 +354,7 @@ function RecordingRowComponent({
         <View style={styles.exportOverlay}>
           <View style={styles.exportCard}>
             <ActivityIndicator color={colors.accent} size="large" />
-            <Text style={styles.exportText}>Preparing audio…</Text>
+            <Text style={styles.exportText}>Preparing export…</Text>
           </View>
         </View>
       </Modal>

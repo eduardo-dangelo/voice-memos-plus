@@ -15,6 +15,7 @@ export type FloatingHeaderIcon =
   | 'folder.badge.plus'
   | 'chevron.left'
   | 'square.and.arrow.up'
+  | 'square.and.arrow.down'
   | 'pencil'
   | 'plus.square.on.square'
   | 'trash'

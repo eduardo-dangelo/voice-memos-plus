@@ -57,7 +57,7 @@ import {
   hasRecording,
 } from './types';
 
-export type ExportFormat = 'm4a' | 'wav';
+export type ExportFormat = 'm4a' | 'wav' | 'vmp';
 
 function alignLayerFileNameWithSource(layer: Layer, sourcePath: string): void {
   const sourceIsWav = sourcePath.toLowerCase().endsWith('.wav');
@@ -1011,6 +1011,14 @@ export async function exportMemoToFile(
 ): Promise<File> {
   if (!hasRecording(memo)) {
     throw new Error('This memo has no recorded audio.');
+  }
+
+  if (format === 'vmp') {
+    if (layerId) {
+      throw new Error('Project export is only available for the full memo.');
+    }
+    const { packMemoToProjectFile } = await import('./memoPackage');
+    return packMemoToProjectFile(memo);
   }
 
   const rendered = await renderMemoForShare(memo, layerId);

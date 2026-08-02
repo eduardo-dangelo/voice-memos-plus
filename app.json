@@ -35,11 +35,37 @@
           "UIInterfaceOrientationPortraitUpsideDown",
           "UIInterfaceOrientationLandscapeLeft",
           "UIInterfaceOrientationLandscapeRight"
+        ],
+        "UTExportedTypeDeclarations": [
+          {
+            "UTTypeIdentifier": "com.eduardodangelo.voicememosplus.project",
+            "UTTypeDescription": "Voice Memos Plus Project",
+            "UTTypeConformsTo": [
+              "public.data"
+            ],
+            "UTTypeTagSpecification": {
+              "public.filename-extension": [
+                "vmp"
+              ],
+              "public.mime-type": "application/vnd.voice-memos-plus.project"
+            }
+          }
+        ],
+        "CFBundleDocumentTypes": [
+          {
+            "CFBundleTypeName": "Voice Memos Plus Project",
+            "CFBundleTypeRole": "Editor",
+            "LSHandlerRank": "Owner",
+            "LSItemContentTypes": [
+              "com.eduardodangelo.voicememosplus.project"
+            ]
+          }
         ]
       }
     },
     "plugins": [
       "expo-router",
+      "expo-document-picker",
       [
         "react-native-audio-api",
         {

@@ -1,0 +1,12 @@
+{
+  "name": "project-document-picker",
+  "version": "1.0.0",
+  "description": "Pick Voice Memos Plus .vmp project files via UIDocumentPicker and the app UTI",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "peerDependencies": {
+    "expo": "*",
+    "react": "*",
+    "react-native": "*"
+  }
+}

@@ -15,8 +15,32 @@ export type ShareMemoOptions = {
   onExportFinished?: () => void;
 };
 
+const AUDIO_FORMATS = ['m4a', 'wav'] as const;
+const PROJECT_FORMAT_LABEL = 'Project (.vmp)';
+
 function getShareMimeType(format: ExportFormat): string {
+  if (format === 'vmp') {
+    // Share as zip so Files/AirDrop type the package as an archive the picker can match.
+    return 'application/zip';
+  }
   return format === 'm4a' ? 'audio/mp4' : 'audio/wav';
+}
+
+function getShareUti(format: ExportFormat): string {
+  if (format === 'vmp') {
+    return 'public.zip-archive';
+  }
+  return format === 'm4a' ? 'public.mpeg-4-audio' : 'com.microsoft.waveform-audio';
+}
+
+function resolveFormatSelection(label: string): ExportFormat | null {
+  if (label === 'm4a' || label === 'wav') {
+    return label;
+  }
+  if (label === PROJECT_FORMAT_LABEL) {
+    return 'vmp';
+  }
+  return null;
 }
 
 async function exportAndShare(
@@ -38,7 +62,7 @@ async function exportAndShare(
 
     await Sharing.shareAsync(file.uri, {
       mimeType: getShareMimeType(format),
-      UTI: format === 'm4a' ? 'public.mpeg-4-audio' : 'com.microsoft.waveform-audio',
+      UTI: getShareUti(format),
     });
   } finally {
     options?.onExportFinished?.();
@@ -46,7 +70,10 @@ async function exportAndShare(
 }
 
 function showFormatPicker(memo: Memo, options?: ShareMemoOptions): void {
-  const sheetOptions = ['m4a', 'wav', 'Cancel'] as const;
+  const includeProject = !options?.layerId;
+  const sheetOptions = includeProject
+    ? ([...AUDIO_FORMATS, PROJECT_FORMAT_LABEL, 'Cancel'] as const)
+    : ([...AUDIO_FORMATS, 'Cancel'] as const);
   const cancelIndex = sheetOptions.indexOf('Cancel');
 
   ActionSheetIOS.showActionSheetWithOptions(
@@ -57,14 +84,19 @@ function showFormatPicker(memo: Memo, options?: ShareMemoOptions): void {
     },
     (index) => {
       const selected = sheetOptions[index];
-      if (selected === 'm4a' || selected === 'wav') {
-        void exportAndShare(memo, selected, options).catch((error) => {
-          Alert.alert(
-            'Export failed',
-            error instanceof Error ? error.message : 'Unknown error'
-          );
-        });
+      if (!selected || selected === 'Cancel') {
+        return;
       }
+      const format = resolveFormatSelection(selected);
+      if (!format) {
+        return;
+      }
+      void exportAndShare(memo, format, options).catch((error) => {
+        Alert.alert(
+          'Export failed',
+          error instanceof Error ? error.message : 'Unknown error'
+        );
+      });
     }
   );
 }
@@ -75,7 +107,11 @@ export function shareMemo(memo: Memo, options?: ShareMemoOptions): void {
     return;
   }
 
-  if (options?.format === 'm4a' || options?.format === 'wav') {
+  if (options?.format === 'm4a' || options?.format === 'wav' || options?.format === 'vmp') {
+    if (options.format === 'vmp' && options.layerId) {
+      Alert.alert('Export failed', 'Project export is only available for the full memo.');
+      return;
+    }
     void exportAndShare(memo, options.format, options).catch((error) => {
       Alert.alert(
         'Export failed',

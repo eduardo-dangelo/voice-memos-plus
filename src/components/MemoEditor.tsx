@@ -2438,6 +2438,7 @@ export function MemoEditor({
     await cancelEditDraft();
     flushEffectsPersist();
     flushStartTimePersist();
+    flushTrackLoopPersist();
     flushMetronomePersist();
     if (persistLoopTimeout.current) {
       clearTimeout(persistLoopTimeout.current);
@@ -2454,6 +2455,7 @@ export function MemoEditor({
     flushEffectsPersist,
     flushMetronomePersist,
     flushStartTimePersist,
+    flushTrackLoopPersist,
     memo,
     stopAndSaveActiveRecording,
   ]);
@@ -2462,11 +2464,18 @@ export function MemoEditor({
     if (!memo) {
       return;
     }
-    shareMemo(memo, {
-      onExportStarted: () => setIsExporting(true),
-      onExportFinished: () => setIsExporting(false),
-    });
-  }, [memo]);
+    void (async () => {
+      const ok = await flushEditorState();
+      if (!ok) {
+        return;
+      }
+      const current = memoRef.current ?? memo;
+      shareMemo(current, {
+        onExportStarted: () => setIsExporting(true),
+        onExportFinished: () => setIsExporting(false),
+      });
+    })();
+  }, [flushEditorState, memo]);
 
   const handleRename = useCallback(() => {
     if (!memo) {
@@ -3724,7 +3733,7 @@ export function MemoEditor({
         <View style={styles.exportOverlay}>
           <View style={styles.exportCard}>
             <ActivityIndicator color={colors.accent} size="large" />
-            <Text style={styles.exportText}>Preparing audio…</Text>
+            <Text style={styles.exportText}>Preparing export…</Text>
           </View>
         </View>
       </Modal>

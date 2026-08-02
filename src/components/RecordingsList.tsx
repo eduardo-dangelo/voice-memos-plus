@@ -11,8 +11,10 @@ import {
   type ReactNode,
 } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   Keyboard,
+  Modal,
   Platform,
   Pressable,
   StyleSheet,
@@ -23,6 +25,7 @@ import {
 import Animated from 'react-native-reanimated';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { promptImportMemo } from '@/src/actions/importMemo';
 import { useAudioEngineSelector } from '@/src/audio/AudioEngineContext';
 import { memoAudioEngine } from '@/src/audio/MemoAudioEngine';
 import { FloatingHeaderButton } from '@/src/components/FloatingHeaderButton';
@@ -88,6 +91,7 @@ export function RecordingsList({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isSearchActive, setIsSearchActive] = useState(false);
   const [isStartingRecord, setIsStartingRecord] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
   const startingRecordRef = useRef(false);
   const isTrash = scope.kind === 'trash';
   const isSidebar = layoutMode === 'sidebar';
@@ -282,8 +286,29 @@ export function RecordingsList({
     setIsSearchActive(true);
   }, []);
 
+  const handleImport = useCallback(() => {
+    if (isTrash || isImporting) {
+      return;
+    }
+    promptImportMemo({
+      folderId,
+      onImportStarted: () => setIsImporting(true),
+      onImportFinished: () => setIsImporting(false),
+      onImported: () => {
+        void refresh({ silent: true });
+      },
+    });
+  }, [folderId, isImporting, isTrash, refresh]);
+
   const headerRightActions = (
     <>
+      {!isTrash ? (
+        <FloatingHeaderButton
+          accessibilityLabel="Import project"
+          icon="square.and.arrow.down"
+          onPress={handleImport}
+        />
+      ) : null}
       <FloatingHeaderButton
         accessibilityLabel="Search recordings"
         icon="magnifyingglass"
@@ -313,6 +338,22 @@ export function RecordingsList({
         ? {
             unstable_headerRightItems: () => {
               const items = [
+                ...(!isTrash
+                  ? [
+                      {
+                        type: 'custom' as const,
+                        hidesSharedBackground: true,
+                        sharesBackground: false,
+                        element: (
+                          <FloatingHeaderButton
+                            accessibilityLabel="Import project"
+                            icon="square.and.arrow.down"
+                            onPress={handleImport}
+                          />
+                        ),
+                      },
+                    ]
+                  : []),
                 {
                   type: 'custom' as const,
                   hidesSharedBackground: true,
@@ -362,9 +403,11 @@ export function RecordingsList({
     };
   }, [
     countLabel,
+    handleImport,
     handleSearchPress,
     headerExtraActions,
     isSidebar,
+    isTrash,
     listTitle,
     selectionMode,
     styles.headerActions,
@@ -491,6 +534,14 @@ export function RecordingsList({
         // Plain View: SafeAreaView (RN or context) fights headerLargeTitle and causes a vertical title jump.
         <View style={styles.screen}>{listBody}</View>
       )}
+      <Modal animationType="fade" transparent visible={isImporting}>
+        <View style={styles.importOverlay}>
+          <View style={styles.importCard}>
+            <ActivityIndicator color={colors.accent} size="large" />
+            <Text style={styles.importText}>Importing project…</Text>
+          </View>
+        </View>
+      </Modal>
     </>
   );
 }
@@ -597,6 +648,25 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           fontSize: 15,
           color: colors.secondaryText,
           textAlign: 'center',
+        },
+        importOverlay: {
+          flex: 1,
+          backgroundColor: 'rgba(0,0,0,0.35)',
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        importCard: {
+          minWidth: 180,
+          paddingHorizontal: 24,
+          paddingVertical: 20,
+          borderRadius: 14,
+          backgroundColor: colors.background,
+          alignItems: 'center',
+          gap: 12,
+        },
+        importText: {
+          fontSize: 16,
+          color: colors.text,
         },
       }),
     [colors]
