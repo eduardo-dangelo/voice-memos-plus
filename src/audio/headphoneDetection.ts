@@ -41,16 +41,6 @@ export async function isHeadphonesConnected(): Promise<boolean> {
   }
 }
 
-export function requiresHeadphones(
-  memo: Memo,
-  mode: 'replace' | 'stack'
-): boolean {
-  if (mode === 'stack') {
-    return true;
-  }
-  return getPlayableLayers(memo).length > 1;
-}
-
 export function needsMonitorMix(memo: Memo, mode: 'replace' | 'stack'): boolean {
   if (mode === 'stack') {
     return true;

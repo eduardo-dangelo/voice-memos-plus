@@ -89,6 +89,11 @@ const METRONOME_SCHEDULE_EXTEND_LEAD_SEC = 2;
 /** Sliding window for monitor-mix layer sources (same idea as metronome chunks). */
 const MONITOR_MIX_SCHEDULE_CHUNK_SEC = 12;
 const MONITOR_MIX_SCHEDULE_EXTEND_LEAD_SEC = 2;
+/**
+ * Cue (monitor mix + metronome) gain when stacking/replacing on speaker.
+ * Quieter output reduces mic bleed into the new take (~−8 dB).
+ */
+const SPEAKER_MONITOR_MIX_GAIN = 0.4;
 /** Ignore routeChange callbacks caused by our own setAudioSessionOptions. */
 const ROUTE_CHANGE_IGNORE_MS = 400;
 
@@ -270,6 +275,8 @@ export class MemoAudioEngine {
   private recordingPrepared = false;
   private recordingWarmupFinalized = false;
   private preparedMonitorMix = false;
+  /** Lower master cue gain while monitor-mixing without headphones. */
+  private preparedDuckMonitorMix = false;
   /** Layer muted in monitor mix while replacing (other layers stay audible). */
   private monitorSilentLayerId: string | null = null;
   /** Set by abortRecordingStartCommit() to interrupt the precount downbeat wait. */
@@ -1575,6 +1582,24 @@ export class MemoAudioEngine {
     this.mixGraph = new MemoMixGraph();
   }
 
+  private setMasterOutputGain(gain: number): void {
+    if (!this.context) {
+      return;
+    }
+    this.mixGraph.getMasterGain(this.context).gain.value = gain;
+  }
+
+  private applyPreparedMonitorMixGain(): void {
+    this.setMasterOutputGain(
+      this.preparedDuckMonitorMix ? SPEAKER_MONITOR_MIX_GAIN : 1
+    );
+  }
+
+  private clearMonitorMixDuck(): void {
+    this.preparedDuckMonitorMix = false;
+    this.setMasterOutputGain(1);
+  }
+
   private syncMixGraph(context: AudioContext): void {
     this.mixGraph.syncLayers(
       context,
@@ -2271,6 +2296,7 @@ export class MemoAudioEngine {
 
   async startRecording(options?: {
     monitorMix?: boolean;
+    duckMonitorMix?: boolean;
     monitorStartTime?: number;
     silentLayerId?: string;
   }): Promise<void> {
@@ -2282,7 +2308,10 @@ export class MemoAudioEngine {
     }
 
     const startPromise = (async () => {
-      await this.prepareRecordingStart({ monitorMix: options?.monitorMix });
+      await this.prepareRecordingStart({
+        monitorMix: options?.monitorMix,
+        duckMonitorMix: options?.duckMonitorMix,
+      });
       await this.performCommitRecordingStart(options);
     })();
     this.recordingStartInFlight = startPromise;
@@ -2299,7 +2328,10 @@ export class MemoAudioEngine {
    * Warm permission, recorder allocation, and monitor-mix buffers without
    * tearing down the current playback/precount AudioContext (Phase A).
    */
-  async prepareRecordingStart(options?: { monitorMix?: boolean }): Promise<void> {
+  async prepareRecordingStart(options?: {
+    monitorMix?: boolean;
+    duckMonitorMix?: boolean;
+  }): Promise<void> {
     if (this.state.isRecording || this.recordingPrepared) {
       return;
     }
@@ -2320,6 +2352,7 @@ export class MemoAudioEngine {
 
   private async performPrepareRecordingStart(options?: {
     monitorMix?: boolean;
+    duckMonitorMix?: boolean;
   }): Promise<void> {
     if (this.state.isRecording || this.recordingPrepared) {
       return;
@@ -2327,6 +2360,7 @@ export class MemoAudioEngine {
 
     const monitorMix = options?.monitorMix ?? false;
     this.preparedMonitorMix = monitorMix;
+    this.preparedDuckMonitorMix = Boolean(monitorMix && options?.duckMonitorMix);
 
     const granted = await this.requestPermission();
     if (!granted) {
@@ -2411,6 +2445,7 @@ export class MemoAudioEngine {
    */
   async finalizeRecordingWarmup(options?: {
     monitorMix?: boolean;
+    duckMonitorMix?: boolean;
   }): Promise<void> {
     if (this.state.isRecording) {
       return;
@@ -2418,6 +2453,12 @@ export class MemoAudioEngine {
 
     // Fast path first — never await prepare in-flight if already warm (avoids hang).
     if (this.recordingWarmupFinalized && this.context && this.recorder) {
+      if (options?.duckMonitorMix != null) {
+        this.preparedDuckMonitorMix = Boolean(
+          (options.monitorMix ?? this.preparedMonitorMix) && options.duckMonitorMix
+        );
+      }
+      this.applyPreparedMonitorMixGain();
       return;
     }
 
@@ -2426,10 +2467,18 @@ export class MemoAudioEngine {
     }
 
     if (!this.recordingPrepared || !this.recorder) {
-      await this.prepareRecordingStart({ monitorMix: options?.monitorMix });
+      await this.prepareRecordingStart({
+        monitorMix: options?.monitorMix,
+        duckMonitorMix: options?.duckMonitorMix,
+      });
+    } else if (options?.duckMonitorMix != null) {
+      this.preparedDuckMonitorMix = Boolean(
+        (options.monitorMix ?? this.preparedMonitorMix) && options.duckMonitorMix
+      );
     }
 
     if (this.recordingWarmupFinalized && this.context && this.recorder) {
+      this.applyPreparedMonitorMixGain();
       return;
     }
 
@@ -2449,6 +2498,7 @@ export class MemoAudioEngine {
 
       const context = await this.ensureRecordingContext({ sessionReady: true });
       this.syncMixGraph(context);
+      this.applyPreparedMonitorMixGain();
 
       this.recordingPlaybackBuffers.clear();
       if (monitorMix && this.loadedLayers.length > 0) {
@@ -2481,6 +2531,7 @@ export class MemoAudioEngine {
    */
   async commitRecordingStart(options?: {
     monitorMix?: boolean;
+    duckMonitorMix?: boolean;
     monitorStartTime?: number;
     nextBeatDeadlineMs?: number;
     silentLayerId?: string;
@@ -2506,6 +2557,7 @@ export class MemoAudioEngine {
 
   private async performCommitRecordingStart(options?: {
     monitorMix?: boolean;
+    duckMonitorMix?: boolean;
     monitorStartTime?: number;
     nextBeatDeadlineMs?: number;
     silentLayerId?: string;
@@ -2519,8 +2571,14 @@ export class MemoAudioEngine {
     const monitorMix = options?.monitorMix ?? this.preparedMonitorMix;
     const monitorStartTime = options?.monitorStartTime ?? 0;
     this.monitorSilentLayerId = options?.silentLayerId ?? null;
+    if (options?.duckMonitorMix != null) {
+      this.preparedDuckMonitorMix = Boolean(monitorMix && options.duckMonitorMix);
+    }
 
-    await this.finalizeRecordingWarmup({ monitorMix });
+    await this.finalizeRecordingWarmup({
+      monitorMix,
+      duckMonitorMix: this.preparedDuckMonitorMix,
+    });
 
     if (this.recordingStartAborted) {
       throw new RecordingStartAbortedError();
@@ -2545,6 +2603,7 @@ export class MemoAudioEngine {
       // End precount click gate before arm. Arm/monitor mix stopMetronomeSources
       // themselves; do not stop earlier or the trailing "1" click is muted.
       this.allowPrecountClicks = false;
+      this.applyPreparedMonitorMixGain();
       if (monitorMix) {
         this.startMonitorMixAt(monitorStartTime, startWhen);
       } else if (this.metronomeSettings.enabled) {
@@ -2687,6 +2746,7 @@ export class MemoAudioEngine {
     this.recordingPrepared = false;
     this.recordingWarmupFinalized = false;
     this.preparedMonitorMix = false;
+    this.clearMonitorMixDuck();
     this.monitorSilentLayerId = null;
     this.recordingPlaybackBuffers.clear();
     this.allowPrecountClicks = true;
@@ -2707,6 +2767,7 @@ export class MemoAudioEngine {
       this.recordingPrepared = false;
       this.recordingWarmupFinalized = false;
       this.preparedMonitorMix = false;
+      this.clearMonitorMixDuck();
       this.monitorSilentLayerId = null;
       this.recordingPlaybackBuffers.clear();
       this.allowPrecountClicks = true;
@@ -2757,6 +2818,7 @@ export class MemoAudioEngine {
       this.stopActiveSources();
       this.recordingPlaybackBuffers.clear();
       this.clearMetronomeOnlyState();
+      this.clearMonitorMixDuck();
       this.playbackContextStartWhen = 0;
       this.resetPlaybackRateClock();
       this.clearPlaybackTimer();

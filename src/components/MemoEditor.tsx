@@ -24,7 +24,6 @@ import { RecordingStartAbortedError, type EngineState } from '@/src/audio/MemoAu
 import {
   isHeadphonesConnected,
   needsMonitorMix,
-  requiresHeadphones,
   subscribeHeadphoneDisconnect,
   subscribeHeadphonesConnected,
 } from '@/src/audio/headphoneDetection';
@@ -2720,20 +2719,42 @@ export function MemoEditor({
       }
     }
 
+    const useMonitorMix = needsMonitorMix(memo, mode);
+    const headphonesConnected = await isHeadphonesConnected();
+    if (useMonitorMix && !headphonesConnected) {
+      Alert.alert(
+        '⚠️ Headphones recommended',
+        'Without headphones, playback will leak into the new track through the microphone. Are you sure you want to continue?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Continue',
+            onPress: () => {
+              void startArmedRecording(mode, true);
+            },
+          },
+        ]
+      );
+      return;
+    }
+
+    await startArmedRecording(mode, false);
+  };
+
+  const startArmedRecording = async (
+    mode: 'replace' | 'stack',
+    duckMonitorMix: boolean
+  ) => {
+    if (!memo || !hasRecording(memo)) {
+      return;
+    }
+
+    if (beginRecordingInFlight.current || engine.getState().isRecording) {
+      return;
+    }
+
     beginRecordingInFlight.current = true;
     try {
-      if (requiresHeadphones(memo, mode) && !(await isHeadphonesConnected())) {
-        Alert.alert(
-          'Connect headphones',
-          'Plug in earbuds or headphones to record over existing tracks. Audio plays through your headphones; recording uses your iPhone microphone.'
-        );
-        return;
-      }
-
-      if (engine.getState().isRecording) {
-        return;
-      }
-
       if (!sidebarCollapsed && onToggleSidebar) {
         onToggleSidebar();
       }
@@ -2806,12 +2827,16 @@ export function MemoEditor({
 
         await engine.prepareRecordingStart({
           monitorMix: useMonitorMix,
+          duckMonitorMix: useMonitorMix && duckMonitorMix,
         });
         if (precountCancelledRef.current) {
           await abortArmedRecording();
           return;
         }
-        await engine.finalizeRecordingWarmup({ monitorMix: useMonitorMix });
+        await engine.finalizeRecordingWarmup({
+          monitorMix: useMonitorMix,
+          duckMonitorMix: useMonitorMix && duckMonitorMix,
+        });
         if (precountCancelledRef.current) {
           await abortArmedRecording();
           return;
@@ -2836,6 +2861,7 @@ export function MemoEditor({
 
         await engine.commitRecordingStart({
           monitorMix: useMonitorMix,
+          duckMonitorMix: useMonitorMix && duckMonitorMix,
           monitorStartTime: startTime,
           nextBeatDeadlineMs,
           silentLayerId: mode === 'replace' ? activeLayerId ?? undefined : undefined,
@@ -2967,7 +2993,7 @@ export function MemoEditor({
       void cancelActiveRecording().then(() => {
         Alert.alert(
           'Headphones disconnected',
-          'Recording stopped. Connect headphones to stack tracks.'
+          'Recording stopped because the audio route changed.'
         );
       });
     });
