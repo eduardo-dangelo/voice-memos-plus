@@ -14,7 +14,7 @@
       "icon": "./assets/AppIcon.icon",
       "supportsTablet": true,
       "bundleIdentifier": "com.eduardodangelo.voicememosplus",
-      "buildNumber": "2",
+      "buildNumber": "4",
       "userInterfaceStyle": "automatic",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Voice Memos Plus needs microphone access to record audio.",
