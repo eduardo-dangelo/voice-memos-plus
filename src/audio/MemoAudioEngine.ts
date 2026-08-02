@@ -20,6 +20,10 @@ import {
     logRouteSnapshot,
     pinBuiltInMicrophone,
 } from '@/src/audio/audioInputRouting';
+import {
+    classifyCueOutputRoute,
+    type CueOutputRoute,
+} from '@/src/audio/recordingLatency';
 import { schedulePathFades } from '@/src/audio/fadeCurve';
 import {
     clearReverbIrCache,
@@ -171,6 +175,8 @@ export type RecordingCaptureResult = {
   wasMonitorMix: boolean;
   /** Monitor mix and/or metronome played from AudioContext during the take. */
   wasSoftwareMonitoredCue: boolean;
+  /** Output route class at recording start — drives software-cue compensation. */
+  cueOutputRoute: CueOutputRoute;
   recorderDuration: number;
   /** True when capture used our 44.1k WAV preset — safe to skip verify-decode. */
   usedWavFormat: boolean;
@@ -281,6 +287,8 @@ export class MemoAudioEngine {
   private monitorSilentLayerId: string | null = null;
   /** Set by abortRecordingStartCommit() to interrupt the precount downbeat wait. */
   private recordingStartAborted = false;
+  /** Cue-output route captured at prepareRecordingRoute (defaults to wired). */
+  private recordingCueOutputRoute: CueOutputRoute = 'wired';
   /** Resampled/ready buffers for monitor-mix atomic start (path → buffer). */
   private recordingPlaybackBuffers = new Map<string, AudioBuffer>();
   /** True between AVAudioSession interruption began/ended while a take is live. */
@@ -784,7 +792,15 @@ export class MemoAudioEngine {
     await this.forceConfigureForRecording();
     await pinBuiltInMicrophone();
     const routeSnapshot = await assertRecordingRouteOk();
+    this.recordingCueOutputRoute = classifyCueOutputRoute(
+      routeSnapshot.outputCategory
+    );
     logRouteSnapshot('recording-start', routeSnapshot);
+    if (__DEV__) {
+      console.log(
+        `[audio route] cueOutputRoute=${this.recordingCueOutputRoute}`
+      );
+    }
     this.refreshActiveRecordingSampleRate();
   }
 
@@ -2750,6 +2766,7 @@ export class MemoAudioEngine {
     this.monitorSilentLayerId = null;
     this.recordingPlaybackBuffers.clear();
     this.allowPrecountClicks = true;
+    this.recordingCueOutputRoute = 'wired';
     this.clearRecordingSampleRateState();
     this.invalidateAndStopSources();
   }
@@ -2771,6 +2788,7 @@ export class MemoAudioEngine {
       this.monitorSilentLayerId = null;
       this.recordingPlaybackBuffers.clear();
       this.allowPrecountClicks = true;
+      this.recordingCueOutputRoute = 'wired';
       this.clearRecordingSampleRateState();
       await this.resetPlaybackGraph();
       await this.configureForPlayback();
@@ -2813,6 +2831,7 @@ export class MemoAudioEngine {
       const wasMonitorMix = this.state.monitorMixActive;
       // Capture before clearMetronomeOnlyState — metro-only first takes need cue compensation.
       const wasSoftwareMonitoredCue = wasMonitorMix || this.metronomeOnlyActive;
+      const cueOutputRoute = this.recordingCueOutputRoute;
       const usedWavFormat = this.recordingUsedWavFormat;
       this.stopMetronomeSources();
       this.stopActiveSources();
@@ -2826,6 +2845,7 @@ export class MemoAudioEngine {
       this.monitorSilentLayerId = null;
       this.allowPrecountClicks = true;
       this.recordingInterrupted = false;
+      this.recordingCueOutputRoute = 'wired';
       this.emit({
         isRecording: false,
         recordingDuration: 0,
@@ -2849,6 +2869,7 @@ export class MemoAudioEngine {
         peaks,
         wasMonitorMix,
         wasSoftwareMonitoredCue,
+        cueOutputRoute,
         recorderDuration: result.duration,
         usedWavFormat,
       };

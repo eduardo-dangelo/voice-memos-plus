@@ -21,6 +21,7 @@ import { DEFAULT_TRACK_COLOR, pickRandomTrackColor } from '@/constants/VoiceMemo
 import { shareMemo } from '@/src/actions/shareMemo';
 import { useAudioEngine, useAudioEngineSelector } from '@/src/audio/AudioEngineContext';
 import { RecordingStartAbortedError, type EngineState } from '@/src/audio/MemoAudioEngine';
+import { subscribeCueOutputRoute } from '@/src/audio/audioInputRouting';
 import {
   isHeadphonesConnected,
   needsMonitorMix,
@@ -46,7 +47,10 @@ import {
   maybeShowPerformanceWarning,
   resetPerformanceWarningState,
 } from '@/src/audio/performanceWarning';
-import { getRecordingReplacementSkipSeconds } from '@/src/audio/recordingLatency';
+import {
+  getRecordingReplacementSkipSeconds,
+  type CueOutputRoute,
+} from '@/src/audio/recordingLatency';
 import {
   slicePeaksForTrim,
   WAVEFORM_BAR_GAP,
@@ -463,6 +467,8 @@ export function MemoEditor({
   const [recordingRenameVisible, setRecordingRenameVisible] = useState(false);
   const [metronomeSettingsVisible, setMetronomeSettingsVisible] = useState(false);
   const [headphonesConnected, setHeadphonesConnected] = useState(false);
+  const [cueOutputRoute, setCueOutputRoute] =
+    useState<CueOutputRoute>('wired');
   const [loopSettingsVisible, setLoopSettingsVisible] = useState(false);
   const [loopDialogLayerId, setLoopDialogLayerId] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
@@ -2983,6 +2989,7 @@ export function MemoEditor({
   }, [isRecording]);
 
   useEffect(() => subscribeHeadphonesConnected(setHeadphonesConnected), []);
+  useEffect(() => subscribeCueOutputRoute(setCueOutputRoute), []);
 
   useEffect(() => {
     if (!isRecording || !engineState.monitorMixActive) {
@@ -3071,13 +3078,14 @@ export function MemoEditor({
     () => (memo ? getMemoMetronomeSettings(memo) : normalizeMetronomeSettings()),
     [memo]
   );
-  /** Match post-save `wasSoftwareMonitoredCue` (monitor mix and/or metro clicks). */
+  /** Match post-save `wasSoftwareMonitoredCue` + route-aware cue compensation. */
   const liveLatencyLeadSec = useMemo(
     () =>
       getRecordingReplacementSkipSeconds(
-        engineState.monitorMixActive || metronomeSettings.enabled
+        engineState.monitorMixActive || metronomeSettings.enabled,
+        cueOutputRoute
       ),
-    [engineState.monitorMixActive, metronomeSettings.enabled]
+    [engineState.monitorMixActive, metronomeSettings.enabled, cueOutputRoute]
   );
   const precountMode = useMemo(
     () => (memo ? getMemoPrecountMode(memo) : 'off'),

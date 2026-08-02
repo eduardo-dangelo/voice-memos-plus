@@ -101,7 +101,7 @@ test('slicePeaksForTrim uses design-density bar time for latency trimIn', () => 
   const peaks = Array.from({ length: peakCountForDuration(duration) }, (_, i) =>
     i < 3 ? 0.01 : i === 8 ? 0.95 : 0.2
   );
-  const trimIn = 0.17; // wake+cue — same as getRecordingReplacementSkipSeconds(true)
+  const trimIn = 0.17; // wake+wired cue — getRecordingReplacementSkipSeconds(true, 'wired')
   const sliced = slicePeaksForTrim(peaks, duration, trimIn, duration);
   assert.ok(sliced);
   // 0.17s → round(0.17*48/3) = 3 bars, not proportional floor → 2.

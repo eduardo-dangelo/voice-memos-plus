@@ -20,6 +20,7 @@ import {
 import {
   applyRecordingIoLatencyTrim,
   getRecordingReplacementSkipSeconds,
+  type CueOutputRoute,
 } from '@/src/audio/recordingLatency';
 import { spliceRecording, writeAudioBufferToWavFile } from '@/src/audio/wavUtils';
 import { encodeWavToM4a } from 'audio-encode';
@@ -553,7 +554,7 @@ export async function saveRecording(
   sourcePath: string,
   duration: number,
   capturedPeaks?: number[],
-  options?: { softwareCue?: boolean }
+  options?: { softwareCue?: boolean; cueRoute?: CueOutputRoute }
 ): Promise<Memo> {
   const memo = await getMemo(memoId);
   if (!memo) {
@@ -582,7 +583,10 @@ export async function saveRecording(
       ? { duration, waveformPeaks: precomputedPeaks }
       : undefined
   );
-  applyRecordingIoLatencyTrim(layer, { softwareCue: options?.softwareCue });
+  applyRecordingIoLatencyTrim(layer, {
+    softwareCue: options?.softwareCue,
+    cueRoute: options?.cueRoute,
+  });
   memo.trimStart = 0;
   updateMemoTimeline(memo);
   memo.updatedAt = new Date().toISOString();
@@ -661,7 +665,11 @@ export async function addStackedLayer(
   sourcePath: string,
   capturedPeaks?: number[],
   color?: string,
-  options?: { softwareCue?: boolean; duration?: number }
+  options?: {
+    softwareCue?: boolean;
+    cueRoute?: CueOutputRoute;
+    duration?: number;
+  }
 ): Promise<Memo> {
   const memo = await getMemo(memoId);
   if (!memo) {
@@ -700,6 +708,7 @@ export async function addStackedLayer(
   );
   applyRecordingIoLatencyTrim(layer, {
     softwareCue: options?.softwareCue === true,
+    cueRoute: options?.cueRoute,
   });
   memo.layers.push(layer);
   updateMemoTimeline(memo);
@@ -725,7 +734,7 @@ export async function replaceLayerSegment(
   trimEnd: number,
   replacementPath: string,
   leadingPadSeconds = 0,
-  options?: { softwareCue?: boolean }
+  options?: { softwareCue?: boolean; cueRoute?: CueOutputRoute }
 ): Promise<ReplaceLayerSegmentResult> {
   const memo = await getMemo(memoId);
   if (!memo) {
@@ -753,7 +762,8 @@ export async function replaceLayerSegment(
     {
       leadingPadSeconds,
       replacementSkipSeconds: getRecordingReplacementSkipSeconds(
-        options?.softwareCue === true
+        options?.softwareCue === true,
+        options?.cueRoute ?? 'wired'
       ),
     }
   );

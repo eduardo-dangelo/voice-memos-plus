@@ -10,27 +10,95 @@ import { clampLayerStartTime, getLayerEffects } from '@/src/storage/types';
 export const RECORDING_WAKE_TRIM_SEC = 0.02;
 
 /**
- * Extra earlier shift when the performer synced to software cues
- * (monitor mix and/or metronome) heard through speaker/headphones.
- * Tuned for wired headphones on-device; raise in ~10ms steps if stack
- * harmony / metro takes are still late, lower if early. Bluetooth will
- * need a larger route-specific value later.
- *
- * Folded into `trimIn` (with wake) so activeStart stays on the session
- * start instead of hanging below 0.
+ * Cue-output route class for software-cue latency compensation.
+ * Remote outputs (AirPlay / CarAudio / HDMI) map to `bluetooth` so they
+ * never silently get the wired constant.
  */
-export const SOFTWARE_CUE_OUTPUT_COMPENSATION_SEC = 0.15;
+export type CueOutputRoute = 'wired' | 'bluetooth' | 'speaker';
+
+const WIRED_OUTPUT_CATEGORIES = new Set([
+  'Headphones',
+  'HeadsetMic',
+  'USBAudio',
+  'LineOut',
+]);
+
+const BLUETOOTH_OUTPUT_CATEGORIES = new Set([
+  'BluetoothA2DP',
+  'BluetoothLE',
+  // Elevated external routes — treat like BT (not wired).
+  'AirPlay',
+  'CarAudio',
+  'HDMI',
+]);
+
+const SPEAKER_OUTPUT_CATEGORIES = new Set([
+  'BuiltInSpeaker',
+  'BuiltInReceiver',
+]);
+
+/**
+ * Per-route software-cue compensation (seconds).
+ * Wired tuned on-device; bluetooth is a starting point (~130ms above wired)
+ * for A2DP stacks — raise/lower in ~20ms steps after clap/metro tests.
+ * Speaker matches wired until measured separately.
+ */
+export const SOFTWARE_CUE_COMPENSATION_BY_ROUTE: Record<CueOutputRoute, number> =
+  {
+    wired: 0.15,
+    bluetooth: 0.28,
+    speaker: 0.15,
+  };
+
+/** Wired alias — kept for callers/tests that mean the wired baseline. */
+export const SOFTWARE_CUE_OUTPUT_COMPENSATION_SEC =
+  SOFTWARE_CUE_COMPENSATION_BY_ROUTE.wired;
+
+/** Classify iOS output category into a cue-compensation route. Defaults to wired. */
+export function classifyCueOutputRoute(
+  outputCategory: string | null | undefined
+): CueOutputRoute {
+  if (!outputCategory) {
+    return 'wired';
+  }
+  if (BLUETOOTH_OUTPUT_CATEGORIES.has(outputCategory)) {
+    return 'bluetooth';
+  }
+  if (SPEAKER_OUTPUT_CATEGORIES.has(outputCategory)) {
+    return 'speaker';
+  }
+  if (WIRED_OUTPUT_CATEGORIES.has(outputCategory)) {
+    return 'wired';
+  }
+  // Unknown non-speaker external ports: prefer elevated compensation.
+  if (outputCategory.toLowerCase().includes('bluetooth')) {
+    return 'bluetooth';
+  }
+  if (outputCategory.toLowerCase().includes('speaker')) {
+    return 'speaker';
+  }
+  return 'wired';
+}
+
+export function getSoftwareCueCompensationSec(route: CueOutputRoute): number {
+  return Math.max(0, SOFTWARE_CUE_COMPENSATION_BY_ROUTE[route] ?? SOFTWARE_CUE_COMPENSATION_BY_ROUTE.wired);
+}
 
 /** Seconds to skip at the start of a replace-splice replacement buffer. */
-export function getRecordingReplacementSkipSeconds(softwareCue: boolean): number {
+export function getRecordingReplacementSkipSeconds(
+  softwareCue: boolean,
+  route: CueOutputRoute = 'wired'
+): number {
   const wake = Math.max(0, RECORDING_WAKE_TRIM_SEC);
-  const cue = softwareCue ? Math.max(0, SOFTWARE_CUE_OUTPUT_COMPENSATION_SEC) : 0;
+  const cue = softwareCue ? getSoftwareCueCompensationSec(route) : 0;
   return wake + cue;
 }
 
 export type RecordingLatencyTrimOptions = {
   /** True when AudioContext cues (layers and/or metronome) played during the take. */
   softwareCue?: boolean;
+  /** Output route used while hearing software cues. Defaults to wired. */
+  cueRoute?: CueOutputRoute;
 };
 
 /**
@@ -42,9 +110,10 @@ export function applyRecordingIoLatencyTrim(
   layer: Layer,
   options?: RecordingLatencyTrimOptions
 ): void {
+  const cueRoute = options?.cueRoute ?? 'wired';
   const cueCompensation =
     options?.softwareCue === true
-      ? Math.max(0, SOFTWARE_CUE_OUTPUT_COMPENSATION_SEC)
+      ? getSoftwareCueCompensationSec(cueRoute)
       : 0;
   const wake = Math.max(0, RECORDING_WAKE_TRIM_SEC);
   const totalRequested = wake + cueCompensation;
@@ -66,10 +135,10 @@ export function applyRecordingIoLatencyTrim(
   layer.effects = mergeLayerEffects(effects, { trimIn }, layer.duration);
   layer.startTime = clampLayerStartTime(desiredStart, trimIn);
 
-  if (__DEV__) {
+  if (typeof __DEV__ !== 'undefined' && __DEV__) {
     const activeStart = layer.startTime + trimIn;
     console.log(
-      `[audio] latency trim wake=${wake.toFixed(3)}s ` +
+      `[audio] latency trim route=${cueRoute} wake=${wake.toFixed(3)}s ` +
         `cue=${cueCompensation.toFixed(3)}s trimIn=${trimIn.toFixed(3)}s ` +
         `startTime=${layer.startTime.toFixed(3)}s activeStart=${activeStart.toFixed(3)}s`
     );

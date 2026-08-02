@@ -263,6 +263,7 @@ export async function stopAndSave(
       let activeLayerId: string | null = layerId;
 
       const softwareCue = capture.wasSoftwareMonitoredCue;
+      const cueRoute = capture.cueOutputRoute;
 
       if (wasStackMode) {
         updated = await addStackedLayer(
@@ -271,7 +272,7 @@ export async function stopAndSave(
           path,
           peaks,
           currentSession.trackColor ?? undefined,
-          { softwareCue, duration }
+          { softwareCue, cueRoute, duration }
         );
         activeLayerId = updated.layers[updated.layers.length - 1]?.id ?? layerId;
       } else if (wasReplaceMode) {
@@ -283,7 +284,8 @@ export async function stopAndSave(
           throw new Error('No active layer');
         }
         const replacementSkipSeconds = getRecordingReplacementSkipSeconds(
-          softwareCue === true
+          softwareCue === true,
+          cueRoute
         );
         const { trimStart: fileTrimStart, trimEnd: fileTrimEnd, leadingPadSeconds } =
           getReplaceSpliceParams(
@@ -306,7 +308,7 @@ export async function stopAndSave(
           fileTrimEnd,
           path,
           leadingPadSeconds,
-          { softwareCue }
+          { softwareCue, cueRoute }
         );
         updated = replaceResult.memo;
 
@@ -347,6 +349,7 @@ export async function stopAndSave(
       } else {
         updated = await saveRecording(currentMemo.id, path, duration, peaks, {
           softwareCue,
+          cueRoute,
         });
         activeLayerId = updated.layers[0]?.id ?? null;
       }

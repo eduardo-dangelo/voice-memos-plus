@@ -1,5 +1,10 @@
 import { AudioManager } from 'react-native-audio-api';
 
+import {
+  classifyCueOutputRoute,
+  type CueOutputRoute,
+} from '@/src/audio/recordingLatency';
+
 const BLUETOOTH_INPUT_CATEGORIES = new Set([
   'BluetoothHFP',
   'HeadsetMic',
@@ -106,4 +111,38 @@ export function logRouteSnapshot(label: string, snapshot: RouteSnapshot): void {
     `[audio route] ${label}`,
     JSON.stringify(snapshot)
   );
+}
+
+export async function getCueOutputRoute(): Promise<CueOutputRoute> {
+  try {
+    const snapshot = await getActiveRouteSnapshot();
+    return classifyCueOutputRoute(snapshot.outputCategory);
+  } catch {
+    return 'wired';
+  }
+}
+
+/** Initial check + live updates whenever the audio route changes. */
+export function subscribeCueOutputRoute(
+  onChange: (route: CueOutputRoute) => void
+): () => void {
+  let cancelled = false;
+
+  const refresh = () => {
+    void getCueOutputRoute().then((route) => {
+      if (!cancelled) {
+        onChange(route);
+      }
+    });
+  };
+
+  refresh();
+  const subscription = AudioManager.addSystemEventListener('routeChange', () => {
+    refresh();
+  });
+
+  return () => {
+    cancelled = true;
+    subscription?.remove();
+  };
 }
