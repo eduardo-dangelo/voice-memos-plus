@@ -2282,11 +2282,14 @@ export class MemoAudioEngine {
     }
   }
 
-  updateTimelineDuration(timelineDuration: number): void {
-    const trimEnd =
-      this.state.trimEnd > 0
-        ? Math.min(this.state.trimEnd, timelineDuration)
-        : timelineDuration;
+  updateTimelineDuration(timelineDuration: number, trimEnd?: number): void {
+    const previousPlaybackEnd = this.getPlaybackEnd(this.state.duration);
+    const nextTrimEnd =
+      trimEnd !== undefined
+        ? Math.max(0, Math.min(trimEnd, timelineDuration))
+        : this.state.trimEnd > 0
+          ? Math.min(this.state.trimEnd, timelineDuration)
+          : timelineDuration;
     let loopStart = this.state.loopStart;
     let loopEnd = this.state.loopEnd;
     let loopEnabled = this.state.loopEnabled;
@@ -2297,7 +2300,20 @@ export class MemoAudioEngine {
       loopEnd = 0;
       loopEnabled = false;
     }
-    this.emit({ duration: timelineDuration, trimEnd, loopStart, loopEnd, loopEnabled });
+    this.emit({
+      duration: timelineDuration,
+      trimEnd: nextTrimEnd,
+      loopStart,
+      loopEnd,
+      loopEnabled,
+    });
+    const nextPlaybackEnd = this.getPlaybackEnd(timelineDuration);
+    if (
+      this.state.isPlaying &&
+      Math.abs(nextPlaybackEnd - previousPlaybackEnd) > PLAYBACK_END_TOLERANCE
+    ) {
+      this.resyncPlaybackAtCurrentTime();
+    }
   }
 
   unload(): void {

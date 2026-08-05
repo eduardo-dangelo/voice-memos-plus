@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { LayoutChangeEvent, StyleSheet, View } from 'react-native';
+import { LayoutChangeEvent, StyleSheet, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
 
@@ -45,6 +45,7 @@ type MiniTrack = {
   cycleDuration: number;
   color: string;
   isMuted: boolean;
+  isSoloed: boolean;
   isSoloedOut: boolean;
 };
 
@@ -81,6 +82,7 @@ function buildMiniTracks(memo: Memo): MiniTrack[] {
         cycleDuration: Math.max(activeDuration, 0.01),
         color: resolveTrackColor(layer.color),
         isMuted: Boolean(effects.muted),
+        isSoloed: Boolean(effects.solo),
         isSoloedOut: anySoloActive && !effects.solo,
       };
     });
@@ -282,6 +284,24 @@ export function MiniWaveformTracks({
               })}
             </View>
           ) : null}
+          {trackWidth > 0 && track.isMuted ? (
+            <View
+              pointerEvents="none"
+              style={[styles.floatingBadge, styles.mutedBadge, { left: left + 4 }]}>
+              <Text style={styles.mutedBadgeText}>M</Text>
+            </View>
+          ) : null}
+          {trackWidth > 0 && track.isSoloed ? (
+            <View
+              pointerEvents="none"
+              style={[
+                styles.floatingBadge,
+                styles.soloBadge,
+                { left: left + (track.isMuted ? 26 : 4) },
+              ]}>
+              <Text style={styles.soloBadgeText}>S</Text>
+            </View>
+          ) : null}
         </View>
       );
     });
@@ -344,6 +364,42 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
         bar: {
           position: 'absolute',
           borderRadius: 1,
+        },
+        floatingBadge: {
+          position: 'absolute',
+          top: 4,
+        },
+        mutedBadge: {
+          zIndex: 6,
+          minWidth: 18,
+          height: 16,
+          borderRadius: 3,
+          paddingHorizontal: 4,
+          backgroundColor: colors.secondaryText,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        mutedBadgeText: {
+          fontSize: 10,
+          fontWeight: '700',
+          color: colors.background,
+          lineHeight: 12,
+        },
+        soloBadge: {
+          zIndex: 6,
+          minWidth: 18,
+          height: 16,
+          borderRadius: 3,
+          paddingHorizontal: 4,
+          backgroundColor: colors.soloBadge,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        soloBadgeText: {
+          fontSize: 10,
+          fontWeight: '700',
+          color: colors.soloBadgeText,
+          lineHeight: 12,
         },
         playhead: {
           position: 'absolute',

@@ -20,29 +20,29 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { DEFAULT_TRACK_COLOR, pickRandomTrackColor } from '@/constants/VoiceMemosColors';
 import { shareMemo } from '@/src/actions/shareMemo';
 import { useAudioEngine, useAudioEngineSelector } from '@/src/audio/AudioEngineContext';
-import { RecordingStartAbortedError, type EngineState } from '@/src/audio/MemoAudioEngine';
 import { subscribeCueOutputRoute } from '@/src/audio/audioInputRouting';
-import {
-  isHeadphonesConnected,
-  needsMonitorMix,
-  subscribeHeadphoneDisconnect,
-  subscribeHeadphonesConnected,
-} from '@/src/audio/headphoneDetection';
-import { getClickIntervalSec, getQuarterIntervalSec } from '@/src/audio/metronome';
 import {
   applyLinkedCrossfade,
   areFadesLinkedForCrossfade,
   findCrossfadePeer,
 } from '@/src/audio/crossfade';
 import { clampFadeValues } from '@/src/audio/fadeCurve';
+import {
+  isHeadphonesConnected,
+  needsMonitorMix,
+  subscribeHeadphoneDisconnect,
+  subscribeHeadphonesConnected,
+} from '@/src/audio/headphoneDetection';
 import type { LayerEffects, LayerEffectsChange } from '@/src/audio/layerEffects';
 import { hasAnySoloActive, isLayerSelectable, mergeLayerEffects } from '@/src/audio/layerEffects';
 import { loadMemoIntoEngine } from '@/src/audio/loadMemoIntoEngine';
+import { RecordingStartAbortedError, type EngineState } from '@/src/audio/MemoAudioEngine';
 import {
   canMergeLayers,
   getMergePartnerLayers,
   getPlayableLayersInTimelineOrder,
 } from '@/src/audio/mergeLayersLogic';
+import { getClickIntervalSec, getQuarterIntervalSec } from '@/src/audio/metronome';
 import {
   maybeShowPerformanceWarning,
   resetPerformanceWarningState,
@@ -58,6 +58,7 @@ import {
   WAVEFORM_PIXELS_PER_SECOND,
 } from '@/src/audio/waveform';
 import { FloatingHeaderButton, FloatingHeaderIconFace } from '@/src/components/FloatingHeaderButton';
+import { HeadphonesRecommendedDialog } from '@/src/components/HeadphonesRecommendedDialog';
 import { IconActionSheet, type IconActionSheetItem } from '@/src/components/IconActionSheet';
 import { LoopSettingsSheet } from '@/src/components/LoopSettingsSheet';
 import { MemoOptionsMenu } from '@/src/components/MemoOptionsMenu';
@@ -65,13 +66,13 @@ import { MetronomeButton } from '@/src/components/MetronomeButton';
 import { MetronomeSettingsSheet } from '@/src/components/MetronomeSettingsSheet';
 import { NamePromptDialog } from '@/src/components/NamePromptDialog';
 import { PlaybackControls } from '@/src/components/PlaybackControls';
-import { TrackLoopDialog } from '@/src/components/TrackLoopDialog';
 import { PrecountButton } from '@/src/components/PrecountButton';
 import { PrecountOverlay } from '@/src/components/PrecountOverlay';
 import { TrackEditorShell } from '@/src/components/track-editor/TrackEditorShell';
+import type { FadeRegionState } from '@/src/components/track-editor/TrackFadeOverlay';
 import type { EditorTool } from '@/src/components/track-editor/types';
 import { resolveTrackColor, TrackColorPicker } from '@/src/components/TrackColorPicker';
-import type { FadeRegionState } from '@/src/components/track-editor/TrackFadeOverlay';
+import { TrackLoopDialog } from '@/src/components/TrackLoopDialog';
 import { WaveformView, type TrackData } from '@/src/components/WaveformView';
 import { applyLocationTitleIfEnabled } from '@/src/location/locationNaming';
 import {
@@ -85,8 +86,8 @@ import {
 } from '@/src/recording/activeRecordingSession';
 import { decideAutoRecord } from '@/src/recording/autoRecordGate';
 import { consumeAutoRecordIntent } from '@/src/recording/autoRecordIntent';
-import { ensureRecordingBootstrapComplete } from '@/src/recording/recordingBootstrap';
 import { subscribeMemoUpdate } from '@/src/recording/memoUpdateEvents';
+import { ensureRecordingBootstrapComplete } from '@/src/recording/recordingBootstrap';
 import {
   deactivateMemoLoop,
   deleteLayer,
@@ -467,6 +468,9 @@ export function MemoEditor({
   const [recordingRenameVisible, setRecordingRenameVisible] = useState(false);
   const [metronomeSettingsVisible, setMetronomeSettingsVisible] = useState(false);
   const [headphonesConnected, setHeadphonesConnected] = useState(false);
+  const [headphonesWarningMode, setHeadphonesWarningMode] = useState<
+    'replace' | 'stack' | null
+  >(null);
   const [cueOutputRoute, setCueOutputRoute] =
     useState<CueOutputRoute>('wired');
   const [loopSettingsVisible, setLoopSettingsVisible] = useState(false);
@@ -597,7 +601,7 @@ export function MemoEditor({
         if (trimChanged) {
           engine.updateLayerLoopUntil(layerId, updatedLayer?.loopUntil);
         }
-        engine.updateTimelineDuration(nextTimeline);
+        engine.updateTimelineDuration(nextTimeline, trimEnd);
       }
 
       if (isDraftTrimUpdate) {
@@ -1082,6 +1086,7 @@ export function MemoEditor({
       const isDraftMove = editDraftRef.current?.tool === 'move';
       let nextStartTime: number | null = null;
       let timeline: number | null = null;
+      let nextTrimEnd: number | null = null;
       let memoId: string | null = null;
       let applied = false;
 
@@ -1131,6 +1136,7 @@ export function MemoEditor({
         applied = true;
         nextStartTime = clampedStartTime;
         timeline = nextTimeline;
+        nextTrimEnd = trimEnd;
         memoId = prev.id;
 
         return {
@@ -1141,7 +1147,13 @@ export function MemoEditor({
         };
       });
 
-      if (!applied || nextStartTime === null || timeline === null || !memoId) {
+      if (
+        !applied ||
+        nextStartTime === null ||
+        timeline === null ||
+        nextTrimEnd === null ||
+        !memoId
+      ) {
         return;
       }
 
@@ -1150,7 +1162,7 @@ export function MemoEditor({
       }
 
       engine.updateLayerStartTime(activeLayerId, nextStartTime);
-      engine.updateTimelineDuration(timeline);
+      engine.updateTimelineDuration(timeline, nextTrimEnd);
 
       if (isDraftMove) {
         scheduleEditDraftIdleAutosave();
@@ -1244,7 +1256,7 @@ export function MemoEditor({
       setMemo(nextMemo);
 
       engine.updateLayerLoopUntil(layerId, nextLoopUntil);
-      engine.updateTimelineDuration(nextTimeline);
+      engine.updateTimelineDuration(nextTimeline, trimEnd);
 
       pendingTrackLoopPersist.current = {
         memoId: prev.id,
@@ -2728,19 +2740,7 @@ export function MemoEditor({
     const useMonitorMix = needsMonitorMix(memo, mode);
     const headphonesConnected = await isHeadphonesConnected();
     if (useMonitorMix && !headphonesConnected) {
-      Alert.alert(
-        '⚠️ Headphones recommended',
-        'Without headphones, playback will leak into the new track through the microphone. Are you sure you want to continue?',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Continue',
-            onPress: () => {
-              void startArmedRecording(mode, true);
-            },
-          },
-        ]
-      );
+      setHeadphonesWarningMode(mode);
       return;
     }
 
@@ -3705,6 +3705,17 @@ export function MemoEditor({
         visible={loopDialogLayerId != null}
         onCancel={() => setLoopDialogLayerId(null)}
         onChange={handleTrackLoopDialogChange}
+      />
+      <HeadphonesRecommendedDialog
+        visible={headphonesWarningMode != null}
+        onCancel={() => setHeadphonesWarningMode(null)}
+        onContinue={() => {
+          const mode = headphonesWarningMode;
+          setHeadphonesWarningMode(null);
+          if (mode) {
+            void startArmedRecording(mode, true);
+          }
+        }}
       />
       <PrecountOverlay
         count={precountNumber}
