@@ -1670,7 +1670,7 @@ export function MemoEditor({
       const playableCount = getPlayableLayers(memo).length;
       const canDelete = playableCount > 1;
       const actions: IconActionSheetItem[] = [
-        { id: 'export', title: 'Export', systemImage: 'square.and.arrow.up' },
+        { id: 'export', title: 'Export Track', systemImage: 'square.and.arrow.up' },
         { id: 'rename', title: 'Rename Track', systemImage: 'pencil' },
         { id: 'changeColor', title: 'Change Color', systemImage: 'paintpalette' },
         { id: 'loop', title: 'Loop Track', systemImage: 'repeat' },
