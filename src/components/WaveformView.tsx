@@ -32,7 +32,7 @@ import {
 import {
   barsPerCycleAtPps,
   loopPeakIndex,
-  normalizePeaksForBarCount,
+  normalizePeakAt,
   peakToAbsoluteScale,
   WAVEFORM_BAR_GAP,
   WAVEFORM_BAR_WIDTH,
@@ -1113,11 +1113,6 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
   const trackOffset = track.startTime * pixelsPerSecond;
   const trackWidth = barCount * BAR_STEP;
 
-  const normalizedPeaks = useMemo(
-    () => normalizePeaksForBarCount(track.peaks, Math.max(1, cycleBarCount)),
-    [cycleBarCount, track.peaks]
-  );
-
   const visibleBars = useMemo(() => {
     // Invalid / unset viewport must not mount every bar (stack arm remount freeze).
     if (visibleTimeEnd <= visibleTimeStart) {
@@ -1139,13 +1134,6 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
     : 0;
   const liveTrackOffset = liveRecording ? liveRecording.startTime * pixelsPerSecond : 0;
   const liveTrackWidth = liveBarCount * BAR_STEP;
-
-  const normalizedLivePeaks = useMemo(() => {
-    if (!liveRecording || liveBarCount <= 0) {
-      return [];
-    }
-    return normalizePeaksForBarCount(liveRecording.peaks, liveBarCount);
-  }, [liveBarCount, liveRecording]);
 
   const visibleLiveBars = useMemo(() => {
     if (!liveRecording) {
@@ -1409,7 +1397,8 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
                 (_, offset) => {
                   const index = visibleBars.startIndex + offset;
                   const peakIndex = loopPeakIndex(index, barsPerCycle, cycleBarCount);
-                  const peak = normalizedPeaks[peakIndex] ?? 0;
+                  // Sample one bar — never allocate a full-track resample on zoom.
+                  const peak = normalizePeakAt(track.peaks, cycleBarCount, peakIndex);
                   const barTime = (index * BAR_STEP) / pixelsPerSecond;
                   const inKeepRegion =
                     !showTrimOverlay ||
@@ -1534,7 +1523,7 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
                 { length: Math.max(0, visibleLiveBars.endIndex - visibleLiveBars.startIndex) },
                 (_, offset) => {
                   const index = visibleLiveBars.startIndex + offset;
-                  const peak = normalizedLivePeaks[index] ?? 0;
+                  const peak = normalizePeakAt(liveRecording?.peaks, liveBarCount, index);
                   const scaled = peakToAbsoluteScale(peak);
                   const maxBar = Math.max(4, bodyHeight - 8);
                   const barHeight =
@@ -1751,6 +1740,15 @@ function WaveformViewComponent({
   const zoomBoundsRef = useRef(getTimelineZoomBounds(0, 0, 1));
   const zoomGestureStartRef = useRef<ZoomGestureStart | null>(null);
   const hitZoomBoundRef = useRef(false);
+  const pendingZoomRef = useRef<{
+    pixelsPerSecond: number;
+    trackZoom: number;
+    scrollX: number;
+    scrollY: number;
+    maxScrollX: number;
+  } | null>(null);
+  const zoomCommitRafRef = useRef<number | null>(null);
+  const scheduleZoomCommitRef = useRef(() => {});
   const containerRef = useRef<View>(null);
   const containerPageOffsetRef = useRef<PageOffset>({ x: 0, y: 0 });
   const loopOverlayRef = useRef(loopOverlay);
@@ -2065,9 +2063,23 @@ function WaveformViewComponent({
 
     const padding = viewportWidth / 2;
     const timeAtFocal = (start.scrollX + start.focalX - padding) / start.pixelsPerSecond;
+
+    // Content width for the *upcoming* pps — do not clamp against stale maxScrollXRef.
+    const nextLayoutDuration = Math.max(durationRef.current, layoutDurationRef.current);
+    const nextTargetWidth =
+      nextLayoutDuration > 0 ? nextLayoutDuration * nextPixelsPerSecond : 0;
+    const nextBarCount =
+      nextTargetWidth > 0
+        ? Math.max(1, Math.floor(nextTargetWidth / BAR_STEP))
+        : viewportWidth > 0
+          ? Math.max(1, Math.floor(viewportWidth / BAR_STEP))
+          : 0;
+    const nextContentWidth =
+      nextBarCount > 0 ? Math.max(viewportWidth, nextBarCount * BAR_STEP) : viewportWidth;
+    const nextMaxScrollX = Math.max(0, nextContentWidth);
     const nextScrollX = Math.max(
       0,
-      Math.min(maxScrollXRef.current, padding + timeAtFocal * nextPixelsPerSecond - start.focalX)
+      Math.min(nextMaxScrollX, padding + timeAtFocal * nextPixelsPerSecond - start.focalX)
     );
 
     const oldTrackHeight = (waveformAreaHeight / Math.max(1, tracks.length)) * start.trackZoom;
@@ -2081,14 +2093,81 @@ function WaveformViewComponent({
       Math.min(nextMaxScrollY, trackIndex * nextTrackHeight - focalYInTracks)
     );
 
-    setPixelsPerSecond(nextPixelsPerSecond);
-    setTrackZoom(nextTrackZoom);
-    scrollOffsetRef.current = nextScrollX;
-    verticalScrollOffsetRef.current = nextScrollY;
-    syncMetronomeGridRef.current(nextScrollX, true);
-    scrollRef.current?.scrollTo({ x: nextScrollX, animated: false });
-    verticalScrollRef.current?.scrollTo({ y: nextScrollY, animated: false });
+    pendingZoomRef.current = {
+      pixelsPerSecond: nextPixelsPerSecond,
+      trackZoom: nextTrackZoom,
+      scrollX: nextScrollX,
+      scrollY: nextScrollY,
+      maxScrollX: nextMaxScrollX,
+    };
+    scheduleZoomCommitRef.current();
   }, [tracks.length, viewportWidth, waveformAreaHeight]);
+
+  const commitPendingZoom = useCallback(() => {
+    zoomCommitRafRef.current = null;
+    const pending = pendingZoomRef.current;
+    if (!pending) {
+      return;
+    }
+    pendingZoomRef.current = null;
+
+    const ppsUnchanged = pending.pixelsPerSecond === pixelsPerSecondRef.current;
+    const trackZoomUnchanged = pending.trackZoom === trackZoomRef.current;
+    if (ppsUnchanged && trackZoomUnchanged) {
+      // Still apply scroll if focal math moved (bound clamp with no pps change).
+      scrollOffsetRef.current = pending.scrollX;
+      verticalScrollOffsetRef.current = pending.scrollY;
+      maxScrollXRef.current = pending.maxScrollX;
+      layoutPixelsPerSecondRef.current = pending.pixelsPerSecond;
+      syncMetronomeGridRef.current(pending.scrollX, true);
+      scrollRef.current?.scrollTo({ x: pending.scrollX, animated: false });
+      verticalScrollRef.current?.scrollTo({ y: pending.scrollY, animated: false });
+      return;
+    }
+
+    pixelsPerSecondRef.current = pending.pixelsPerSecond;
+    trackZoomRef.current = pending.trackZoom;
+    // Sync viewport with the gesture's new pps before React re-renders layout.
+    layoutPixelsPerSecondRef.current = pending.pixelsPerSecond;
+    maxScrollXRef.current = pending.maxScrollX;
+    scrollOffsetRef.current = pending.scrollX;
+    verticalScrollOffsetRef.current = pending.scrollY;
+
+    setPixelsPerSecond(pending.pixelsPerSecond);
+    setTrackZoom(pending.trackZoom);
+    syncMetronomeGridRef.current(pending.scrollX, true);
+    scrollRef.current?.scrollTo({ x: pending.scrollX, animated: false });
+    verticalScrollRef.current?.scrollTo({ y: pending.scrollY, animated: false });
+  }, []);
+
+  const scheduleZoomCommit = useCallback(() => {
+    if (zoomCommitRafRef.current != null) {
+      return;
+    }
+    zoomCommitRafRef.current = requestAnimationFrame(() => {
+      commitPendingZoom();
+    });
+  }, [commitPendingZoom]);
+
+  const flushZoomCommit = useCallback(() => {
+    if (zoomCommitRafRef.current != null) {
+      cancelAnimationFrame(zoomCommitRafRef.current);
+      zoomCommitRafRef.current = null;
+    }
+    commitPendingZoom();
+  }, [commitPendingZoom]);
+
+  // Keep schedule ref current for applyZoomFromGesture (defined above commit helpers).
+  scheduleZoomCommitRef.current = scheduleZoomCommit;
+
+  useEffect(() => {
+    return () => {
+      if (zoomCommitRafRef.current != null) {
+        cancelAnimationFrame(zoomCommitRafRef.current);
+        zoomCommitRafRef.current = null;
+      }
+    };
+  }, []);
 
   const resetZoom = useCallback(() => {
     const bounds = zoomBoundsRef.current;
@@ -2141,6 +2220,7 @@ function WaveformViewComponent({
 
   const endTwoFingerZoomRef = useRef(() => {});
   endTwoFingerZoomRef.current = () => {
+    flushZoomCommit();
     zoomGestureStartRef.current = null;
     hitZoomBoundRef.current = false;
     setZoomGestureActiveOnJs(false);

@@ -67,6 +67,37 @@ export async function computeWaveformPeaks(
   return computeWaveformPeaksFromChannelData(buffer.getChannelData(0), peakCount);
 }
 
+/**
+ * One output sample of a full-array resample — same upsample / max-in-bucket
+ * downsample rules as `resamplePeaks`, without allocating the full result.
+ * Used by the timeline paint path so zoom only samples visible bars.
+ */
+export function resamplePeakAt(
+  peaks: number[],
+  peakCount: number,
+  index: number
+): number {
+  if (peaks.length === 0 || peakCount <= 0 || index < 0 || index >= peakCount) {
+    return 0;
+  }
+  if (peaks.length === peakCount) {
+    return peaks[index] ?? 0;
+  }
+  if (peaks.length < peakCount) {
+    const sourceIndex = Math.floor((index / peakCount) * peaks.length);
+    return peaks[sourceIndex] ?? peaks[peaks.length - 1] ?? 0;
+  }
+
+  const bucketSize = peaks.length / peakCount;
+  const start = Math.floor(index * bucketSize);
+  const end = Math.floor((index + 1) * bucketSize);
+  let max = 0;
+  for (let j = start; j < end; j++) {
+    max = Math.max(max, peaks[j] ?? 0);
+  }
+  return max;
+}
+
 export function resamplePeaks(peaks: number[], peakCount = DEFAULT_PEAK_COUNT): number[] {
   if (peaks.length === 0) {
     return [];
@@ -74,25 +105,9 @@ export function resamplePeaks(peaks: number[], peakCount = DEFAULT_PEAK_COUNT): 
   if (peaks.length === peakCount) {
     return peaks;
   }
-  if (peaks.length < peakCount) {
-    const next: number[] = [];
-    for (let i = 0; i < peakCount; i++) {
-      const sourceIndex = Math.floor((i / peakCount) * peaks.length);
-      next.push(peaks[sourceIndex] ?? peaks[peaks.length - 1] ?? 0);
-    }
-    return next;
-  }
-
-  const bucketSize = peaks.length / peakCount;
   const next: number[] = [];
   for (let i = 0; i < peakCount; i++) {
-    const start = Math.floor(i * bucketSize);
-    const end = Math.floor((i + 1) * bucketSize);
-    let max = 0;
-    for (let j = start; j < end; j++) {
-      max = Math.max(max, peaks[j] ?? 0);
-    }
-    next.push(max);
+    next.push(resamplePeakAt(peaks, peakCount, i));
   }
   return next;
 }
@@ -148,6 +163,22 @@ export function normalizePeaksForBarCount(
     return [];
   }
   return resamplePeaks(getPeaksForMemo(peaks, barCount), barCount);
+}
+
+/** Single-bar variant of `normalizePeaksForBarCount` for viewport-scoped paint. */
+export function normalizePeakAt(
+  peaks: number[] | undefined,
+  barCount: number,
+  index: number
+): number {
+  if (barCount <= 0) {
+    return 0;
+  }
+  // Avoid allocating a full placeholder array per bar when peaks are missing.
+  if (!peaks || peaks.length === 0) {
+    return 0.05;
+  }
+  return resamplePeakAt(peaks, barCount, index);
 }
 
 /**

@@ -5,9 +5,11 @@ import {
   CAPTURED_PEAKS_MIN_DENSITY,
   computeWaveformPeaksFromChannelData,
   loopPeakIndex,
+  normalizePeakAt,
   normalizePeaksForBarCount,
   peakCountForDuration,
   peakToAbsoluteScale,
+  resamplePeakAt,
   resamplePeaks,
   shouldUseCapturedPeaks,
   slicePeaksForTrim,
@@ -74,6 +76,33 @@ test('normalizePeaksForBarCount upsamples when zoomed in past stored density', (
 test('normalizePeaksForBarCount returns empty for non-positive barCount', () => {
   assert.deepEqual(normalizePeaksForBarCount([0.5, 0.6], 0), []);
   assert.deepEqual(normalizePeaksForBarCount([0.5, 0.6], -1), []);
+});
+
+test('resamplePeakAt matches resamplePeaks for downsample and upsample', () => {
+  const downPeaks = Array.from({ length: 480 }, (_, i) => (i >= 400 ? 0.95 : 0.1));
+  const downFull = resamplePeaks(downPeaks, 80);
+  for (let i = 0; i < downFull.length; i++) {
+    assert.equal(resamplePeakAt(downPeaks, 80, i), downFull[i]);
+  }
+  assert.ok(resamplePeakAt(downPeaks, 80, 79)! >= 0.95);
+
+  const upPeaks = Array.from({ length: 32 }, (_, i) => (i % 2 === 0 ? 0.4 : 0.8));
+  const upFull = resamplePeaks(upPeaks, 96);
+  for (let i = 0; i < upFull.length; i++) {
+    assert.equal(resamplePeakAt(upPeaks, 96, i), upFull[i]);
+  }
+  assert.equal(resamplePeakAt(upPeaks, 96, 0), 0.4);
+  assert.equal(resamplePeakAt(upPeaks, 96, 3), 0.8);
+});
+
+test('normalizePeakAt matches normalizePeaksForBarCount without allocating the full array', () => {
+  const peaks = Array.from({ length: 480 }, (_, i) => (i >= 400 ? 0.95 : 0.1));
+  const full = normalizePeaksForBarCount(peaks, 80);
+  for (let i = 0; i < full.length; i++) {
+    assert.equal(normalizePeakAt(peaks, 80, i), full[i]);
+  }
+  assert.equal(normalizePeakAt(undefined, 80, 0), 0.05);
+  assert.equal(normalizePeakAt(peaks, 0, 0), 0);
 });
 
 test('shouldUseCapturedPeaks rejects replace-segment density on a long layer', () => {

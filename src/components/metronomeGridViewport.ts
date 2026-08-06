@@ -43,10 +43,12 @@ export function getMetronomeGridBufferRange(
 ): MetronomeGridBuffer {
   const visible = getVisibleTimeRange(scrollX, viewportWidth, pixelsPerSecond);
   const pad = (viewportWidth / Math.max(pixelsPerSecond, 1)) * bufferViewports;
-  return {
-    start: Math.max(0, visible.start - pad),
-    end: Math.max(0, Math.min(Math.max(0, duration), visible.end + pad)),
-  };
+  const durationCap = Math.max(0, duration);
+  // Clamp start into [0, duration] first so a stale scroll/pps pair (e.g. mid-zoom
+  // before layout catches up) cannot produce start > end and blank the waveform.
+  const start = Math.max(0, Math.min(durationCap, visible.start - pad));
+  const end = Math.max(start, Math.min(durationCap, Math.max(0, visible.end + pad)));
+  return { start, end };
 }
 
 /** True when the visible range still sits comfortably inside the buffer. */

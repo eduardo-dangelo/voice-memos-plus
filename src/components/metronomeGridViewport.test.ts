@@ -72,3 +72,35 @@ test('isMetronomeGridBufferValid is false when scrolled outside overscan', () =>
 test('getVisibleMarkerSeconds respects interval', () => {
   assert.deepEqual(getVisibleMarkerSeconds(0, 10, 60, 5), [0, 5, 10]);
 });
+
+test('getMetronomeGridBufferRange never inverts when scroll implies playhead past duration', () => {
+  const duration = 150;
+  // Mimic mid-zoom stale pairing: scroll sized for a higher pps, read with a lower pps
+  // so playheadTime is overestimated past the timeline end.
+  const scrollForNewZoom = 100 * 96; // time 100s at 96 pps
+  const stalePps = 48;
+  const buffer = getMetronomeGridBufferRange(
+    scrollForNewZoom,
+    VIEWPORT,
+    stalePps,
+    duration,
+    METRONOME_GRID_BUFFER_VIEWPORTS
+  );
+  assert.ok(buffer.end >= buffer.start);
+  assert.ok(buffer.start <= duration);
+  assert.ok(buffer.end <= duration);
+});
+
+test('getMetronomeGridBufferRange keeps end >= start at timeline end', () => {
+  const duration = 82;
+  const scrollX = duration * PPS;
+  const buffer = getMetronomeGridBufferRange(
+    scrollX,
+    VIEWPORT,
+    PPS,
+    duration,
+    METRONOME_GRID_BUFFER_VIEWPORTS
+  );
+  assert.ok(buffer.end >= buffer.start);
+  assert.equal(buffer.end, duration);
+});
