@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="420" height="560" viewBox="0 0 420 560" role="img" aria-labelledby="title desc">
+  <title id="title">Metronome &amp; grid screenshot placeholder</title>
+  <desc id="desc">Placeholder for a Metronome &amp; grid screenshot</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#F8FAFC"/>
+      <stop offset="100%" stop-color="#E8EEF7"/>
+    </linearGradient>
+  </defs>
+  <rect width="420" height="560" rx="28" fill="#0F172A"/>
+  <rect x="8" y="8" width="404" height="544" rx="22" fill="url(#bg)"/>
+  <text x="210" y="56" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="18" font-weight="700" fill="#1B2A4A">Metronome &amp; grid</text>
+  <text x="210" y="84" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="13" fill="#6B7280">Screenshot coming soon</text>
+
+  <rect x="36" y="120" width="348" height="200" rx="16" fill="#FFFFFF" stroke="#CBD5E1"/>
+  <line x1="90" y1="140" x2="90" y2="300" stroke="#CBD5E1" stroke-width="2"/>
+  <line x1="150" y1="140" x2="150" y2="300" stroke="#5AC8FA" stroke-width="2"/>
+  <line x1="210" y1="140" x2="210" y2="300" stroke="#CBD5E1" stroke-width="2"/>
+  <line x1="270" y1="140" x2="270" y2="300" stroke="#5AC8FA" stroke-width="2"/>
+  <line x1="330" y1="140" x2="330" y2="300" stroke="#CBD5E1" stroke-width="2"/>
+  <path d="M52 220 C90 180, 130 260, 170 210 S250 180, 290 230 S350 190, 368 220" fill="none" stroke="#1B2A4A" stroke-width="3" stroke-linecap="round"/>
+  <rect x="36" y="348" width="160" height="64" rx="14" fill="#1B2A4A"/>
+  <text x="116" y="386" text-anchor="middle" font-family="system-ui,sans-serif" font-size="14" font-weight="600" fill="#FFFFFF">120 BPM</text>
+  <rect x="212" y="348" width="172" height="64" rx="14" fill="#FFFFFF" stroke="#CBD5E1"/>
+  <text x="298" y="386" text-anchor="middle" font-family="system-ui,sans-serif" font-size="14" font-weight="600" fill="#1B2A4A">4/4 · Precount</text>
+
+</svg>

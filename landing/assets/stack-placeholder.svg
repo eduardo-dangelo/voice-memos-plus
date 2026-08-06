@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="420" height="560" viewBox="0 0 420 560" role="img" aria-labelledby="title desc">
+  <title id="title">Stack screenshot placeholder</title>
+  <desc id="desc">Placeholder for a Stack screenshot</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#F8FAFC"/>
+      <stop offset="100%" stop-color="#E8EEF7"/>
+    </linearGradient>
+  </defs>
+  <rect width="420" height="560" rx="28" fill="#0F172A"/>
+  <rect x="8" y="8" width="404" height="544" rx="22" fill="url(#bg)"/>
+  <text x="210" y="56" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="18" font-weight="700" fill="#1B2A4A">Stack</text>
+  <text x="210" y="84" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="13" fill="#6B7280">Screenshot coming soon</text>
+
+  <rect x="36" y="120" width="348" height="88" rx="14" fill="#FFFFFF" stroke="#CBD5E1"/>
+  <rect x="52" y="148" width="220" height="10" rx="5" fill="#1B2A4A"/>
+  <rect x="36" y="228" width="348" height="88" rx="14" fill="#FFFFFF" stroke="#CBD5E1"/>
+  <rect x="52" y="256" width="240" height="10" rx="5" fill="#FF3B30"/>
+  <rect x="36" y="336" width="348" height="88" rx="14" fill="#FFFFFF" stroke="#CBD5E1"/>
+  <rect x="52" y="364" width="200" height="10" rx="5" fill="#5AC8FA"/>
+  <circle cx="210" cy="480" r="32" fill="#FF3B30"/>
+
+</svg>

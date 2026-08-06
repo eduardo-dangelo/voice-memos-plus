@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="390" height="780" viewBox="0 0 390 780" role="img" aria-labelledby="title desc">
+  <title id="title">Screenshot placeholder</title>
+  <desc id="desc">Phone frame placeholder for a Voice Memos Plus hero screenshot</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#E8F1FF"/>
+      <stop offset="55%" stop-color="#F5F6F8"/>
+      <stop offset="100%" stop-color="#FFE8E6"/>
+    </linearGradient>
+    <linearGradient id="wave" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#1B2A4A"/>
+      <stop offset="50%" stop-color="#FF3B30"/>
+      <stop offset="100%" stop-color="#5AC8FA"/>
+    </linearGradient>
+  </defs>
+  <rect width="390" height="780" rx="48" fill="#111827"/>
+  <rect x="10" y="10" width="370" height="760" rx="40" fill="url(#bg)"/>
+  <rect x="140" y="28" width="110" height="28" rx="14" fill="#111827" opacity="0.9"/>
+  <text x="195" y="120" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="22" font-weight="700" fill="#1B2A4A">Voice Memos Plus</text>
+  <text x="195" y="156" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="14" fill="#6B7280">Screenshot coming soon</text>
+  <rect x="48" y="220" width="294" height="120" rx="16" fill="#FFFFFF" stroke="#D1D5DB"/>
+  <path d="M64 280 C90 240, 120 320, 150 280 S210 240, 240 290 S300 250, 326 280" fill="none" stroke="url(#wave)" stroke-width="4" stroke-linecap="round"/>
+  <rect x="48" y="360" width="294" height="72" rx="14" fill="#FFFFFF" stroke="#D1D5DB"/>
+  <rect x="48" y="448" width="294" height="72" rx="14" fill="#FFFFFF" stroke="#D1D5DB"/>
+  <circle cx="195" cy="620" r="36" fill="#FF3B30"/>
+  <circle cx="195" cy="620" r="14" fill="#FFFFFF"/>
+</svg>

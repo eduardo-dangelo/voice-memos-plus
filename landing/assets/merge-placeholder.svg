@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="420" height="560" viewBox="0 0 420 560" role="img" aria-labelledby="title desc">
+  <title id="title">Merge layers screenshot placeholder</title>
+  <desc id="desc">Placeholder for a Merge layers screenshot</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#F8FAFC"/>
+      <stop offset="100%" stop-color="#E8EEF7"/>
+    </linearGradient>
+  </defs>
+  <rect width="420" height="560" rx="28" fill="#0F172A"/>
+  <rect x="8" y="8" width="404" height="544" rx="22" fill="url(#bg)"/>
+  <text x="210" y="56" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="18" font-weight="700" fill="#1B2A4A">Merge layers</text>
+  <text x="210" y="84" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="13" fill="#6B7280">Screenshot coming soon</text>
+
+  <rect x="60" y="140" width="280" height="48" rx="10" fill="#FFFFFF" stroke="#CBD5E1"/>
+  <rect x="60" y="204" width="280" height="48" rx="10" fill="#FFFFFF" stroke="#CBD5E1"/>
+  <rect x="60" y="268" width="280" height="48" rx="10" fill="#FFFFFF" stroke="#CBD5E1"/>
+  <path d="M210 330 L210 370" stroke="#94A3B8" stroke-width="3"/>
+  <path d="M195 355 L210 375 L225 355" fill="none" stroke="#94A3B8" stroke-width="3" stroke-linecap="round"/>
+  <rect x="60" y="390" width="280" height="56" rx="12" fill="#1B2A4A"/>
+  <text x="210" y="424" text-anchor="middle" font-family="system-ui,sans-serif" font-size="14" font-weight="600" fill="#FFFFFF">Merged track</text>
+
+</svg>

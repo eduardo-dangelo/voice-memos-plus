@@ -5,7 +5,6 @@
   "dependencies": {
     "@expo/ui": "~56.0.21",
     "audio-encode": "file:./modules/audio-encode",
-    "project-document-picker": "file:./modules/project-document-picker",
     "expo": "~56.0.11",
     "expo-constants": "~56.0.22",
     "expo-document-picker": "~56.0.4",
@@ -24,6 +23,7 @@
     "expo-web-browser": "~56.0.5",
     "expo-widgets": "~56.0.22",
     "fflate": "^0.8.3",
+    "project-document-picker": "file:./modules/project-document-picker",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.85.3",
@@ -38,6 +38,7 @@
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
+    "gh-pages": "^6.3.0",
     "typescript": "~6.0.3"
   },
   "scripts": {
@@ -45,6 +46,7 @@
     "ios": "expo run:ios",
     "postinstall": "node plugins/withEndLiveActivitiesOnTerminate.js",
     "prebuild:ios": "expo prebuild --platform ios && node scripts/strip-push-entitlement.js",
+    "deploy-landing": "gh-pages -d landing -b gh-pages",
     "test": "npx tsx --test src/audio/normalizeRecordingLogic.test.ts src/audio/metronome.test.ts src/audio/timelineZoom.test.ts src/audio/waveform.test.ts src/audio/recordingLatency.test.ts src/audio/recordingWaveformPeaks.test.ts src/audio/recordingPeaksEmit.test.ts src/audio/playbackPlans.test.ts src/audio/loopSnap.test.ts src/audio/layerEffects.test.ts src/audio/fadeCurve.test.ts src/audio/mergeLayersLogic.test.ts src/storage/replaceSpliceLogic.test.ts src/storage/memoPackage.test.ts src/recording/autoRecordGate.test.ts src/location/formatLocationTitle.test.ts src/location/locationNaming.test.ts src/components/waveformViewport.test.ts src/components/metronomeGridViewport.test.ts"
   },
   "private": true
