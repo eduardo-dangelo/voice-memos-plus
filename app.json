@@ -22,7 +22,8 @@
         "NSLocalNetworkUsageDescription": "Voice Memos Plus uses the local network to load the JavaScript bundle from your computer during development.",
         "NSBonjourServices": [
           "_http._tcp",
-          "_expo._tcp"
+          "_expo._tcp",
+          "_metro._tcp"
         ],
         "ITSAppUsesNonExemptEncryption": false,
         "NSSupportsLiveActivities": true,

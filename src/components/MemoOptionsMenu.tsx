@@ -12,6 +12,8 @@ export type MemoOptionsMenuHandlers = {
   onEditRecording?: () => void;
   onMoveToFolder?: () => void;
   onMergeLayers?: () => void;
+  onLockTracks?: () => void;
+  onUnlockTracks?: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
 };
@@ -22,6 +24,8 @@ export type MemoOptionsMenuProps = MemoOptionsMenuHandlers & {
   includeMoveToFolder?: boolean;
   includeShare?: boolean;
   includeMergeLayers?: boolean;
+  includeLockTracks?: boolean;
+  includeUnlockTracks?: boolean;
   style?: StyleProp<ViewStyle>;
 };
 
@@ -31,11 +35,15 @@ export function MemoOptionsMenu({
   includeMoveToFolder = false,
   includeShare = true,
   includeMergeLayers = false,
+  includeLockTracks = false,
+  includeUnlockTracks = false,
   onShare,
   onRename,
   onEditRecording,
   onMoveToFolder,
   onMergeLayers,
+  onLockTracks,
+  onUnlockTracks,
   onDuplicate,
   onDelete,
   style,
@@ -55,6 +63,12 @@ export function MemoOptionsMenu({
     if (includeMergeLayers) {
       items.push({ id: 'mergeLayers', title: 'Merge Layers', image: 'square.stack.3d.down.right' });
     }
+    if (includeLockTracks) {
+      items.push({ id: 'lockTracks', title: 'Lock Tracks', image: 'lock' });
+    }
+    if (includeUnlockTracks) {
+      items.push({ id: 'unlockTracks', title: 'Unlock Tracks', image: 'lock.open' });
+    }
     items.push({ id: 'duplicate', title: 'Duplicate', image: 'plus.square.on.square' });
     items.push({
       id: 'delete',
@@ -63,7 +77,14 @@ export function MemoOptionsMenu({
       attributes: { destructive: true },
     });
     return items;
-  }, [includeEditRecording, includeMergeLayers, includeMoveToFolder, includeShare]);
+  }, [
+    includeEditRecording,
+    includeLockTracks,
+    includeMergeLayers,
+    includeMoveToFolder,
+    includeShare,
+    includeUnlockTracks,
+  ]);
 
   return (
     <ThemedMenuView
@@ -85,6 +106,12 @@ export function MemoOptionsMenu({
             break;
           case 'mergeLayers':
             onMergeLayers?.();
+            break;
+          case 'lockTracks':
+            onLockTracks?.();
+            break;
+          case 'unlockTracks':
+            onUnlockTracks?.();
             break;
           case 'duplicate':
             onDuplicate();

@@ -6,8 +6,8 @@ import {
   type GestureResponderEvent,
   type PanResponderGestureState,
 } from 'react-native';
-import Svg, { Path } from 'react-native-svg';
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import Svg, { Path } from 'react-native-svg';
 
 import { colorWithAlpha } from '@/constants/VoiceMemosColors';
 import {
@@ -32,6 +32,7 @@ type FadeScrollHelpers = {
 const FADE_HANDLE_TOUCH = 44;
 const FADE_HANDLE_TOUCH_EXPANDED = 56;
 const FADE_CURVE_HANDLE = 28;
+const FADE_LENGTH_KNOB = 8;
 const FADE_TAP_MOVE_THRESHOLD = 6;
 const FADE_EXPAND_IDLE_MS = 3000;
 
@@ -46,6 +47,8 @@ export type FadeOverlayConfig = {
   layerId: string;
   fades: FadeRegionState;
   onChange: (next: FadeRegionState) => void;
+  /** When false, fade curves stay visible but length/curve handles are hidden. Defaults to true. */
+  editable?: boolean;
   snapIntervalSec?: number | null;
   peerFades?: Array<{ layerId: string } & FadeRegionState>;
   crossfade?: {
@@ -490,12 +493,28 @@ export function TrackFadeOverlay({
         <>
           <Animated.View
             {...fadeInLengthResponder.panHandlers}
-            style={[styles.lengthHandle, fadeInHandleStyle]}
-          />
+            style={[styles.lengthHandle, fadeInHandleStyle]}>
+            <View
+              pointerEvents="none"
+              style={[
+                styles.lengthKnob,
+                styles.lengthKnobIn,
+                { backgroundColor: accent },
+              ]}
+            />
+          </Animated.View>
           <Animated.View
             {...fadeOutLengthResponder.panHandlers}
-            style={[styles.lengthHandle, fadeOutHandleStyle]}
-          />
+            style={[styles.lengthHandle, fadeOutHandleStyle]}>
+            <View
+              pointerEvents="none"
+              style={[
+                styles.lengthKnob,
+                styles.lengthKnobOut,
+                { backgroundColor: accent },
+              ]}
+            />
+          </Animated.View>
           {fadeInWidth > 20 ? (
             <View
               {...fadeInCurveResponder.panHandlers}
@@ -550,7 +569,21 @@ const styles = StyleSheet.create({
     position: 'absolute',
     zIndex: 6,
     alignItems: 'center',
-    justifyContent: 'center',
+  },
+  lengthKnob: {
+    width: FADE_LENGTH_KNOB,
+    height: FADE_LENGTH_KNOB,
+    borderRadius: 0,
+    marginTop: 0,
+    marginLeft: 0,
+  },
+  // Sit fully inside the track at zero fade (to the right of the fade-in edge).
+  lengthKnobIn: {
+    transform: [{ translateX: FADE_LENGTH_KNOB / 2 }],
+  },
+  // Sit fully inside the track at zero fade (to the left of the fade-out edge).
+  lengthKnobOut: {
+    transform: [{ translateX: -FADE_LENGTH_KNOB / 2 }],
   },
   curveHandle: {
     position: 'absolute',

@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import { LayoutChangeEvent, StyleSheet, Text, View } from 'react-native';
+import { SymbolView } from 'expo-symbols';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
 
@@ -48,6 +49,7 @@ type MiniTrack = {
   isMuted: boolean;
   isSoloed: boolean;
   isSoloedOut: boolean;
+  isLocked: boolean;
 };
 
 type LaneBarGeometry = {
@@ -62,6 +64,7 @@ type LaneGeometry = {
   trackWidth: number;
   isMuted: boolean;
   isSoloed: boolean;
+  isLocked: boolean;
   activeColorKey: string;
   bars: LaneBarGeometry[];
 };
@@ -101,6 +104,7 @@ function buildMiniTracks(memo: Memo): MiniTrack[] {
         isMuted: Boolean(effects.muted),
         isSoloed: Boolean(effects.solo),
         isSoloedOut: anySoloActive && !effects.solo,
+        isLocked: Boolean(effects.locked),
       };
     });
 }
@@ -286,6 +290,7 @@ export function MiniWaveformTracks({
         trackWidth,
         isMuted: track.isMuted,
         isSoloed: track.isSoloed,
+        isLocked: track.isLocked,
         activeColorKey:
           track.isMuted || track.isSoloedOut ? '__waveformBar__' : track.color,
         bars,
@@ -348,10 +353,21 @@ export function MiniWaveformTracks({
                   ))}
                 </View>
               ) : null}
+              {lane.trackWidth > 0 && lane.isLocked ? (
+                <View
+                  pointerEvents="none"
+                  style={[styles.floatingLock, { left: lane.left + 4 }]}>
+                  <SymbolView name={{ ios: 'lock.fill' }} size={11} tintColor={colors.lockBadge} />
+                </View>
+              ) : null}
               {lane.trackWidth > 0 && lane.isMuted ? (
                 <View
                   pointerEvents="none"
-                  style={[styles.floatingBadge, styles.mutedBadge, { left: lane.left + 4 }]}>
+                  style={[
+                    styles.floatingBadge,
+                    styles.mutedBadge,
+                    { left: lane.left + (lane.isLocked ? 22 : 4) },
+                  ]}>
                   <Text style={styles.mutedBadgeText}>M</Text>
                 </View>
               ) : null}
@@ -361,7 +377,13 @@ export function MiniWaveformTracks({
                   style={[
                     styles.floatingBadge,
                     styles.soloBadge,
-                    { left: lane.left + (lane.isMuted ? 26 : 4) },
+                    {
+                      left:
+                        lane.left +
+                        4 +
+                        (lane.isLocked ? 18 : 0) +
+                        (lane.isMuted ? 22 : 0),
+                    },
                   ]}>
                   <Text style={styles.soloBadgeText}>S</Text>
                 </View>
@@ -423,6 +445,15 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
         floatingBadge: {
           position: 'absolute',
           top: 4,
+        },
+        floatingLock: {
+          position: 'absolute',
+          top: 3,
+          zIndex: 6,
+          width: 14,
+          height: 16,
+          alignItems: 'center',
+          justifyContent: 'center',
         },
         mutedBadge: {
           zIndex: 6,

@@ -1,4 +1,5 @@
 import * as Haptics from 'expo-haptics';
+import { SymbolView } from 'expo-symbols';
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   AppState,
@@ -245,6 +246,7 @@ export type TrackData = {
   isMuted?: boolean;
   isSoloed?: boolean;
   isSoloedOut?: boolean;
+  isLocked?: boolean;
   /** Layer volume in dB; scales waveform bars for every track. */
   volumeDb?: number;
   /** Fade envelope (footprint seconds); scales waveform bars. */
@@ -921,6 +923,9 @@ function areTrackDataEqual(a: TrackData, b: TrackData): boolean {
   if (a.isSoloedOut !== b.isSoloedOut) {
     return false;
   }
+  if (a.isLocked !== b.isLocked) {
+    return false;
+  }
   if (a.volumeDb !== b.volumeDb) {
     return false;
   }
@@ -1048,6 +1053,7 @@ function areTrackWaveformRowPropsEqual(
   const nextFade = resolveFadeForTrack(next.fadeOverlay, next.track.id);
   if (
     prev.fadeOverlay?.layerId !== next.fadeOverlay?.layerId ||
+    prev.fadeOverlay?.editable !== next.fadeOverlay?.editable ||
     prev.fadeOverlay?.snapIntervalSec !== next.fadeOverlay?.snapIntervalSec ||
     prev.fadeOverlay?.crossfade?.outgoingLayerId !== next.fadeOverlay?.crossfade?.outgoingLayerId ||
     prev.fadeOverlay?.crossfade?.incomingLayerId !== next.fadeOverlay?.crossfade?.incomingLayerId ||
@@ -1306,12 +1312,18 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
                 {
                   maxWidth: Math.max(
                     0,
-                    trackWidth - (track.isMuted || track.isSoloed ? 44 : 10)
+                    trackWidth -
+                      (track.isLocked || track.isMuted || track.isSoloed ? 44 : 10)
                   ),
                 },
               ]}>
               {track.label}
             </Text>
+          ) : null}
+          {track.isLocked ? (
+            <View pointerEvents="none" style={styles.regionHeaderLock}>
+              <SymbolView name={{ ios: 'lock.fill' }} size={11} tintColor={colors.lockBadge} />
+            </View>
           ) : null}
           {track.isMuted ? (
             <View pointerEvents="none" style={[styles.regionHeaderBadge, styles.mutedBadge]}>
@@ -1326,13 +1338,28 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
         </Pressable>
       ) : trackWidth > 0 ? (
         <>
+          {track.isLocked ? (
+            <View
+              pointerEvents="none"
+              style={[
+                styles.floatingLock,
+                { left: sidePadding + trackOffset + 4 },
+              ]}>
+              <SymbolView name={{ ios: 'lock.fill' }} size={11} tintColor={colors.lockBadge} />
+            </View>
+          ) : null}
           {track.isMuted ? (
             <View
               pointerEvents="none"
               style={[
                 styles.floatingBadge,
                 styles.mutedBadge,
-                { left: sidePadding + trackOffset + 4 },
+                {
+                  left:
+                    sidePadding +
+                    trackOffset +
+                    (track.isLocked ? 22 : 4),
+                },
               ]}>
               <Text style={styles.mutedBadgeText}>M</Text>
             </View>
@@ -1345,7 +1372,11 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
                 styles.soloBadge,
                 {
                   left:
-                    sidePadding + trackOffset + (track.isMuted ? 26 : 4),
+                    sidePadding +
+                    trackOffset +
+                    4 +
+                    (track.isLocked ? 18 : 0) +
+                    (track.isMuted ? 22 : 0),
                 },
               ]}>
               <Text style={styles.soloBadgeText}>S</Text>
@@ -1362,12 +1393,14 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
                     sidePadding +
                     trackOffset +
                     4 +
+                    (track.isLocked ? 18 : 0) +
                     (track.isMuted ? 22 : 0) +
                     (track.isSoloed ? 22 : 0),
                   maxWidth: Math.max(
                     0,
                     trackWidth -
                       8 -
+                      (track.isLocked ? 18 : 0) -
                       (track.isMuted ? 22 : 0) -
                       (track.isSoloed ? 22 : 0)
                   ),
@@ -1584,7 +1617,7 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
           bodyHeight={bodyHeight}
           bodyTop={bodyTop}
           crossfade={fadeOverlay.crossfade}
-          editable={fadeOverlay.layerId === track.id}
+          editable={fadeOverlay.layerId === track.id && fadeOverlay.editable !== false}
           fades={trackFadeState}
           layoutDuration={layoutDuration}
           pixelsPerSecond={pixelsPerSecond}
@@ -1593,9 +1626,15 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
           track={track}
           trackHeight={trackHeight}
           trimScrollHelpers={trimScrollHelpers}
-          onChange={fadeOverlay.layerId === track.id ? fadeOverlay.onChange : undefined}
+          onChange={
+            fadeOverlay.layerId === track.id && fadeOverlay.editable !== false
+              ? fadeOverlay.onChange
+              : undefined
+          }
           onCrossfadeChange={
-            fadeOverlay.layerId === track.id ? fadeOverlay.onCrossfadeChange : undefined
+            fadeOverlay.layerId === track.id && fadeOverlay.editable !== false
+              ? fadeOverlay.onCrossfadeChange
+              : undefined
           }
         />
       ) : null}
@@ -2976,10 +3015,27 @@ function createWaveformStyles(colors: VoiceMemosColorScheme) {
     position: 'absolute',
     top: 4,
   },
+  floatingLock: {
+    position: 'absolute',
+    top: 3,
+    zIndex: 6,
+    width: 14,
+    height: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   regionHeaderBadge: {
     marginLeft: 4,
     position: 'relative',
     top: 0,
+  },
+  regionHeaderLock: {
+    marginLeft: 4,
+    zIndex: 6,
+    width: 14,
+    height: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   regionBodyFill: {
     position: 'absolute',

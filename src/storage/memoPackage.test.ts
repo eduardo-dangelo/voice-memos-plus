@@ -92,6 +92,7 @@ function makeMemo(overrides: Partial<Memo> = {}): Memo {
           trimOut: 5,
           volumeDb: 0,
           muted: true,
+          locked: true,
           fadeInSec: 0,
           fadeOutSec: 0,
           fadeInCurve: 0,
@@ -258,6 +259,7 @@ describe('pack → validate round-trip', () => {
     assert.equal(remapped.layers[1]?.startTime, 2);
     assert.equal(remapped.layers[0]?.effects?.reverb?.preset, 'room');
     assert.equal(remapped.layers[1]?.effects?.muted, true);
+    assert.equal(remapped.layers[1]?.effects?.locked, true);
     assert.equal(remapped.metronome?.enabled, true);
     assert.equal(remapped.loopEnabled, true);
     assert.equal(remapped.loopSnapToGrid, false);

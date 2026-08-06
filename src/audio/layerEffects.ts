@@ -98,6 +98,8 @@ export type LayerEffects = {
   volumeDb: number;
   muted?: boolean;
   solo?: boolean;
+  /** When true, track edits are blocked except mute/solo and unlock. */
+  locked?: boolean;
   /** Fade-in length in seconds from the start of the keep region. */
   fadeInSec: number;
   /** Fade-out length in seconds before the end of the keep region. */
@@ -293,6 +295,7 @@ export function createDefaultLayerEffects(duration: number): LayerEffects {
     volumeDb: 0,
     muted: false,
     solo: false,
+    locked: false,
     fadeInSec: 0,
     fadeOutSec: 0,
     fadeInCurve: 0,
@@ -353,6 +356,23 @@ export function isLayerAudible(effects: LayerEffects, anySoloActive: boolean): b
 
 export function isLayerSelectable(effects: LayerEffects, anySoloActive: boolean): boolean {
   return isLayerAudible(effects, anySoloActive);
+}
+
+export function isLayerLocked(effects: LayerEffects): boolean {
+  return Boolean(effects.locked);
+}
+
+/** Effects keys still allowed while a layer is locked. */
+const LOCKED_LAYER_ALLOWED_KEYS = new Set(['muted', 'solo', 'locked']);
+
+export function isLockedLayerEffectsChangeAllowed(
+  current: LayerEffects,
+  partial: LayerEffectsChange
+): boolean {
+  if (!isLayerLocked(current)) {
+    return true;
+  }
+  return Object.keys(partial).every((key) => LOCKED_LAYER_ALLOWED_KEYS.has(key));
 }
 
 export function normalizeLayerEffects(
@@ -428,6 +448,7 @@ export function normalizeLayerEffects(
     volumeDb: layer.effects.volumeDb ?? 0,
     muted: layer.effects.muted ?? false,
     solo: layer.effects.solo ?? false,
+    locked: layer.effects.locked ?? false,
     fadeInSec: scaledFadeIn,
     fadeOutSec: scaledFadeOut,
     fadeInCurve: clampFadeCurveValue(layer.effects.fadeInCurve ?? 0),

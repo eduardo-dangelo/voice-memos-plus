@@ -645,6 +645,7 @@ export async function replaceLayerFile(
       volumeDb: previousEffects.volumeDb,
       muted: previousEffects.muted,
       solo: previousEffects.solo,
+      locked: previousEffects.locked,
       reverb: previousEffects.reverb,
       delay: previousEffects.delay,
       eq: previousEffects.eq,

@@ -34,7 +34,7 @@ import {
   subscribeHeadphonesConnected,
 } from '@/src/audio/headphoneDetection';
 import type { LayerEffects, LayerEffectsChange } from '@/src/audio/layerEffects';
-import { hasAnySoloActive, isLayerSelectable, mergeLayerEffects } from '@/src/audio/layerEffects';
+import { hasAnySoloActive, isLayerLocked, isLayerSelectable, isLockedLayerEffectsChangeAllowed, mergeLayerEffects } from '@/src/audio/layerEffects';
 import { loadMemoIntoEngine } from '@/src/audio/loadMemoIntoEngine';
 import { RecordingStartAbortedError, type EngineState } from '@/src/audio/MemoAudioEngine';
 import {
@@ -339,6 +339,7 @@ function layerEffectsPersistPayload(effects: LayerEffects): LayerEffectsChange {
     volumeDb: effects.volumeDb,
     muted: effects.muted,
     solo: effects.solo,
+    locked: effects.locked,
     fadeInSec: effects.fadeInSec,
     fadeOutSec: effects.fadeOutSec,
     fadeInCurve: effects.fadeInCurve,
@@ -461,6 +462,9 @@ export function MemoEditor({
   const [trackMenuFormatPicker, setTrackMenuFormatPicker] = useState(false);
   const [trackMenuMergePicker, setTrackMenuMergePicker] = useState(false);
   const [memoMergePickerVisible, setMemoMergePickerVisible] = useState(false);
+  const [memoLockPickerMode, setMemoLockPickerMode] = useState<'lock' | 'unlock' | null>(
+    null
+  );
   const [trackMenuRename, setTrackMenuRename] = useState<{
     layerId: string;
     label: string;
@@ -545,7 +549,12 @@ export function MemoEditor({
         return;
       }
 
-      const nextEffects = mergeLayerEffects(getLayerEffects(layer), partial, layer.duration);
+      const currentEffects = getLayerEffects(layer);
+      if (!isLockedLayerEffectsChangeAllowed(currentEffects, partial)) {
+        return;
+      }
+
+      const nextEffects = mergeLayerEffects(currentEffects, partial, layer.duration);
       const trimInChanged = partial.trimIn !== undefined;
       const trimChanged =
         partial.trimIn !== undefined || partial.trimOut !== undefined;
@@ -589,6 +598,9 @@ export function MemoEditor({
 
       if (partial.muted === true && activeLayerIdRef.current === layerId) {
         setActiveLayerId(null);
+        setActiveEditor(null);
+      }
+      if (partial.locked === true && activeLayerIdRef.current === layerId) {
         setActiveEditor(null);
       }
 
@@ -723,6 +735,12 @@ export function MemoEditor({
       if (!current) {
         return;
       }
+      if (activeLayerId) {
+        const layer = current.layers.find((entry) => entry.id === activeLayerId);
+        if (layer && isLayerLocked(getLayerEffects(layer))) {
+          return;
+        }
+      }
       draftGenerationRef.current += 1;
       editDraftRef.current = {
         tool,
@@ -735,7 +753,7 @@ export function MemoEditor({
       setActiveEditor(tool);
       scheduleEditDraftIdleAutosave();
     },
-    [scheduleEditDraftIdleAutosave]
+    [activeLayerId, scheduleEditDraftIdleAutosave]
   );
 
   const cancelEditDraft = useCallback(async (): Promise<void> => {
@@ -841,6 +859,14 @@ export function MemoEditor({
         return;
       }
 
+      if (
+        tool != null &&
+        activeLayerEffects &&
+        isLayerLocked(activeLayerEffects)
+      ) {
+        return;
+      }
+
       const draft = editDraftRef.current;
       if (draft && tool !== draft.tool) {
         void cancelEditDraft().then(() => {
@@ -860,7 +886,7 @@ export function MemoEditor({
 
       setActiveEditor(tool);
     },
-    [beginEditDraft, cancelEditDraft, savingTrim]
+    [activeLayerEffects, beginEditDraft, cancelEditDraft, savingTrim]
   );
 
   const handleConfirmDraft = useCallback(() => {
@@ -900,6 +926,9 @@ export function MemoEditor({
           continue;
         }
         const currentEffects = getLayerEffects(layer);
+        if (isLayerLocked(currentEffects)) {
+          continue;
+        }
         const activeDuration = Math.max(0, currentEffects.trimOut - currentEffects.trimIn);
         const clamped = clampFadeValues(
           fades.fadeInSec,
@@ -1101,6 +1130,10 @@ export function MemoEditor({
 
         const layer = prev.layers.find((entry) => entry.id === activeLayerId);
         if (!layer) {
+          return prev;
+        }
+
+        if (isLayerLocked(getLayerEffects(layer))) {
           return prev;
         }
 
@@ -1545,6 +1578,11 @@ export function MemoEditor({
         return;
       }
 
+      const target = memo.layers.find((entry) => entry.id === layerId);
+      if (target && isLayerLocked(getLayerEffects(target))) {
+        return;
+      }
+
       try {
         await cancelEditDraft();
         flushEffectsPersist();
@@ -1576,6 +1614,15 @@ export function MemoEditor({
     async (layerIds: string[], survivorId?: string) => {
       const current = memoRef.current;
       if (!current || engineState.isRecording || isExporting) {
+        return;
+      }
+
+      if (
+        layerIds.some((id) => {
+          const layer = current.layers.find((entry) => entry.id === id);
+          return layer ? isLayerLocked(getLayerEffects(layer)) : false;
+        })
+      ) {
         return;
       }
 
@@ -1652,7 +1699,44 @@ export function MemoEditor({
     setTrackMenuFormatPicker(false);
     setTrackMenuMergePicker(false);
     setTrackMenuRename(null);
+    setMemoLockPickerMode(null);
     setMemoMergePickerVisible(true);
+  }, [engineState.isRecording, memo]);
+
+  const handleLockTracksMenu = useCallback(() => {
+    if (!memo || engineState.isRecording) {
+      return;
+    }
+    const hasUnlocked = getPlayableLayers(memo).some(
+      (layer) => !isLayerLocked(getLayerEffects(layer))
+    );
+    if (!hasUnlocked) {
+      return;
+    }
+    setTrackMenuLayerId(null);
+    setTrackMenuFormatPicker(false);
+    setTrackMenuMergePicker(false);
+    setTrackMenuRename(null);
+    setMemoMergePickerVisible(false);
+    setMemoLockPickerMode('lock');
+  }, [engineState.isRecording, memo]);
+
+  const handleUnlockTracksMenu = useCallback(() => {
+    if (!memo || engineState.isRecording) {
+      return;
+    }
+    const hasLocked = getPlayableLayers(memo).some((layer) =>
+      isLayerLocked(getLayerEffects(layer))
+    );
+    if (!hasLocked) {
+      return;
+    }
+    setTrackMenuLayerId(null);
+    setTrackMenuFormatPicker(false);
+    setTrackMenuMergePicker(false);
+    setTrackMenuRename(null);
+    setMemoMergePickerVisible(false);
+    setMemoLockPickerMode('unlock');
   }, [engineState.isRecording, memo]);
 
   const getTrackMenuActions = useCallback(
@@ -1667,8 +1751,31 @@ export function MemoEditor({
       }
 
       const effects = getLayerEffects(layer);
+      if (isLayerLocked(effects)) {
+        return [
+          {
+            id: 'lock',
+            title: 'Unlock',
+            systemImage: 'lock.open',
+          },
+          {
+            id: 'mute',
+            title: effects.muted ? 'Unmute' : 'Mute',
+            systemImage: effects.muted ? 'speaker.slash' : 'speaker.wave.2',
+          },
+          {
+            id: 'solo',
+            title: effects.solo ? 'Unsolo' : 'Solo',
+            systemImage: 'headphones',
+          },
+        ];
+      }
+
       const playableCount = getPlayableLayers(memo).length;
       const canDelete = playableCount > 1;
+      const unlockedPartners = getMergePartnerLayers(memo.layers, layerId).filter(
+        (partner) => !isLayerLocked(getLayerEffects(partner))
+      );
       const actions: IconActionSheetItem[] = [
         { id: 'export', title: 'Export Track', systemImage: 'square.and.arrow.up' },
         { id: 'rename', title: 'Rename Track', systemImage: 'pencil' },
@@ -1684,8 +1791,13 @@ export function MemoEditor({
           title: effects.solo ? 'Unsolo' : 'Solo',
           systemImage: 'headphones',
         },
+        {
+          id: 'lock',
+          title: 'Lock',
+          systemImage: 'lock',
+        },
       ];
-      if (playableCount > 1) {
+      if (unlockedPartners.length > 0) {
         actions.push({
           id: 'merge',
           title: 'Merge',
@@ -1733,6 +1845,8 @@ export function MemoEditor({
           setTrackMenuRename(null);
           setTrackMenuFormatPicker(false);
           setTrackMenuMergePicker(false);
+          setMemoMergePickerVisible(false);
+          setMemoLockPickerMode(null);
           setTrackMenuLayerId(layerId);
         })();
         return;
@@ -1741,6 +1855,8 @@ export function MemoEditor({
       setTrackMenuRename(null);
       setTrackMenuFormatPicker(false);
       setTrackMenuMergePicker(false);
+      setMemoMergePickerVisible(false);
+      setMemoLockPickerMode(null);
       setTrackMenuLayerId(layerId);
     },
     [
@@ -1778,11 +1894,17 @@ export function MemoEditor({
 
       switch (actionId) {
         case 'export':
+          if (isLayerLocked(effects)) {
+            break;
+          }
           setTrackMenuMergePicker(false);
           setTrackMenuFormatPicker(true);
           break;
         case 'm4a':
         case 'wav':
+          if (isLayerLocked(effects)) {
+            break;
+          }
           shareMemo(memo, {
             layerId,
             format: actionId,
@@ -1791,29 +1913,54 @@ export function MemoEditor({
           });
           break;
         case 'rename':
+          if (isLayerLocked(effects)) {
+            break;
+          }
           selectLayerIfNeeded();
           setTrackMenuFormatPicker(false);
           setTrackMenuMergePicker(false);
           setTrackMenuRename({ layerId, label: layer.label });
           break;
         case 'changeColor':
+          if (isLayerLocked(effects)) {
+            break;
+          }
           selectLayerIfNeeded();
           setColorPickerLayerId(layerId);
           break;
         case 'loop':
+          if (isLayerLocked(effects)) {
+            break;
+          }
           if (engineState.isPlaying || engineState.isRecording) {
             break;
           }
           selectLayerIfNeeded();
           setLoopDialogLayerId(layerId);
           break;
-        case 'mute':
-          applyLayerEffectsChange(layerId, { muted: !effects.muted });
+        case 'mute': {
+          const nextMuted = !effects.muted;
+          applyLayerEffectsChange(layerId, {
+            muted: nextMuted,
+            ...(nextMuted && effects.solo ? { solo: false } : {}),
+          });
           break;
-        case 'solo':
-          applyLayerEffectsChange(layerId, { solo: !effects.solo });
+        }
+        case 'solo': {
+          const nextSolo = !effects.solo;
+          applyLayerEffectsChange(layerId, {
+            solo: nextSolo,
+            ...(nextSolo && effects.muted ? { muted: false } : {}),
+          });
+          break;
+        }
+        case 'lock':
+          applyLayerEffectsChange(layerId, { locked: !effects.locked });
           break;
         case 'merge':
+          if (isLayerLocked(effects)) {
+            break;
+          }
           if (canMergeLayers(memo.layers)) {
             setTrackMenuFormatPicker(false);
             setTrackMenuRename(null);
@@ -1821,6 +1968,9 @@ export function MemoEditor({
           }
           break;
         case 'delete':
+          if (isLayerLocked(effects)) {
+            break;
+          }
           if (getPlayableLayers(memo).length > 1) {
             Alert.alert('Delete Track', 'Delete this track? This cannot be undone.', [
               { text: 'Cancel', style: 'cancel' },
@@ -1852,6 +2002,7 @@ export function MemoEditor({
     setTrackMenuMergePicker(false);
     setTrackMenuRename(null);
     setMemoMergePickerVisible(false);
+    setMemoLockPickerMode(null);
   }, []);
 
   const handleTrackMergeConfirm = useCallback(
@@ -1861,9 +2012,19 @@ export function MemoEditor({
       if (!anchorId || selectedIds.length === 0) {
         return;
       }
-      confirmMergeLayers([anchorId, ...selectedIds], anchorId);
+      const ids = [anchorId, ...selectedIds];
+      if (
+        memo &&
+        ids.some((id) => {
+          const layer = memo.layers.find((entry) => entry.id === id);
+          return layer ? isLayerLocked(getLayerEffects(layer)) : false;
+        })
+      ) {
+        return;
+      }
+      confirmMergeLayers(ids, anchorId);
     },
-    [confirmMergeLayers, dismissTrackMenu, trackMenuLayerId]
+    [confirmMergeLayers, dismissTrackMenu, memo, trackMenuLayerId]
   );
 
   const handleMemoMergeConfirm = useCallback(
@@ -1872,9 +2033,33 @@ export function MemoEditor({
       if (selectedIds.length < 2) {
         return;
       }
+      if (
+        memo &&
+        selectedIds.some((id) => {
+          const layer = memo.layers.find((entry) => entry.id === id);
+          return layer ? isLayerLocked(getLayerEffects(layer)) : false;
+        })
+      ) {
+        return;
+      }
       confirmMergeLayers(selectedIds);
     },
-    [confirmMergeLayers]
+    [confirmMergeLayers, memo]
+  );
+
+  const handleMemoLockConfirm = useCallback(
+    (selectedIds: string[]) => {
+      const mode = memoLockPickerMode;
+      setMemoLockPickerMode(null);
+      if (!mode || selectedIds.length === 0) {
+        return;
+      }
+      const locked = mode === 'lock';
+      for (const layerId of selectedIds) {
+        applyLayerEffectsChange(layerId, { locked });
+      }
+    },
+    [applyLayerEffectsChange, memoLockPickerMode]
   );
 
   const handleTrackRenameSave = useCallback(
@@ -2597,11 +2782,33 @@ export function MemoEditor({
           <View style={styles.headerLeading}>
             <MemoOptionsMenu
               includeEditRecording={false}
-              includeMergeLayers={memo ? canMergeLayers(memo.layers) : false}
+              includeMergeLayers={
+                memo
+                  ? getPlayableLayersInTimelineOrder(memo.layers).filter(
+                      (layer) => !isLayerLocked(getLayerEffects(layer))
+                    ).length > 1
+                  : false
+              }
+              includeLockTracks={
+                memo
+                  ? getPlayableLayers(memo).some(
+                      (layer) => !isLayerLocked(getLayerEffects(layer))
+                    )
+                  : false
+              }
+              includeUnlockTracks={
+                memo
+                  ? getPlayableLayers(memo).some((layer) =>
+                      isLayerLocked(getLayerEffects(layer))
+                    )
+                  : false
+              }
               includeShare={memo ? hasRecording(memo) : false}
               onShare={handleShare}
               onRename={handleRename}
               onMergeLayers={handleMergeAllLayers}
+              onLockTracks={handleLockTracksMenu}
+              onUnlockTracks={handleUnlockTracksMenu}
               onDuplicate={() => void handleDuplicate()}
               onDelete={confirmDelete}>
               <FloatingHeaderIconFace
@@ -2634,9 +2841,11 @@ export function MemoEditor({
       engineState.isRecording,
       handleDone,
       handleDuplicate,
+      handleLockTracksMenu,
       handleMergeAllLayers,
       handleRename,
       handleShare,
+      handleUnlockTracksMenu,
       isPane,
       memo,
       onToggleSidebar,
@@ -3012,6 +3221,7 @@ export function MemoEditor({
       activeLayer &&
         activeLayer.duration > 0 &&
         activeLayerEffects &&
+        !isLayerLocked(activeLayerEffects) &&
         isLayerSelectable(
           activeLayerEffects,
           memo
@@ -3021,12 +3231,15 @@ export function MemoEditor({
     );
 
   const availableTools = useMemo((): EditorTool[] => {
+    if (activeLayerEffects && isLayerLocked(activeLayerEffects)) {
+      return [];
+    }
     const base: EditorTool[] = ['trim', 'volume', 'reverb', 'delay', 'eq'];
     if (memo && getPlayableLayers(memo).length > 1) {
       return ['trim', 'move', 'volume', 'reverb', 'delay', 'eq'];
     }
     return base;
-  }, [memo]);
+  }, [activeLayerEffects, memo]);
 
   useEffect(() => {
     if (activeEditor === 'move' && memo && getPlayableLayers(memo).length <= 1) {
@@ -3039,14 +3252,22 @@ export function MemoEditor({
       return;
     }
     const layer = memo.layers.find((entry) => entry.id === activeLayerId);
+    if (!layer) {
+      return;
+    }
+    const effects = getLayerEffects(layer);
     const anySoloActive = hasAnySoloActive(
       memo.layers.map((entry) => getLayerEffects(entry))
     );
-    if (layer && !isLayerSelectable(getLayerEffects(layer), anySoloActive)) {
+    if (!isLayerSelectable(effects, anySoloActive)) {
       setActiveLayerId(null);
       setActiveEditor(null);
+      return;
     }
-  }, [activeLayerId, memo]);
+    if (isLayerLocked(effects) && activeEditor != null) {
+      setActiveEditor(null);
+    }
+  }, [activeEditor, activeLayerId, memo]);
 
   const blockSheetGesture = isRecording;
 
@@ -3126,6 +3347,7 @@ export function MemoEditor({
             isMuted: effects.muted,
             isSoloed: effects.solo,
             isSoloedOut: anySoloActive && !effects.solo,
+            isLocked: effects.locked,
             volumeDb: effects.volumeDb,
             ...trackFadeFields(effects),
             ...trackMeta,
@@ -3153,6 +3375,7 @@ export function MemoEditor({
             isMuted: effects.muted,
             isSoloed: effects.solo,
             isSoloedOut: anySoloActive && !effects.solo,
+            isLocked: effects.locked,
             volumeDb: effects.volumeDb,
             ...trackFadeFields(effects),
             ...trackMeta,
@@ -3178,6 +3401,7 @@ export function MemoEditor({
           isMuted: effects.muted,
           isSoloed: effects.solo,
           isSoloedOut: anySoloActive && !effects.solo,
+          isLocked: effects.locked,
           volumeDb: effects.volumeDb,
           ...trackFadeFields(effects),
           ...trackMeta,
@@ -3328,20 +3552,36 @@ export function MemoEditor({
     if (!memo || !trackMenuLayerId) {
       return [];
     }
-    return getMergePartnerLayers(memo.layers, trackMenuLayerId).map((layer) => ({
-      id: layer.id,
-      title: layer.label,
-    }));
+    return getMergePartnerLayers(memo.layers, trackMenuLayerId)
+      .filter((layer) => !isLayerLocked(getLayerEffects(layer)))
+      .map((layer) => ({
+        id: layer.id,
+        title: layer.label,
+      }));
   }, [memo, trackMenuLayerId]);
   const memoMergeOptions = useMemo((): IconActionSheetItem[] => {
     if (!memo) {
       return [];
     }
-    return getPlayableLayersInTimelineOrder(memo.layers).map((layer) => ({
-      id: layer.id,
-      title: layer.label,
-    }));
+    return getPlayableLayersInTimelineOrder(memo.layers)
+      .filter((layer) => !isLayerLocked(getLayerEffects(layer)))
+      .map((layer) => ({
+        id: layer.id,
+        title: layer.label,
+      }));
   }, [memo]);
+  const memoLockOptions = useMemo((): IconActionSheetItem[] => {
+    if (!memo || !memoLockPickerMode) {
+      return [];
+    }
+    const wantLocked = memoLockPickerMode === 'unlock';
+    return getPlayableLayersInTimelineOrder(memo.layers)
+      .filter((layer) => isLayerLocked(getLayerEffects(layer)) === wantLocked)
+      .map((layer) => ({
+        id: layer.id,
+        title: layer.label,
+      }));
+  }, [memo, memoLockPickerMode]);
   const showEditorContent = Boolean(memo && !loading);
 
   const timelineSnapIntervalSec = useMemo(() => {
@@ -3352,7 +3592,13 @@ export function MemoEditor({
   }, [metronomeSettings]);
 
   const trimOverlay = useMemo(() => {
-    if (activeEditor !== 'trim' || savingTrim || !activeLayer || !activeLayerEffects) {
+    if (
+      activeEditor !== 'trim' ||
+      savingTrim ||
+      !activeLayer ||
+      !activeLayerEffects ||
+      isLayerLocked(activeLayerEffects)
+    ) {
       return undefined;
     }
     return {
@@ -3372,7 +3618,12 @@ export function MemoEditor({
   ]);
 
   const moveOverlay = useMemo(() => {
-    if (activeEditor !== 'move' || !activeLayer || !activeLayerEffects) {
+    if (
+      activeEditor !== 'move' ||
+      !activeLayer ||
+      !activeLayerEffects ||
+      isLayerLocked(activeLayerEffects)
+    ) {
       return undefined;
     }
     return {
@@ -3402,6 +3653,7 @@ export function MemoEditor({
       return undefined;
     }
 
+    const locked = isLayerLocked(activeLayerEffects);
     const peer = findCrossfadePeer(activeLayer, memo.layers);
     const peerFades =
       peer != null
@@ -3449,6 +3701,7 @@ export function MemoEditor({
         fadeInCurve: activeLayerEffects.fadeInCurve,
         fadeOutCurve: activeLayerEffects.fadeOutCurve,
       },
+      editable: !locked,
       onChange: handleFadeChange,
       snapIntervalSec: timelineSnapIntervalSec,
       peerFades,
@@ -3461,7 +3714,7 @@ export function MemoEditor({
             linked,
           }
         : null,
-      onCrossfadeChange: peer ? handleCrossfadeChange : undefined,
+      onCrossfadeChange: peer && !locked ? handleCrossfadeChange : undefined,
     };
   }, [
     activeEditor,
@@ -3502,9 +3755,13 @@ export function MemoEditor({
       if (engineState.isPlaying || isRecording) {
         return;
       }
+      const layer = memo?.layers.find((entry) => entry.id === layerId);
+      if (layer && isLayerLocked(getLayerEffects(layer))) {
+        return;
+      }
       setLoopDialogLayerId(layerId);
     },
-    [engineState.isPlaying, isRecording]
+    [engineState.isPlaying, isRecording, memo]
   );
 
   const trackLoopOverlay = useMemo(() => {
@@ -3730,30 +3987,45 @@ export function MemoEditor({
           trackMenuFormatPicker ? { title: 'Choose format…' } : null
         }
         multiSelect={
-          memoMergePickerVisible
+          memoLockPickerMode
             ? {
-                title: 'Merge Layers',
-                options: memoMergeOptions,
-                confirmTitle: 'Merge',
-                minSelection: 2,
+                title: memoLockPickerMode === 'lock' ? 'Lock Tracks' : 'Unlock Tracks',
+                options: memoLockOptions,
+                confirmTitle: memoLockPickerMode === 'lock' ? 'Lock' : 'Unlock',
+                minSelection: 1,
               }
-            : trackMenuMergePicker
+            : memoMergePickerVisible
               ? {
-                  title: 'Merge with…',
-                  options: trackMenuMergeOptions,
+                  title: 'Merge Layers',
+                  options: memoMergeOptions,
                   confirmTitle: 'Merge',
+                  minSelection: 2,
                 }
-              : null
+              : trackMenuMergePicker
+                ? {
+                    title: 'Merge with…',
+                    options: trackMenuMergeOptions,
+                    confirmTitle: 'Merge',
+                  }
+                : null
         }
         rename={
           trackMenuRename
             ? { title: 'Rename Track', initialValue: trackMenuRename.label }
             : null
         }
-        visible={trackMenuLayerId !== null || memoMergePickerVisible}
+        visible={
+          trackMenuLayerId !== null ||
+          memoMergePickerVisible ||
+          memoLockPickerMode !== null
+        }
         onDismiss={dismissTrackMenu}
         onMultiSelectConfirm={
-          memoMergePickerVisible ? handleMemoMergeConfirm : handleTrackMergeConfirm
+          memoLockPickerMode
+            ? handleMemoLockConfirm
+            : memoMergePickerVisible
+              ? handleMemoMergeConfirm
+              : handleTrackMergeConfirm
         }
         onRenameSave={handleTrackRenameSave}
         onSelect={(actionId) => {
