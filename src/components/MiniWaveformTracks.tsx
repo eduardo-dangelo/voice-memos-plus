@@ -8,7 +8,7 @@ import { hasAnySoloActive } from '@/src/audio/layerEffects';
 import {
   barsPerCycleAtPps,
   loopPeakIndex,
-  normalizePeaksForBarCount,
+  normalizePeakAt,
   peakToAbsoluteScale,
   slicePeaksForTrim,
   WAVEFORM_BAR_GAP,
@@ -36,6 +36,7 @@ const PAN_ACTIVE_OFFSET_X = 8;
 const PAN_FAIL_OFFSET_Y = 24;
 const TAP_MAX_DISTANCE = 10;
 const SCRUB_ENGINE_THROTTLE_MS = 32;
+const SCRUB_UI_THROTTLE_MS = 32;
 
 type MiniTrack = {
   id: string;
@@ -47,6 +48,22 @@ type MiniTrack = {
   isMuted: boolean;
   isSoloed: boolean;
   isSoloedOut: boolean;
+};
+
+type LaneBarGeometry = {
+  left: number;
+  height: number;
+  barTime: number;
+};
+
+type LaneGeometry = {
+  id: string;
+  left: number;
+  trackWidth: number;
+  isMuted: boolean;
+  isSoloed: boolean;
+  activeColorKey: string;
+  bars: LaneBarGeometry[];
 };
 
 type Props = {
@@ -119,6 +136,7 @@ export function MiniWaveformTracks({
   const scrubActiveRef = useRef(false);
   const scrubTimeRef = useRef<number | null>(null);
   const lastEngineSeekAtRef = useRef(0);
+  const lastScrubUiAtRef = useRef(0);
 
   widthRef.current = width;
   durationRef.current = duration;
@@ -136,16 +154,26 @@ export function MiniWaveformTracks({
     onSeekRef.current(time);
   };
 
-  const applyScrubX = (x: number, forceEngine: boolean) => {
+  const pushScrubUi = (time: number, force: boolean) => {
+    const now = Date.now();
+    if (!force && now - lastScrubUiAtRef.current < SCRUB_UI_THROTTLE_MS) {
+      return;
+    }
+    lastScrubUiAtRef.current = now;
+    setScrubTime(time);
+  };
+
+  const applyScrubX = (x: number, force: boolean) => {
     const time = timeFromX(x, widthRef.current, durationRef.current);
     scrubTimeRef.current = time;
-    setScrubTime(time);
-    pushEngineSeek(time, forceEngine);
+    pushScrubUi(time, force);
+    pushEngineSeek(time, force);
   };
 
   const handlePanStart = (x: number) => {
     scrubActiveRef.current = true;
     lastEngineSeekAtRef.current = 0;
+    lastScrubUiAtRef.current = 0;
     onScrubStartRef.current?.();
     applyScrubX(x, true);
   };
@@ -221,91 +249,49 @@ export function MiniWaveformTracks({
   const colorTime =
     barStepTime > 0 ? Math.floor(rawColorTime / barStepTime) * barStepTime : rawColorTime;
 
-  const lanes = useMemo(() => {
+  // Peak/bar geometry only — do not depend on colorTime (scrub must not re-sample peaks).
+  const laneGeometry = useMemo((): LaneGeometry[] | null => {
     if (tracks.length === 0 || duration <= 0 || width <= 0) {
       return null;
     }
     const laneHeight = LANE_HEIGHT;
+    const maxBarHeight = Math.max(2, laneHeight - 2);
+    const effectivePps = duration > 0 ? width / duration : 0;
+
     return tracks.map((track) => {
-      const activeColor =
-        track.isMuted || track.isSoloedOut ? colors.waveformBar : track.color;
-      const unplayedColor = colorDesaturatedWithAlpha(
-        activeColor,
-        UNPLAYED_SATURATION,
-        UNPLAYED_ALPHA
-      );
       const left = (track.startTime / duration) * width;
       const trackWidth = Math.max(0, (track.duration / duration) * width);
       const barCount = Math.max(0, Math.floor(trackWidth / BAR_STEP));
-      const effectivePps = duration > 0 ? width / duration : 0;
       const barsPerCycle = barsPerCycleAtPps(track.cycleDuration, effectivePps, BAR_STEP);
       const cycleBarCount = Math.max(1, Math.floor(barsPerCycle));
-      const cyclePeaks =
-        barCount > 0 ? normalizePeaksForBarCount(track.peaks, cycleBarCount) : [];
-      const maxBarHeight = Math.max(2, laneHeight - 2);
+      const bars: LaneBarGeometry[] = [];
+      for (let index = 0; index < barCount; index++) {
+        const peakIndex = loopPeakIndex(index, barsPerCycle, cycleBarCount);
+        const peak = normalizePeakAt(track.peaks, cycleBarCount, peakIndex);
+        const scaled = peakToAbsoluteScale(peak);
+        const barHeight =
+          scaled <= 0.01
+            ? 1
+            : Math.max(1.5, Math.min(maxBarHeight, scaled * maxBarHeight));
+        bars.push({
+          left: index * BAR_STEP,
+          height: barHeight,
+          barTime: ((left + index * BAR_STEP) / width) * duration,
+        });
+      }
 
-      return (
-        <View
-          key={track.id}
-          style={[
-            styles.lane,
-            {
-              height: laneHeight,
-              backgroundColor: colors.waveformBandBackground,
-            },
-          ]}>
-          {trackWidth > 0 ? (
-            <View style={[styles.barsRow, { left, width: trackWidth, height: laneHeight }]}>
-              {Array.from({ length: barCount }, (_, index) => {
-                const peak =
-                  cyclePeaks[loopPeakIndex(index, barsPerCycle, cycleBarCount)] ?? 0;
-                const scaled = peakToAbsoluteScale(peak);
-                const barHeight =
-                  scaled <= 0.01
-                    ? 1
-                    : Math.max(1.5, Math.min(maxBarHeight, scaled * maxBarHeight));
-                const barTime = ((left + index * BAR_STEP) / width) * duration;
-                const backgroundColor = barTime < colorTime ? activeColor : unplayedColor;
-                return (
-                  <View
-                    key={index}
-                    style={[
-                      styles.bar,
-                      {
-                        left: index * BAR_STEP,
-                        top: (laneHeight - barHeight) / 2,
-                        width: WAVEFORM_BAR_WIDTH,
-                        height: barHeight,
-                        backgroundColor,
-                      },
-                    ]}
-                  />
-                );
-              })}
-            </View>
-          ) : null}
-          {trackWidth > 0 && track.isMuted ? (
-            <View
-              pointerEvents="none"
-              style={[styles.floatingBadge, styles.mutedBadge, { left: left + 4 }]}>
-              <Text style={styles.mutedBadgeText}>M</Text>
-            </View>
-          ) : null}
-          {trackWidth > 0 && track.isSoloed ? (
-            <View
-              pointerEvents="none"
-              style={[
-                styles.floatingBadge,
-                styles.soloBadge,
-                { left: left + (track.isMuted ? 26 : 4) },
-              ]}>
-              <Text style={styles.soloBadgeText}>S</Text>
-            </View>
-          ) : null}
-        </View>
-      );
+      return {
+        id: track.id,
+        left,
+        trackWidth,
+        isMuted: track.isMuted,
+        isSoloed: track.isSoloed,
+        activeColorKey:
+          track.isMuted || track.isSoloedOut ? '__waveformBar__' : track.color,
+        bars,
+      };
     });
-  }, [tracks, width, duration, colorTime, colors, styles]);
+  }, [tracks, width, duration]);
 
   if (tracks.length === 0 || duration <= 0) {
     return null;
@@ -314,6 +300,75 @@ export function MiniWaveformTracks({
   const totalHeight = tracks.length * LANE_HEIGHT;
   const playheadLeft =
     width > 0 ? Math.max(0, Math.min(1, playheadTime / duration)) * width : 0;
+
+  const lanes =
+    laneGeometry == null
+      ? null
+      : laneGeometry.map((lane) => {
+          const activeColor =
+            lane.activeColorKey === '__waveformBar__'
+              ? colors.waveformBar
+              : lane.activeColorKey;
+          const unplayedColor = colorDesaturatedWithAlpha(
+            activeColor,
+            UNPLAYED_SATURATION,
+            UNPLAYED_ALPHA
+          );
+          return (
+            <View
+              key={lane.id}
+              style={[
+                styles.lane,
+                {
+                  height: LANE_HEIGHT,
+                  backgroundColor: colors.waveformBandBackground,
+                },
+              ]}>
+              {lane.trackWidth > 0 ? (
+                <View
+                  style={[
+                    styles.barsRow,
+                    { left: lane.left, width: lane.trackWidth, height: LANE_HEIGHT },
+                  ]}>
+                  {lane.bars.map((bar, index) => (
+                    <View
+                      key={index}
+                      style={[
+                        styles.bar,
+                        {
+                          left: bar.left,
+                          top: (LANE_HEIGHT - bar.height) / 2,
+                          width: WAVEFORM_BAR_WIDTH,
+                          height: bar.height,
+                          backgroundColor:
+                            bar.barTime < colorTime ? activeColor : unplayedColor,
+                        },
+                      ]}
+                    />
+                  ))}
+                </View>
+              ) : null}
+              {lane.trackWidth > 0 && lane.isMuted ? (
+                <View
+                  pointerEvents="none"
+                  style={[styles.floatingBadge, styles.mutedBadge, { left: lane.left + 4 }]}>
+                  <Text style={styles.mutedBadgeText}>M</Text>
+                </View>
+              ) : null}
+              {lane.trackWidth > 0 && lane.isSoloed ? (
+                <View
+                  pointerEvents="none"
+                  style={[
+                    styles.floatingBadge,
+                    styles.soloBadge,
+                    { left: lane.left + (lane.isMuted ? 26 : 4) },
+                  ]}>
+                  <Text style={styles.soloBadgeText}>S</Text>
+                </View>
+              ) : null}
+            </View>
+          );
+        });
 
   return (
     <GestureDetector gesture={gesture}>

@@ -139,6 +139,13 @@ test('slicePeaksForTrim uses design-density bar time for latency trimIn', () => 
   assert.equal(sliced![5], 0.95);
 });
 
+test('slicePeaksForTrim returns the same array when trim spans the full take', () => {
+  const duration = 30;
+  const peaks = Array.from({ length: peakCountForDuration(duration) }, () => 0.4);
+  const sliced = slicePeaksForTrim(peaks, duration, 0, duration);
+  assert.equal(sliced, peaks);
+});
+
 test('computeWaveformPeaksFromChannelData matches peakCount and finds loud samples', () => {
   const peakCount = 4;
   const samplesPerPeak = 10;

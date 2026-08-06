@@ -301,7 +301,7 @@ function RecordingRowComponent({
       {playable ? (
         <Collapsible expanded={expanded}>
           <View style={styles.expanded}>
-            {!isRegularWidth ? (
+            {!isRegularWidth && expanded ? (
               <MiniWaveformTracks
                 currentTime={displayTime}
                 duration={duration}

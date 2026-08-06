@@ -255,5 +255,9 @@ export function slicePeaksForTrim(
       Math.max(startIndex + 1, Math.round((safeTrimOut / duration) * peaks.length))
     );
   }
+  // Full-span trim (common for list mini tracks) — keep the same array reference.
+  if (startIndex === 0 && endIndex === peaks.length) {
+    return peaks;
+  }
   return peaks.slice(startIndex, endIndex);
 }
