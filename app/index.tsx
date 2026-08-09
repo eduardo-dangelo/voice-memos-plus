@@ -15,6 +15,7 @@ import { FloatingHeaderButton } from '@/src/components/FloatingHeaderButton';
 import { NamePromptDialog } from '@/src/components/NamePromptDialog';
 import { useFolders } from '@/src/hooks/useFolders';
 import { useLibraryCounts } from '@/src/hooks/useLibraryCounts';
+import { sendFeedbackEmail } from '@/src/feedback/sendFeedback';
 import {
   getAppSettings,
   setLocationBasedNaming,
@@ -347,7 +348,7 @@ export default function FoldersHomeScreen() {
                   <Switch value={darkModeEnabled} onValueChange={toggleDarkMode} />
                 </Animated.View>
               ) : null}
-              <View style={styles.settingsRow}>
+              <View style={[styles.settingsRow, styles.settingsRowBorder]}>
                 <View style={styles.settingsCopy}>
                   <Text style={styles.settingsTitle}>Location-based Naming</Text>
                   <Text style={styles.settingsSubtitle}>
@@ -362,6 +363,32 @@ export default function FoldersHomeScreen() {
                   }}
                 />
               </View>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => {
+                  void sendFeedbackEmail();
+                }}
+                style={({ pressed }) => [
+                  styles.settingsRow,
+                  pressed ? styles.settingsRowPressed : null,
+                ]}>
+                <SymbolView
+                  name={{ ios: 'envelope' }}
+                  size={20}
+                  tintColor={colors.accent}
+                />
+                <View style={styles.settingsCopy}>
+                  <Text style={styles.settingsTitle}>Send Feedback</Text>
+                  <Text style={styles.settingsSubtitle}>
+                    Share ideas, bugs, or screenshots
+                  </Text>
+                </View>
+                <SymbolView
+                  name={{ ios: 'chevron.right' }}
+                  size={14}
+                  tintColor={colors.secondaryText}
+                />
+              </Pressable>
             </GroupedListSection>
           </Animated.View>
         ) : null}
@@ -422,6 +449,9 @@ function useStyles(
         settingsRowNested: {
           minHeight: 48,
           backgroundColor: nestedSurface,
+        },
+        settingsRowPressed: {
+          opacity: 0.55,
         },
         settingsCopy: {
           flex: 1,
