@@ -22,7 +22,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import Animated from 'react-native-reanimated';
+import Animated, { FadeInUp, FadeOutDown } from 'react-native-reanimated';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { promptImportMemo } from '@/src/actions/importMemo';
@@ -422,7 +422,13 @@ export function RecordingsList({
             <FloatingHeaderButton
               accessibilityLabel="Go back"
               icon="chevron.left"
-              onPress={() => router.back()}
+              onPress={() => {
+                if (selectedMemoId && onSelectMemo) {
+                  onSelectMemo(null);
+                  return;
+                }
+                router.back();
+              }}
             />
             <View style={styles.sidebarActions}>{headerRightActions}</View>
           </View>
@@ -513,12 +519,18 @@ export function RecordingsList({
         )}
       />
 
-      {showRecordButton && !selectionMode ? (
-        <RecordFabCluster
-          bottomOffset={32 + (isSidebar ? 0 : insets.bottom)}
-          disabled={isStartingRecord || isRecording}
-          onRecord={(settings) => void handleStartRecording(settings)}
-        />
+      {showRecordButton && !selectionMode && selectedMemoId == null ? (
+        <Animated.View
+          pointerEvents="box-none"
+          entering={FadeInUp.springify().damping(24).stiffness(280)}
+          exiting={FadeOutDown.duration(180)}
+          style={StyleSheet.absoluteFill}>
+          <RecordFabCluster
+            bottomOffset={32 + (isSidebar ? 0 : insets.bottom)}
+            disabled={isStartingRecord || isRecording}
+            onRecord={(settings) => void handleStartRecording(settings)}
+          />
+        </Animated.View>
       ) : null}
     </>
   );

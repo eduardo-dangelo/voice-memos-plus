@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, StyleSheet, Text, View } from 'react-native';
+import { Alert, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 import Animated, {
   Easing,
   useAnimatedStyle,
@@ -32,14 +32,33 @@ export function RecordingsSplitView(props: Props) {
   const isRecording = useAudioEngineSelector((state) => state.isRecording);
   const [selected, setSelected] = useState<SelectedMemo | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [containerWidth, setContainerWidth] = useState(0);
   const sidebarWidth = useSharedValue(SIDEBAR_WIDTH);
+  const sidebarInnerWidth = useSharedValue(SIDEBAR_WIDTH);
+
+  const hasSelection = selected != null;
+
+  const targetSidebarWidth = sidebarCollapsed
+    ? 0
+    : hasSelection
+      ? SIDEBAR_WIDTH
+      : containerWidth > 0
+        ? containerWidth
+        : SIDEBAR_WIDTH;
 
   useEffect(() => {
-    sidebarWidth.value = withTiming(sidebarCollapsed ? 0 : SIDEBAR_WIDTH, {
+    sidebarWidth.value = withTiming(targetSidebarWidth, {
       duration: SIDEBAR_ANIMATION_MS,
       easing: Easing.out(Easing.cubic),
     });
-  }, [sidebarCollapsed, sidebarWidth]);
+    // While collapsing to 0, keep the list at SIDEBAR_WIDTH so content clips instead of squashing.
+    // Otherwise match the outer sidebar so the list can expand to full width.
+    const nextInnerWidth = sidebarCollapsed ? SIDEBAR_WIDTH : targetSidebarWidth;
+    sidebarInnerWidth.value = withTiming(nextInnerWidth, {
+      duration: SIDEBAR_ANIMATION_MS,
+      easing: Easing.out(Easing.cubic),
+    });
+  }, [sidebarCollapsed, sidebarInnerWidth, sidebarWidth, targetSidebarWidth]);
 
   // Any active recording on iPad stays full screen (sidebar collapsed).
   useEffect(() => {
@@ -48,9 +67,17 @@ export function RecordingsSplitView(props: Props) {
     }
   }, [isRecording, sidebarCollapsed]);
 
+  const handleSplitLayout = useCallback((event: LayoutChangeEvent) => {
+    setContainerWidth(event.nativeEvent.layout.width);
+  }, []);
+
   const sidebarAnimatedStyle = useAnimatedStyle(() => ({
     width: sidebarWidth.value,
-    opacity: sidebarWidth.value / SIDEBAR_WIDTH,
+    opacity: Math.min(1, sidebarWidth.value / SIDEBAR_WIDTH),
+  }));
+
+  const sidebarInnerAnimatedStyle = useAnimatedStyle(() => ({
+    width: sidebarInnerWidth.value,
   }));
 
   const handleSelectMemo = useCallback(
@@ -105,22 +132,22 @@ export function RecordingsSplitView(props: Props) {
   }
 
   return (
-    <View style={styles.split}>
+    <View style={styles.split} onLayout={handleSplitLayout}>
       <Animated.View
         pointerEvents={sidebarCollapsed ? 'none' : 'auto'}
         style={[styles.sidebar, sidebarAnimatedStyle]}>
-        <View style={styles.sidebarInner}>
+        <Animated.View style={[styles.sidebarInner, sidebarInnerAnimatedStyle]}>
           <RecordingsList
             {...props}
             layoutMode="sidebar"
             selectedMemoId={selected?.id ?? null}
             onSelectMemo={handleSelectMemo}
           />
-        </View>
+        </Animated.View>
       </Animated.View>
-      {!sidebarCollapsed ? <View style={styles.divider} /> : null}
-      <View style={[styles.detail, { paddingTop: insets.top }]}>
-        {selected ? (
+      {selected && !sidebarCollapsed ? <View style={styles.divider} /> : null}
+      {selected ? (
+        <View style={[styles.detail, { paddingTop: insets.top }]}>
           <MemoEditor
             key={selected.id}
             autoRecord={selected.autoRecord}
@@ -132,12 +159,8 @@ export function RecordingsSplitView(props: Props) {
             onMemoIdChange={handleMemoIdChange}
             onToggleSidebar={handleToggleSidebar}
           />
-        ) : (
-          <View style={styles.emptyDetail}>
-            <Text style={styles.emptyDetailTitle}>No Recording Selected</Text>
-          </View>
-        )}
-      </View>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -156,7 +179,6 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           backgroundColor: colors.background,
         },
         sidebarInner: {
-          width: SIDEBAR_WIDTH,
           flex: 1,
         },
         divider: {
@@ -167,17 +189,6 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
         detail: {
           flex: 1,
           backgroundColor: colors.sheetBackground,
-        },
-        emptyDetail: {
-          flex: 1,
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: 32,
-        },
-        emptyDetailTitle: {
-          fontSize: 22,
-          fontWeight: '600',
-          color: colors.text,
         },
       }),
     [colors]
