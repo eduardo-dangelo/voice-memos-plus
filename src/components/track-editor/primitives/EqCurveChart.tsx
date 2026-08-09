@@ -42,6 +42,10 @@ const HANDLE_RADIUS = 10;
 const ACTIVE_HANDLE_RADIUS = 12;
 const HIT_RADIUS = 22;
 const CHART_HEIGHT = 148;
+const HANDLE_RADIUS_LARGE = 14;
+const ACTIVE_HANDLE_RADIUS_LARGE = 16;
+const HIT_RADIUS_LARGE = 32;
+const CHART_HEIGHT_LARGE = 280;
 const CHART_PADDING_X = 16;
 const CHART_PADDING_Y = 16;
 const CURVE_STROKE = 2;
@@ -64,6 +68,8 @@ type Props = {
   frequencies: EqBandFrequencies;
   qFactors: EqBandQFactors;
   onChange: (index: number, change: EqBandChange) => void;
+  /** Taller chart and larger knobs for regular-width (iPad) layouts. */
+  large?: boolean;
 };
 
 type ChartSize = {
@@ -228,7 +234,8 @@ function findNearestBandIndex(
   locationY: number,
   bands: EqBandGains,
   frequencies: EqBandFrequencies,
-  size: ChartSize
+  size: ChartSize,
+  hitRadius: number
 ): number {
   const points = getBandPoints(bands, frequencies, size);
   let nearestIndex = 0;
@@ -243,7 +250,7 @@ function findNearestBandIndex(
     }
   }
 
-  if (nearestDistance <= HIT_RADIUS) {
+  if (nearestDistance <= hitRadius) {
     return nearestIndex;
   }
 
@@ -263,12 +270,16 @@ function ChartHandle({
   point,
   isActive,
   handleStyle,
+  handleRadius,
+  activeHandleRadius,
 }: {
   point: Point;
   isActive: boolean;
   handleStyle: { position: 'absolute'; backgroundColor: string; borderColor: string };
+  handleRadius: number;
+  activeHandleRadius: number;
 }) {
-  const radius = isActive ? ACTIVE_HANDLE_RADIUS : HANDLE_RADIUS;
+  const radius = isActive ? activeHandleRadius : handleRadius;
   const size = radius * 2;
 
   return (
@@ -304,10 +315,14 @@ function sliderPosToQ(pos: number): number {
   return clampEqQ(EQ_MIN_Q * Math.pow(EQ_MAX_Q / EQ_MIN_Q, t));
 }
 
-export function EqCurveChart({ bands, frequencies, qFactors, onChange }: Props) {
+export function EqCurveChart({ bands, frequencies, qFactors, onChange, large = false }: Props) {
   const colors = useVoiceMemosColors();
-  const styles = useStyles(colors);
-  const [chartSize, setChartSize] = useState<ChartSize>({ width: 1, height: CHART_HEIGHT });
+  const styles = useStyles(colors, large);
+  const chartHeight = large ? CHART_HEIGHT_LARGE : CHART_HEIGHT;
+  const handleRadius = large ? HANDLE_RADIUS_LARGE : HANDLE_RADIUS;
+  const activeHandleRadius = large ? ACTIVE_HANDLE_RADIUS_LARGE : ACTIVE_HANDLE_RADIUS;
+  const hitRadius = large ? HIT_RADIUS_LARGE : HIT_RADIUS;
+  const [chartSize, setChartSize] = useState<ChartSize>({ width: 1, height: chartHeight });
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const [qEditIndex, setQEditIndex] = useState<number | null>(DEFAULT_SELECTED_BAND);
 
@@ -316,6 +331,7 @@ export function EqCurveChart({ bands, frequencies, qFactors, onChange }: Props) 
   const qFactorsRef = useRef(qFactors);
   const onChangeRef = useRef(onChange);
   const chartSizeRef = useRef(chartSize);
+  const hitRadiusRef = useRef(hitRadius);
   const activeIndexRef = useRef<number | null>(null);
   const startDbRef = useRef(0);
   const startFreqRef = useRef(EQ_MIN_FREQ);
@@ -330,6 +346,7 @@ export function EqCurveChart({ bands, frequencies, qFactors, onChange }: Props) 
   qFactorsRef.current = qFactors;
   onChangeRef.current = onChange;
   chartSizeRef.current = chartSize;
+  hitRadiusRef.current = hitRadius;
   activeIndexRef.current = activeIndex;
   qEditIndexRef.current = qEditIndex;
 
@@ -398,7 +415,8 @@ export function EqCurveChart({ bands, frequencies, qFactors, onChange }: Props) 
           locationY,
           bandsRef.current,
           frequenciesRef.current,
-          chartSizeRef.current
+          chartSizeRef.current,
+          hitRadiusRef.current
         );
         activeIndexRef.current = index;
         setActiveIndex(index);
@@ -484,7 +502,7 @@ export function EqCurveChart({ bands, frequencies, qFactors, onChange }: Props) 
     <View style={styles.container}>
       <Text style={styles.activeLabel}>{activeLabel}</Text>
       <View
-        style={styles.chartTouchArea}
+        style={[styles.chartTouchArea, { height: chartHeight }]}
         onLayout={handleLayout}
         {...panResponder.panHandlers}>
         <View style={[styles.chartCanvas, { width: chartSize.width, height: chartSize.height }]}>
@@ -547,6 +565,8 @@ export function EqCurveChart({ bands, frequencies, qFactors, onChange }: Props) 
               point={point}
               isActive={activeIndex === index || qEditIndex === index}
               handleStyle={styles.handle}
+              handleRadius={handleRadius}
+              activeHandleRadius={activeHandleRadius}
             />
           ))}
         </View>
@@ -555,7 +575,10 @@ export function EqCurveChart({ bands, frequencies, qFactors, onChange }: Props) 
         {EQ_FREQUENCIES.map((freq) => (
           <Text
             key={`freq-${freq}`}
-            style={[styles.freqLabel, { left: freqToX(freq, chartSize) - 14 }]}>
+            style={[
+              styles.freqLabel,
+              { left: freqToX(freq, chartSize) - (large ? 16 : 14) },
+            ]}>
             {formatFrequency(freq)}
           </Text>
         ))}
@@ -593,33 +616,33 @@ export function EqCurveChart({ bands, frequencies, qFactors, onChange }: Props) 
   );
 }
 
-function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
+function useStyles(colors: ReturnType<typeof useVoiceMemosColors>, large: boolean) {
   return useMemo(
     () =>
       StyleSheet.create({
         container: {
-          gap: 6,
+          gap: large ? 10 : 6,
         },
         activeLabel: {
-          fontSize: 11,
+          fontSize: large ? 14 : 11,
           fontWeight: '600',
           color: colors.text,
           textAlign: 'center',
           fontVariant: ['tabular-nums'],
-          minHeight: 14,
+          minHeight: large ? 18 : 14,
         },
         qPanel: {
-          paddingTop: 4,
+          paddingTop: large ? 8 : 4,
         },
         qSliderRow: {
           flexDirection: 'row',
           alignItems: 'center',
-          gap: 6,
+          gap: large ? 10 : 6,
         },
         qEndLabel: {
-          fontSize: 11,
+          fontSize: large ? 13 : 11,
           color: colors.secondaryText,
-          width: 40,
+          width: large ? 52 : 40,
         },
         qLabelDisabled: {
           opacity: 0.45,
@@ -628,14 +651,13 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           flex: 1,
         },
         qValue: {
-          width: 28,
-          fontSize: 12,
+          width: large ? 36 : 28,
+          fontSize: large ? 14 : 12,
           color: colors.secondaryText,
           textAlign: 'right',
           fontVariant: ['tabular-nums'],
         },
         chartTouchArea: {
-          height: CHART_HEIGHT,
           width: '100%',
         },
         chartCanvas: {
@@ -656,18 +678,18 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           borderColor: colors.accent,
         },
         freqRow: {
-          height: 14,
+          height: large ? 18 : 14,
           position: 'relative',
           width: '100%',
         },
         freqLabel: {
           position: 'absolute',
-          width: 28,
-          fontSize: 10,
+          width: large ? 32 : 28,
+          fontSize: large ? 12 : 10,
           color: colors.secondaryText,
           textAlign: 'center',
         },
       }),
-    [colors]
+    [colors, large]
   );
 }

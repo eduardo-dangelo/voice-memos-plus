@@ -13,6 +13,7 @@ import {
   type LayerEffects,
   type LayerEffectsChange,
 } from '@/src/audio/layerEffects';
+import { useIsRegularWidth } from '@/src/hooks/useIsRegularWidth';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
 import { EditorSlider } from './primitives/EditorSlider';
@@ -39,7 +40,8 @@ const useGlass = isGlassEffectAPIAvailable();
 export function EffectCustomDialog({ visible, effect, effects, onChange, onClose }: Props) {
   const colors = useVoiceMemosColors();
   const colorScheme = useColorScheme();
-  const styles = useStyles(colors, colorScheme);
+  const isRegularWidth = useIsRegularWidth();
+  const styles = useStyles(colors, colorScheme, isRegularWidth);
 
   const updateBand = (index: number, change: EqBandChange) => {
     const nextBands = [...effects.eq.bands] as EqBandGains;
@@ -159,6 +161,7 @@ export function EffectCustomDialog({ visible, effect, effects, onChange, onClose
             key={visible ? 'eq-open' : 'eq-closed'}
             bands={effects.eq.bands}
             frequencies={effects.eq.frequencies}
+            large={isRegularWidth}
             qFactors={effects.eq.qFactors}
             onChange={updateBand}
           />
@@ -214,7 +217,8 @@ function DialogCard({
 
 function useStyles(
   colors: ReturnType<typeof useVoiceMemosColors>,
-  colorScheme: 'light' | 'dark' | null | undefined
+  colorScheme: 'light' | 'dark' | null | undefined,
+  large: boolean
 ) {
   const cardSurface =
     colorScheme === 'dark' ? colors.sheetBackground : colors.background;
@@ -227,7 +231,7 @@ function useStyles(
           backgroundColor: colors.overlayBackground,
           justifyContent: 'center',
           alignItems: 'center',
-          padding: 24,
+          padding: large ? 32 : 24,
         },
         backdropGlass: {
           backgroundColor:
@@ -235,20 +239,20 @@ function useStyles(
         },
         cardPressable: {
           width: '100%',
-          maxWidth: 340,
+          maxWidth: large ? 640 : 340,
         },
         cardGlass: {
-          borderRadius: 20,
-          paddingHorizontal: 20,
-          paddingVertical: 18,
-          gap: 14,
+          borderRadius: large ? 24 : 20,
+          paddingHorizontal: large ? 28 : 20,
+          paddingVertical: large ? 24 : 18,
+          gap: large ? 18 : 14,
         },
         cardFallback: {
           backgroundColor: cardSurface,
-          borderRadius: 20,
-          paddingHorizontal: 20,
-          paddingVertical: 18,
-          gap: 14,
+          borderRadius: large ? 24 : 20,
+          paddingHorizontal: large ? 28 : 20,
+          paddingVertical: large ? 24 : 18,
+          gap: large ? 18 : 14,
           shadowColor: '#000000',
           shadowOffset: { width: 0, height: 8 },
           shadowOpacity: colorScheme === 'dark' ? 0.45 : 0.18,
@@ -256,35 +260,35 @@ function useStyles(
           elevation: 8,
         },
         title: {
-          fontSize: 17,
+          fontSize: large ? 22 : 17,
           fontWeight: '600',
           color: colors.text,
           textAlign: 'center',
         },
         section: {
-          gap: 10,
+          gap: large ? 14 : 10,
         },
         sliderRow: {
           flexDirection: 'row',
           alignItems: 'center',
-          gap: 8,
+          gap: large ? 12 : 8,
         },
         sliderLabel: {
-          width: 72,
-          fontSize: 13,
+          width: large ? 88 : 72,
+          fontSize: large ? 15 : 13,
           color: colors.secondaryText,
         },
         sliderTrack: {
           flex: 1,
         },
         sliderValue: {
-          width: 52,
-          fontSize: 12,
+          width: large ? 64 : 52,
+          fontSize: large ? 14 : 12,
           color: colors.secondaryText,
           textAlign: 'right',
           fontVariant: ['tabular-nums'],
         },
       }),
-    [cardSurface, colorScheme, colors]
+    [cardSurface, colorScheme, colors, large]
   );
 }
