@@ -825,8 +825,10 @@ function TrackMoveOverlay({
   moveRef.current = (_event, gesture) => {
     const pps = pixelsPerSecondRef.current;
     const preliminaryDx = getEffectiveDx(gesture);
+    // Use grant-time left + dx (not live segmentLeft) so edge auto-scroll
+    // does not double-count startTime updates from onChange.
     applyEdgeAutoScroll(
-      segmentLeft + preliminaryDx
+      sidePaddingRef.current + startLayerStartTime.current * pps + preliminaryDx
     );
     const effectiveDx = getEffectiveDx(gesture);
     const trimInValue = trimInRef.current;

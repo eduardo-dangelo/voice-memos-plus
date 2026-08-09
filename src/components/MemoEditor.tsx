@@ -3278,14 +3278,14 @@ export function MemoEditor({
     }
   }, [activeEditor, activeLayerId, memo]);
 
-  const blockSheetGesture = isRecording;
+  const blockNavGesture = isRecording || (isPane && sidebarCollapsed);
 
   useLayoutEffect(() => {
-    if (isPane) {
-      return;
-    }
-    navigation.setOptions({ gestureEnabled: !blockSheetGesture });
-  }, [navigation, blockSheetGesture, isPane]);
+    navigation.setOptions({ gestureEnabled: !blockNavGesture });
+    return () => {
+      navigation.setOptions({ gestureEnabled: true });
+    };
+  }, [navigation, blockNavGesture]);
 
   const waveformDuration = pendingRecordingLayout
     ? Math.max(
