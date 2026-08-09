@@ -105,6 +105,8 @@ const ZOOM_CONTROLS_LINGER_MS = 5000;
 /** Logic-style region header strip above the waveform body. */
 const REGION_HEADER_HEIGHT = 18;
 const TRACK_LOOP_EPSILON = 0.001;
+/** Min cycle segment width before drawing a per-loop header icon. */
+const LOOP_HEADER_ICON_MIN_WIDTH = 16;
 
 type ZoomGestureStart = {
   spanX: number;
@@ -1225,6 +1227,33 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
   const trackColor = track.color ?? colors.accent;
   // Lighter, slightly translucent track color — stronger than the body tint.
   const headerColor = mixHexTowardWhite(trackColor, 0.35, 0.52);
+  // Faded tint for looped cycles (mirrors loopedBarColor treatment).
+  const loopedHeaderColor = mixHexTowardWhite(trackColor, 0.55, 0.38);
+  const hasLoopedHeaderCycles = cycleDuration + TRACK_LOOP_EPSILON < track.duration;
+  const headerCycleSegments = (() => {
+    if (!showRegionChrome || trackWidth <= 0) {
+      return [] as { left: number; width: number; isLoop: boolean }[];
+    }
+    if (!hasLoopedHeaderCycles) {
+      return [{ left: 0, width: trackWidth, isLoop: false }];
+    }
+    const segments: { left: number; width: number; isLoop: boolean }[] = [];
+    const cycleWidthPx = cycleDuration * pixelsPerSecond;
+    let left = 0;
+    let cycleIndex = 0;
+    while (left < trackWidth - 0.5) {
+      const width = Math.min(cycleWidthPx, trackWidth - left);
+      if (width > 0.5) {
+        segments.push({ left, width, isLoop: cycleIndex > 0 });
+      }
+      left += cycleWidthPx;
+      cycleIndex += 1;
+      if (cycleIndex > 10_000) {
+        break;
+      }
+    }
+    return segments;
+  })();
   // Keep selected region fill in the same ballpark as the pre-header selection tint.
   const regionBodyColor = colorWithAlpha(trackColor, 0.08);
   // Match region header label (#FFFFFF) on the tinted selected header; gray elsewhere.
@@ -1317,7 +1346,7 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
               left: sidePadding + trackOffset,
               width: trackWidth,
               height: headerHeight,
-              backgroundColor: headerColor,
+              backgroundColor: hasLoopedHeaderCycles ? 'transparent' : headerColor,
             },
           ]}
           onLongPress={() => {
@@ -1329,6 +1358,37 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
             void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
             trackLoopOverlay.onHeaderLongPress(track.id);
           }}>
+          {hasLoopedHeaderCycles
+            ? headerCycleSegments.map((segment, index) => (
+                <View
+                  key={`header-cycle-${index}`}
+                  pointerEvents="none"
+                  style={[
+                    styles.regionHeaderCycleFill,
+                    {
+                      left: segment.left,
+                      width: segment.width,
+                      backgroundColor: segment.isLoop ? loopedHeaderColor : headerColor,
+                    },
+                  ]}
+                />
+              ))
+            : null}
+          {hasLoopedHeaderCycles
+            ? headerCycleSegments.map((segment, index) =>
+                segment.isLoop && segment.width >= LOOP_HEADER_ICON_MIN_WIDTH ? (
+                  <View
+                    key={`header-loop-icon-${index}`}
+                    pointerEvents="none"
+                    style={[
+                      styles.regionHeaderCycleIcon,
+                      { left: segment.left + 4 },
+                    ]}>
+                    <SymbolView name={{ ios: 'repeat' }} size={11} tintColor="#FFFFFF" />
+                  </View>
+                ) : null
+              )
+            : null}
           {track.showLabel && track.label ? (
             <Text
               numberOfLines={1}
@@ -3089,11 +3149,27 @@ function createWaveformStyles(colors: VoiceMemosColorScheme) {
     borderTopLeftRadius: 3,
     borderTopRightRadius: 3,
   },
+  regionHeaderCycleFill: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    zIndex: 0,
+  },
+  regionHeaderCycleIcon: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    zIndex: 1,
+    width: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   regionHeaderLabel: {
     flexShrink: 1,
     fontSize: 11,
     fontWeight: '600',
     color: '#FFFFFF',
+    zIndex: 2,
   },
   floatingTrackLabel: {
     position: 'absolute',

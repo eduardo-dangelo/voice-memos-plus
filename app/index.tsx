@@ -5,17 +5,17 @@ import { Alert, Platform, Pressable, StyleSheet, Switch, Text, View } from 'reac
 import Animated, { FadeIn, FadeOut, LinearTransition } from 'react-native-reanimated';
 
 import { useColorScheme } from '@/components/useColorScheme';
+import { FloatingHeaderButton } from '@/src/components/FloatingHeaderButton';
 import {
   GroupedListRow,
   GroupedListScreen,
   GroupedListSection,
   GroupedListSectionHeader,
 } from '@/src/components/GroupedList';
-import { FloatingHeaderButton } from '@/src/components/FloatingHeaderButton';
 import { NamePromptDialog } from '@/src/components/NamePromptDialog';
+import { sendFeedbackEmail } from '@/src/feedback/sendFeedback';
 import { useFolders } from '@/src/hooks/useFolders';
 import { useLibraryCounts } from '@/src/hooks/useLibraryCounts';
-import { sendFeedbackEmail } from '@/src/feedback/sendFeedback';
 import {
   getAppSettings,
   setLocationBasedNaming,
@@ -322,6 +322,11 @@ export default function FoldersHomeScreen() {
             <GroupedListSection>
               <View
                 style={[styles.settingsRow, !overrideEnabled && styles.settingsRowBorder]}>
+                <SymbolView
+                  name={{ ios: 'paintbrush.fill' }}
+                  size={20}
+                  tintColor={colors.accent}
+                />
                 <View style={styles.settingsCopy}>
                   <Text style={styles.settingsTitle}>Appearance</Text>
                   <Text style={styles.settingsSubtitle}>
@@ -349,6 +354,11 @@ export default function FoldersHomeScreen() {
                 </Animated.View>
               ) : null}
               <View style={[styles.settingsRow, styles.settingsRowBorder]}>
+                <SymbolView
+                  name={{ ios: 'location.fill' }}
+                  size={20}
+                  tintColor={colors.accent}
+                />
                 <View style={styles.settingsCopy}>
                   <Text style={styles.settingsTitle}>Location-based Naming</Text>
                   <Text style={styles.settingsSubtitle}>
@@ -448,6 +458,7 @@ function useStyles(
         },
         settingsRowNested: {
           minHeight: 48,
+          paddingLeft: 32,
           backgroundColor: nestedSurface,
         },
         settingsRowPressed: {
