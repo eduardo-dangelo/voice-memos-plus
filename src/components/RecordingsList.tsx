@@ -26,6 +26,7 @@ import Animated, { FadeInUp, FadeOutDown } from 'react-native-reanimated';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { promptImportMemo } from '@/src/actions/importMemo';
+import { shareMemos } from '@/src/actions/shareMemo';
 import { useAudioEngineSelector } from '@/src/audio/AudioEngineContext';
 import { memoAudioEngine } from '@/src/audio/MemoAudioEngine';
 import { FloatingHeaderButton } from '@/src/components/FloatingHeaderButton';
@@ -92,6 +93,7 @@ export function RecordingsList({
   const [isSearchActive, setIsSearchActive] = useState(false);
   const [isStartingRecord, setIsStartingRecord] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const startingRecordRef = useRef(false);
   const isTrash = scope.kind === 'trash';
   const isSidebar = layoutMode === 'sidebar';
@@ -227,6 +229,17 @@ export function RecordingsList({
     });
   };
 
+  const handleExportSelected = useCallback(() => {
+    if (isTrash || selectedIds.size === 0 || isExporting) {
+      return;
+    }
+    const selected = memos.filter((memo) => selectedIds.has(memo.id));
+    shareMemos(selected, {
+      onExportStarted: () => setIsExporting(true),
+      onExportFinished: () => setIsExporting(false),
+    });
+  }, [isExporting, isTrash, memos, selectedIds]);
+
   const handleStartRecording = async (settings: RecordFabSettings) => {
     if (startingRecordRef.current || isStartingRecord || isRecording) {
       return;
@@ -333,7 +346,6 @@ export function RecordingsList({
       title: listTitle,
       headerLargeTitle: true as const,
       headerShown: true as const,
-      subtitle: countLabel,
       ...(Platform.OS === 'ios'
         ? {
             unstable_headerRightItems: () => {
@@ -402,7 +414,6 @@ export function RecordingsList({
           }),
     };
   }, [
-    countLabel,
     handleImport,
     handleSearchPress,
     headerExtraActions,
@@ -414,30 +425,9 @@ export function RecordingsList({
     toggleSelectionMode,
   ]);
 
-  const listBody = (
-    <>
-      {isSidebar ? (
-        <View style={styles.sidebarHeader}>
-          <View style={styles.sidebarToolbar}>
-            <FloatingHeaderButton
-              accessibilityLabel="Go back"
-              icon="chevron.left"
-              onPress={() => {
-                if (selectedMemoId && onSelectMemo) {
-                  onSelectMemo(null);
-                  return;
-                }
-                router.back();
-              }}
-            />
-            <View style={styles.sidebarActions}>{headerRightActions}</View>
-          </View>
-          <Text numberOfLines={1} style={styles.sidebarTitle}>
-            {listTitle}
-          </Text>
-          <Text style={styles.sidebarCaption}>{countLabel}</Text>
-        </View>
-      ) : null}
+  const listHeader = (
+    <View>
+      {!isSidebar ? <Text style={styles.stackCaption}>{countLabel}</Text> : null}
 
       {isSearchActive ? (
         <View style={styles.searchRow}>
@@ -470,15 +460,48 @@ export function RecordingsList({
               <SymbolView name={{ ios: 'arrow.uturn.backward' }} size={18} tintColor={colors.accent} />
               <Text style={styles.recoverText}>Recover ({selectedIds.size})</Text>
             </Pressable>
-          ) : null}
+          ) : (
+            <Pressable onPress={handleExportSelected} style={styles.selectionAction}>
+              <SymbolView name={{ ios: 'square.and.arrow.up' }} size={18} tintColor={colors.accent} />
+              <Text style={styles.exportText}>Export ({selectedIds.size})</Text>
+            </Pressable>
+          )}
           <Pressable onPress={handleDeleteSelected} style={styles.selectionAction}>
             <SymbolView name={{ ios: 'trash' }} size={18} tintColor={colors.recordRed} />
             <Text style={styles.deleteText}>Delete ({selectedIds.size})</Text>
           </Pressable>
         </View>
       ) : null}
+    </View>
+  );
+
+  const listBody = (
+    <>
+      {isSidebar ? (
+        <View style={styles.sidebarHeader}>
+          <View style={styles.sidebarToolbar}>
+            <FloatingHeaderButton
+              accessibilityLabel="Go back"
+              icon="chevron.left"
+              onPress={() => {
+                if (selectedMemoId && onSelectMemo) {
+                  onSelectMemo(null);
+                  return;
+                }
+                router.back();
+              }}
+            />
+            <View style={styles.sidebarActions}>{headerRightActions}</View>
+          </View>
+          <Text numberOfLines={1} style={styles.sidebarTitle}>
+            {listTitle}
+          </Text>
+          <Text style={styles.sidebarCaption}>{countLabel}</Text>
+        </View>
+      ) : null}
 
       <Animated.FlatList
+        ListHeaderComponent={listHeader}
         contentContainerStyle={styles.listContent}
         contentInsetAdjustmentBehavior="automatic"
         data={filteredMemos}
@@ -546,11 +569,13 @@ export function RecordingsList({
         // Plain View: SafeAreaView (RN or context) fights headerLargeTitle and causes a vertical title jump.
         <View style={styles.screen}>{listBody}</View>
       )}
-      <Modal animationType="fade" transparent visible={isImporting}>
+      <Modal animationType="fade" transparent visible={isImporting || isExporting}>
         <View style={styles.importOverlay}>
           <View style={styles.importCard}>
             <ActivityIndicator color={colors.accent} size="large" />
-            <Text style={styles.importText}>Importing project…</Text>
+            <Text style={styles.importText}>
+              {isExporting ? 'Exporting…' : 'Importing project…'}
+            </Text>
           </View>
         </View>
       </Modal>
@@ -596,6 +621,12 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           paddingHorizontal: 4,
           paddingBottom: 4,
         },
+        stackCaption: {
+          fontSize: 15,
+          color: colors.secondaryText,
+          paddingHorizontal: 16,
+          paddingBottom: 8,
+        },
         headerActions: {
           flexDirection: 'row',
           alignItems: 'center',
@@ -620,6 +651,7 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
         selectionBar: {
           flexDirection: 'row',
           alignItems: 'center',
+          flexWrap: 'wrap',
           gap: 16,
           paddingHorizontal: 16,
           paddingBottom: 8,
@@ -634,6 +666,10 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           fontSize: 16,
         },
         recoverText: {
+          color: colors.accent,
+          fontSize: 16,
+        },
+        exportText: {
           color: colors.accent,
           fontSize: 16,
         },

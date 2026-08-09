@@ -1,0 +1,12 @@
+{
+  "name": "share-files",
+  "version": "1.0.0",
+  "description": "Share one or more local files via UIActivityViewController",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "peerDependencies": {
+    "expo": "*",
+    "react": "*",
+    "react-native": "*"
+  }
+}

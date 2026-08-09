@@ -1,5 +1,6 @@
 import * as Sharing from 'expo-sharing';
 import { ActionSheetIOS, Alert } from 'react-native';
+import { shareFilesAsync } from 'share-files';
 
 import {
   exportMemoToFile,
@@ -43,6 +44,35 @@ function resolveFormatSelection(label: string): ExportFormat | null {
   return null;
 }
 
+function showFormatPicker(
+  includeProject: boolean,
+  onFormat: (format: ExportFormat) => void
+): void {
+  const sheetOptions = includeProject
+    ? ([...AUDIO_FORMATS, PROJECT_FORMAT_LABEL, 'Cancel'] as const)
+    : ([...AUDIO_FORMATS, 'Cancel'] as const);
+  const cancelIndex = sheetOptions.indexOf('Cancel');
+
+  ActionSheetIOS.showActionSheetWithOptions(
+    {
+      title: 'Choose format…',
+      options: [...sheetOptions],
+      cancelButtonIndex: cancelIndex,
+    },
+    (index) => {
+      const selected = sheetOptions[index];
+      if (!selected || selected === 'Cancel') {
+        return;
+      }
+      const format = resolveFormatSelection(selected);
+      if (!format) {
+        return;
+      }
+      onFormat(format);
+    }
+  );
+}
+
 async function exportAndShare(
   memo: Memo,
   format: ExportFormat,
@@ -69,36 +99,52 @@ async function exportAndShare(
   }
 }
 
-function showFormatPicker(memo: Memo, options?: ShareMemoOptions): void {
-  const includeProject = !options?.layerId;
-  const sheetOptions = includeProject
-    ? ([...AUDIO_FORMATS, PROJECT_FORMAT_LABEL, 'Cancel'] as const)
-    : ([...AUDIO_FORMATS, 'Cancel'] as const);
-  const cancelIndex = sheetOptions.indexOf('Cancel');
+async function exportAndShareMany(
+  memos: Memo[],
+  format: ExportFormat,
+  options?: ShareMemoOptions
+): Promise<void> {
+  if (memos.length === 1) {
+    await exportAndShare(memos[0]!, format, options);
+    return;
+  }
 
-  ActionSheetIOS.showActionSheetWithOptions(
-    {
-      title: 'Choose format…',
-      options: [...sheetOptions],
-      cancelButtonIndex: cancelIndex,
-    },
-    (index) => {
-      const selected = sheetOptions[index];
-      if (!selected || selected === 'Cancel') {
-        return;
+  options?.onExportStarted?.();
+
+  try {
+    const uris: string[] = [];
+    for (const memo of memos) {
+      const file = await exportMemoToFile(memo, format);
+      if (!file.exists) {
+        throw new Error(`Export file was not created for “${memo.title}”.`);
       }
-      const format = resolveFormatSelection(selected);
-      if (!format) {
-        return;
-      }
-      void exportAndShare(memo, format, options).catch((error) => {
-        Alert.alert(
-          'Export failed',
-          error instanceof Error ? error.message : 'Unknown error'
-        );
-      });
+      uris.push(file.uri);
     }
+
+    await shareFilesAsync(uris);
+  } finally {
+    options?.onExportFinished?.();
+  }
+}
+
+function alertExportFailed(error: unknown): void {
+  Alert.alert(
+    'Export failed',
+    error instanceof Error ? error.message : 'Unknown error'
   );
+}
+
+function runExport(
+  memos: Memo[],
+  format: ExportFormat,
+  options?: ShareMemoOptions
+): void {
+  if (format === 'vmp' && options?.layerId) {
+    Alert.alert('Export failed', 'Project export is only available for the full memo.');
+    return;
+  }
+
+  void exportAndShareMany(memos, format, options).catch(alertExportFailed);
 }
 
 export function shareMemo(memo: Memo, options?: ShareMemoOptions): void {
@@ -108,18 +154,28 @@ export function shareMemo(memo: Memo, options?: ShareMemoOptions): void {
   }
 
   if (options?.format === 'm4a' || options?.format === 'wav' || options?.format === 'vmp') {
-    if (options.format === 'vmp' && options.layerId) {
-      Alert.alert('Export failed', 'Project export is only available for the full memo.');
-      return;
-    }
-    void exportAndShare(memo, options.format, options).catch((error) => {
-      Alert.alert(
-        'Export failed',
-        error instanceof Error ? error.message : 'Unknown error'
-      );
-    });
+    runExport([memo], options.format, options);
     return;
   }
 
-  showFormatPicker(memo, options);
+  showFormatPicker(!options?.layerId, (format) => {
+    void exportAndShare(memo, format, options).catch(alertExportFailed);
+  });
+}
+
+export function shareMemos(memos: Memo[], options?: ShareMemoOptions): void {
+  const exportable = memos.filter(hasRecording);
+  if (exportable.length === 0) {
+    Alert.alert('Nothing to export', 'Selected recordings have no recorded audio yet.');
+    return;
+  }
+
+  if (options?.format === 'm4a' || options?.format === 'wav' || options?.format === 'vmp') {
+    runExport(exportable, options.format, options);
+    return;
+  }
+
+  showFormatPicker(true, (format) => {
+    runExport(exportable, format, options);
+  });
 }

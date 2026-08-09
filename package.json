@@ -25,6 +25,7 @@
     "fflate": "^0.8.3",
     "project-document-picker": "file:./modules/project-document-picker",
     "react": "19.2.3",
+    "share-files": "file:./modules/share-files",
     "react-dom": "19.2.3",
     "react-native": "0.85.3",
     "react-native-audio-api": "^0.12.2",
