@@ -88,3 +88,29 @@ export function applyPinchDeltaToTrackZoom(
     bounds
   );
 }
+
+/** Format a zoom multiplier for UI (e.g. `1×`, `1.5×`, `2×`). */
+export function formatTimelineZoomMultiplier(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) {
+    return '1×';
+  }
+  const rounded = Math.round(value * 10) / 10;
+  if (Number.isInteger(rounded)) {
+    return `${rounded}×`;
+  }
+  return `${rounded.toFixed(1)}×`;
+}
+
+/** Horizontal multiplier relative to default pps; vertical is trackZoom as-is. */
+export function getTimelineZoomDisplayMultipliers(
+  pixelsPerSecond: number,
+  trackZoom: number,
+  pixelsPerSecondDefault: number
+): { x: number; y: number } {
+  const defaultPps =
+    pixelsPerSecondDefault > 0 ? pixelsPerSecondDefault : TIMELINE_DEFAULT_PIXELS_PER_SECOND;
+  return {
+    x: pixelsPerSecond / defaultPps,
+    y: trackZoom,
+  };
+}

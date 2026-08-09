@@ -51,6 +51,7 @@ import {
   getRecordingReplacementSkipSeconds,
   type CueOutputRoute,
 } from '@/src/audio/recordingLatency';
+import { formatTimelineZoomMultiplier } from '@/src/audio/timelineZoom';
 import {
   slicePeaksForTrim,
   WAVEFORM_BAR_GAP,
@@ -73,7 +74,11 @@ import type { FadeRegionState } from '@/src/components/track-editor/TrackFadeOve
 import type { EditorTool } from '@/src/components/track-editor/types';
 import { resolveTrackColor, TrackColorPicker } from '@/src/components/TrackColorPicker';
 import { TrackLoopDialog } from '@/src/components/TrackLoopDialog';
-import { WaveformView, type TrackData } from '@/src/components/WaveformView';
+import {
+  WaveformView,
+  type TimelineZoomControlsState,
+  type TrackData,
+} from '@/src/components/WaveformView';
 import { applyLocationTitleIfEnabled } from '@/src/location/locationNaming';
 import {
   awaitSaveInFlight,
@@ -481,6 +486,11 @@ export function MemoEditor({
   const [loopDialogLayerId, setLoopDialogLayerId] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
   const [layoutReady, setLayoutReady] = useState(false);
+  const [zoomControls, setZoomControls] = useState<TimelineZoomControlsState>({
+    visible: false,
+    x: 1,
+    y: 1,
+  });
   const [precountVisible, setPrecountVisible] = useState(false);
   const [precountNumber, setPrecountNumber] = useState<number | null>(null);
   const [precountPreparing, setPrecountPreparing] = useState(false);
@@ -2819,12 +2829,22 @@ export function MemoEditor({
             </MemoOptionsMenu>
           </View>
         )}
-        <Text
-          numberOfLines={1}
-          pointerEvents="none"
-          style={[styles.headerTitle, isPane && styles.headerTitlePane]}>
-          {memo?.title ?? ''}
-        </Text>
+        <View style={[styles.headerTitle, isPane && styles.headerTitlePane]}>
+          <Pressable
+            accessibilityLabel="Rename"
+            accessibilityRole="button"
+            onPress={handleRename}
+            style={styles.headerTitlePressable}>
+            <Text numberOfLines={1} style={styles.headerTitleText}>
+              {memo?.title ?? ''}
+            </Text>
+          </Pressable>
+          {zoomControls.visible ? (
+            <Text pointerEvents="none" style={styles.headerZoomCaption}>
+              {`x: ${formatTimelineZoomMultiplier(zoomControls.x)}  y: ${formatTimelineZoomMultiplier(zoomControls.y)}`}
+            </Text>
+          ) : null}
+        </View>
         <Pressable
           accessibilityLabel="Done"
           accessibilityState={{ disabled: engineState.isRecording }}
@@ -2857,6 +2877,12 @@ export function MemoEditor({
       styles.headerLeading,
       styles.headerTitle,
       styles.headerTitlePane,
+      styles.headerTitlePressable,
+      styles.headerTitleText,
+      styles.headerZoomCaption,
+      zoomControls.visible,
+      zoomControls.x,
+      zoomControls.y,
     ],
   );
 
@@ -3863,6 +3889,7 @@ export function MemoEditor({
               onTrackDeselect={handleTrackDeselect}
               onTrackLongPress={handleTrackLongPress}
               onEditGestureActive={handleEditGestureActive}
+              onZoomControlsChange={setZoomControls}
             />
           ) : (
             <View style={styles.tracksLoading}>
@@ -4093,6 +4120,7 @@ function useMemoEditorStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           width: '100%',
           paddingHorizontal: 8,
           position: 'relative',
+          overflow: 'visible',
         },
         headerActions: {
           flexDirection: 'row',
@@ -4106,19 +4134,37 @@ function useMemoEditorStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
         },
         headerTitle: {
           position: 'absolute',
-          left: 0,
-          right: 0,
+          // Clears ellipsis (32) + Done (32) + bar padding on iPhone.
+          left: 58,
+          right: 58,
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 0,
+          overflow: 'visible',
+        },
+        headerTitlePane: {
+          // Clears up to 4 small pane actions (32×4 + gaps) on the leading side.
+          left: 152,
+        },
+        headerTitlePressable: {
+          maxWidth: '100%',
+          alignItems: 'center',
+        },
+        headerTitleText: {
           fontSize: 17,
           fontWeight: '500',
           color: colors.text,
           textAlign: 'center',
-          // Clears ellipsis (32) + Done (32) + bar padding on iPhone.
-          paddingHorizontal: 58,
-          zIndex: 0,
         },
-        headerTitlePane: {
-          // Clears up to 4 small pane actions (32×4 + gaps) on the leading side.
-          paddingHorizontal: 152,
+        headerZoomCaption: {
+          position: 'absolute',
+          top: '100%',
+          marginTop: 3,
+          fontSize: 11,
+          fontWeight: '500',
+          color: colors.secondaryText,
+          fontVariant: ['tabular-nums'],
+          textAlign: 'center',
         },
         tracksArea: {
           flex: 1,

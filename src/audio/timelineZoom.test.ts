@@ -6,7 +6,9 @@ import {
   applyPinchDeltaToTrackZoom,
   clampTimelinePixelsPerSecond,
   clampTimelineTrackZoom,
+  formatTimelineZoomMultiplier,
   getTimelineZoomBounds,
+  getTimelineZoomDisplayMultipliers,
   TIMELINE_FULL_ZOOM_SPAN_PX,
   TIMELINE_MIN_PIXELS_PER_SECOND,
   TIMELINE_DEFAULT_PIXELS_PER_SECOND,
@@ -83,4 +85,18 @@ test('applyPinchDeltaToTrackZoom reaches min on full pinch', () => {
   const bounds = getTimelineZoomBounds(400, 20, 4);
   const result = applyPinchDeltaToTrackZoom(4, 200, 200 - TIMELINE_FULL_ZOOM_SPAN_PX, bounds);
   assert.equal(result, 1);
+});
+
+test('formatTimelineZoomMultiplier trims whole numbers and keeps one decimal', () => {
+  assert.equal(formatTimelineZoomMultiplier(1), '1×');
+  assert.equal(formatTimelineZoomMultiplier(2), '2×');
+  assert.equal(formatTimelineZoomMultiplier(1.5), '1.5×');
+  assert.equal(formatTimelineZoomMultiplier(1.54), '1.5×');
+  assert.equal(formatTimelineZoomMultiplier(1.56), '1.6×');
+});
+
+test('getTimelineZoomDisplayMultipliers uses default pps for x and trackZoom for y', () => {
+  const multipliers = getTimelineZoomDisplayMultipliers(96, 2.5, 48);
+  assert.equal(multipliers.x, 2);
+  assert.equal(multipliers.y, 2.5);
 });

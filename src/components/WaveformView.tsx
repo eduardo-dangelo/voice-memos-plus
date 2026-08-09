@@ -28,6 +28,7 @@ import {
   clampTimelinePixelsPerSecond,
   clampTimelineTrackZoom,
   getTimelineZoomBounds,
+  getTimelineZoomDisplayMultipliers,
   TIMELINE_DEFAULT_PIXELS_PER_SECOND,
 } from '@/src/audio/timelineZoom';
 import {
@@ -98,6 +99,8 @@ const TRIM_EXPAND_IDLE_MS = 3000;
 const MOVE_BORDER_WIDTH = 2;
 const MIN_PINCH_SPAN = 10;
 const TRACK_ZOOM_SCROLL_THRESHOLD = 1.01;
+/** Keep zoom readout + Reset visible this long after a pinch ends. */
+const ZOOM_CONTROLS_LINGER_MS = 5000;
 /** Logic-style region header strip above the waveform body. */
 const REGION_HEADER_HEIGHT = 18;
 const TRACK_LOOP_EPSILON = 0.001;
@@ -272,6 +275,12 @@ export type TrackLoopOverlayConfig = {
   editable?: boolean;
 };
 
+export type TimelineZoomControlsState = {
+  visible: boolean;
+  x: number;
+  y: number;
+};
+
 type Props = {
   tracks: TrackData[];
   currentTime: number;
@@ -292,6 +301,8 @@ type Props = {
   onWidthChange?: (width: number) => void;
   /** Trim/move (and loop) pan gesture active — used for draft idle autosave. */
   onEditGestureActive?: (active: boolean) => void;
+  /** Zoom readout visibility + multipliers for the memo header chip. */
+  onZoomControlsChange?: (state: TimelineZoomControlsState) => void;
   trimOverlay?: TrimOverlayConfig;
   moveOverlay?: MoveOverlayConfig;
   fadeOverlay?: FadeOverlayConfig;
@@ -1723,6 +1734,7 @@ function WaveformViewComponent({
   onTrackLongPress,
   onWidthChange,
   onEditGestureActive,
+  onZoomControlsChange,
   trimOverlay,
   moveOverlay,
   fadeOverlay,
@@ -1743,6 +1755,8 @@ function WaveformViewComponent({
   const zoomGestureActiveRef = useRef(false);
   const [trimGestureActive, setTrimGestureActive] = useState(false);
   const [zoomGestureActive, setZoomGestureActive] = useState(false);
+  const [showZoomControls, setShowZoomControls] = useState(false);
+  const zoomControlsHideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const maxScrollXRef = useRef(0);
   const maxScrollYRef = useRef(0);
   const getPlaybackTimeRef = useRef(getPlaybackTime);
@@ -2208,14 +2222,74 @@ function WaveformViewComponent({
     };
   }, []);
 
+  const clearZoomControlsHideTimeout = useCallback(() => {
+    if (zoomControlsHideTimeoutRef.current != null) {
+      clearTimeout(zoomControlsHideTimeoutRef.current);
+      zoomControlsHideTimeoutRef.current = null;
+    }
+  }, []);
+
+  const hideZoomControls = useCallback(() => {
+    clearZoomControlsHideTimeout();
+    setShowZoomControls(false);
+  }, [clearZoomControlsHideTimeout]);
+
   const resetZoom = useCallback(() => {
     const bounds = zoomBoundsRef.current;
     setPixelsPerSecond(bounds.pixelsPerSecondDefault);
     setTrackZoom(1);
     verticalScrollOffsetRef.current = 0;
     verticalScrollRef.current?.scrollTo({ y: 0, animated: true });
+    hideZoomControls();
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  }, [hideZoomControls]);
+
+  const onZoomControlsChangeRef = useRef(onZoomControlsChange);
+  onZoomControlsChangeRef.current = onZoomControlsChange;
+
+  useEffect(() => {
+    const multipliers = getTimelineZoomDisplayMultipliers(
+      pixelsPerSecond,
+      trackZoom,
+      zoomBounds.pixelsPerSecondDefault
+    );
+    onZoomControlsChangeRef.current?.({
+      visible: showZoomControls,
+      x: multipliers.x,
+      y: multipliers.y,
+    });
+  }, [showZoomControls, pixelsPerSecond, trackZoom, zoomBounds.pixelsPerSecondDefault]);
+
+  useEffect(() => {
+    return () => {
+      onZoomControlsChangeRef.current?.({ visible: false, x: 1, y: 1 });
+    };
   }, []);
+
+  useEffect(() => {
+    if (zoomGestureActive) {
+      clearZoomControlsHideTimeout();
+      setShowZoomControls(true);
+      return;
+    }
+    if (!showZoomControls) {
+      return;
+    }
+    clearZoomControlsHideTimeout();
+    zoomControlsHideTimeoutRef.current = setTimeout(() => {
+      zoomControlsHideTimeoutRef.current = null;
+      setShowZoomControls(false);
+    }, ZOOM_CONTROLS_LINGER_MS);
+    return () => {
+      clearZoomControlsHideTimeout();
+    };
+  }, [zoomGestureActive, showZoomControls, clearZoomControlsHideTimeout]);
+
+  useEffect(() => {
+    return () => {
+      clearZoomControlsHideTimeout();
+    };
+  }, [clearZoomControlsHideTimeout]);
 
   const setZoomGestureActiveOnJs = useCallback((active: boolean) => {
     zoomGestureActiveRef.current = active;
@@ -2869,7 +2943,8 @@ function areWaveformViewPropsEqual(prev: Props, next: Props): boolean {
     prev.onTrackDeselect !== next.onTrackDeselect ||
     prev.onTrackLongPress !== next.onTrackLongPress ||
     prev.onWidthChange !== next.onWidthChange ||
-    prev.onEditGestureActive !== next.onEditGestureActive
+    prev.onEditGestureActive !== next.onEditGestureActive ||
+    prev.onZoomControlsChange !== next.onZoomControlsChange
   ) {
     return false;
   }
