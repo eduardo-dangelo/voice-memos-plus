@@ -60,6 +60,7 @@ function makeMemo(overrides: Partial<Memo> = {}): Memo {
           trimIn: 0.1,
           trimOut: 7.5,
           volumeDb: -3,
+          pan: -0.5,
           fadeInSec: 0.05,
           fadeOutSec: 0.1,
           fadeInCurve: 0,
@@ -91,6 +92,7 @@ function makeMemo(overrides: Partial<Memo> = {}): Memo {
           trimIn: 0,
           trimOut: 5,
           volumeDb: 0,
+          pan: 0,
           muted: true,
           locked: true,
           fadeInSec: 0,
@@ -149,6 +151,7 @@ describe('buildExportableManifest', () => {
     assert.equal(exported.layers[0]?.fileName, 'media/layer-0.wav');
     assert.equal(exported.layers[1]?.fileName, 'media/layer-1.m4a');
     assert.equal(exported.layers[0]?.effects?.volumeDb, -3);
+    assert.equal(exported.layers[0]?.effects?.pan, -0.5);
     assert.equal(exported.metronome?.bpm, 120);
     assert.equal(exported.loopEnabled, true);
     assert.deepEqual(exported.layers[0]?.waveformPeaks, [0.1, 0.2, 0.3]);

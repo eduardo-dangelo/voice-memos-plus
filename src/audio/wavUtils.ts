@@ -45,21 +45,17 @@ function floatToPcm16(sample: number): number {
   return sample <= -1 ? -32768 : sample >= 1 ? 32767 : (sample * 0x7fff) | 0;
 }
 
-export function writeMonoPcm16Wav(
-  samples: Float32Array,
+function writePcm16WavHeader(
+  bytes: Uint8Array,
+  view: DataView,
   sampleRate: number,
-  outputPath: string
+  numChannels: number,
+  frameCount: number
 ): void {
-  const sr = Math.round(sampleRate);
-  const numChannels = 1;
-  const length = samples.length;
   const bitsPerSample = 16;
   const blockAlign = (numChannels * bitsPerSample) / 8;
-  const dataSize = length * blockAlign;
-  const headerSize = 44;
-  const totalSize = headerSize + dataSize;
-  const bytes = new Uint8Array(totalSize);
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const dataSize = frameCount * blockAlign;
+  const totalSize = 44 + dataSize;
 
   const writeString = (offset: number, value: string) => {
     for (let i = 0; i < value.length; i += 1) {
@@ -74,19 +70,15 @@ export function writeMonoPcm16Wav(
   view.setUint32(16, 16, true);
   view.setUint16(20, 1, true);
   view.setUint16(22, numChannels, true);
-  view.setUint32(24, sr, true);
-  view.setUint32(28, sr * blockAlign, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * blockAlign, true);
   view.setUint16(32, blockAlign, true);
   view.setUint16(34, bitsPerSample, true);
   writeString(36, 'data');
   view.setUint32(40, dataSize, true);
+}
 
-  let offset = headerSize;
-  for (let i = 0; i < length; i += 1) {
-    view.setInt16(offset, floatToPcm16(samples[i]), true);
-    offset += 2;
-  }
-
+function writeWavBytesToFile(bytes: Uint8Array, outputPath: string): void {
   const file = new File(outputPath);
   if (file.exists) {
     file.delete();
@@ -95,11 +87,58 @@ export function writeMonoPcm16Wav(
   file.write(bytes);
 
   const writtenSize = file.info().size ?? 0;
-  if (writtenSize !== totalSize) {
+  if (writtenSize !== bytes.byteLength) {
     throw new Error(
-      `Failed to write WAV file: expected ${totalSize} bytes, wrote ${writtenSize}`
+      `Failed to write WAV file: expected ${bytes.byteLength} bytes, wrote ${writtenSize}`
     );
   }
+}
+
+export function writeMonoPcm16Wav(
+  samples: Float32Array,
+  sampleRate: number,
+  outputPath: string
+): void {
+  const sr = Math.round(sampleRate);
+  const length = samples.length;
+  const totalSize = 44 + length * 2;
+  const bytes = new Uint8Array(totalSize);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+
+  writePcm16WavHeader(bytes, view, sr, 1, length);
+
+  let offset = 44;
+  for (let i = 0; i < length; i += 1) {
+    view.setInt16(offset, floatToPcm16(samples[i]), true);
+    offset += 2;
+  }
+
+  writeWavBytesToFile(bytes, outputPath);
+}
+
+export function writeStereoPcm16Wav(
+  left: Float32Array,
+  right: Float32Array,
+  sampleRate: number,
+  outputPath: string
+): void {
+  const sr = Math.round(sampleRate);
+  const length = Math.min(left.length, right.length);
+  const totalSize = 44 + length * 4;
+  const bytes = new Uint8Array(totalSize);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+
+  writePcm16WavHeader(bytes, view, sr, 2, length);
+
+  let offset = 44;
+  for (let i = 0; i < length; i += 1) {
+    view.setInt16(offset, floatToPcm16(left[i]), true);
+    offset += 2;
+    view.setInt16(offset, floatToPcm16(right[i]), true);
+    offset += 2;
+  }
+
+  writeWavBytesToFile(bytes, outputPath);
 }
 
 function isWavPath(path: string): boolean {
@@ -411,6 +450,15 @@ export async function spliceRecording(
 }
 
 export function writeAudioBufferToWavFile(buffer: AudioBuffer, outputPath: string): void {
+  if (buffer.numberOfChannels >= 2) {
+    writeStereoPcm16Wav(
+      buffer.getChannelData(0),
+      buffer.getChannelData(1),
+      buffer.sampleRate,
+      outputPath
+    );
+    return;
+  }
   writeMonoPcm16Wav(buffer.getChannelData(0), buffer.sampleRate, outputPath);
 }
 

@@ -100,7 +100,7 @@ async function renderLayersOffline(
 
   const numFrames = Math.max(1, Math.ceil(exportDuration * EXPORT_SAMPLE_RATE));
   const offlineCtx = new OfflineAudioContext({
-    numberOfChannels: 1,
+    numberOfChannels: 2,
     length: numFrames,
     sampleRate: EXPORT_SAMPLE_RATE,
   });

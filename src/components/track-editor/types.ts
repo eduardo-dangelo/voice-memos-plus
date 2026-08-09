@@ -1,4 +1,4 @@
-export type EditorTool = 'trim' | 'move' | 'volume' | 'reverb' | 'delay' | 'eq';
+export type EditorTool = 'trim' | 'move' | 'volume' | 'pan' | 'reverb' | 'delay' | 'eq';
 
 export const EDITOR_TOOLS: {
   id: EditorTool;
@@ -7,6 +7,7 @@ export const EDITOR_TOOLS: {
     | 'scissors'
     | 'arrow.left.and.right'
     | 'speaker.wave.2.fill'
+    | 'hifispeaker.2'
     | 'dot.radiowaves.left.and.right'
     | 'clock.arrow.2.circlepath'
     | 'slider.horizontal.3';
@@ -14,6 +15,7 @@ export const EDITOR_TOOLS: {
   { id: 'trim', label: 'Trim', symbol: 'scissors' },
   { id: 'move', label: 'Move', symbol: 'arrow.left.and.right' },
   { id: 'volume', label: 'Volume', symbol: 'speaker.wave.2.fill' },
+  { id: 'pan', label: 'Pan', symbol: 'hifispeaker.2' },
   { id: 'reverb', label: 'Reverb', symbol: 'dot.radiowaves.left.and.right' },
   { id: 'delay', label: 'Delay', symbol: 'clock.arrow.2.circlepath' },
   { id: 'eq', label: 'EQ', symbol: 'slider.horizontal.3' },
@@ -40,6 +42,7 @@ export function getEditorCanvasHeight(tool: EditorTool | null): number {
     case 'delay':
       return EDITOR_CANVAS_HEIGHT_DELAY_COMPACT;
     case 'volume':
+    case 'pan':
       return EDITOR_CANVAS_HEIGHT_VOLUME;
     case 'eq':
       return EDITOR_CANVAS_HEIGHT_EQ_COMPACT;

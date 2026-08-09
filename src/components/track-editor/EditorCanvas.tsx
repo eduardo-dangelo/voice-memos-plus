@@ -9,6 +9,7 @@ import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 import { EffectCustomDialog, type EffectCustomKind } from './EffectCustomDialog';
 import { DelayEditor } from './editors/DelayEditor';
 import { EQEditor } from './editors/EQEditor';
+import { PanEditor } from './editors/PanEditor';
 import { ReverbEditor } from './editors/ReverbEditor';
 import { VolumeEditor } from './editors/VolumeEditor';
 import { getEditorCanvasHeight, type EditorTool } from './types';
@@ -42,7 +43,7 @@ export function EditorCanvas({
   const colors = useVoiceMemosColors();
   const styles = useStyles(colors);
   const canvasHeight = getEditorCanvasHeight(activeTool);
-  const volumeCompact = activeTool === 'volume';
+  const volumeCompact = activeTool === 'volume' || activeTool === 'pan';
   const draftActions = activeTool === 'trim' || activeTool === 'move';
   const effectKind = effectKindForTool(activeTool);
   const [customDialogVisible, setCustomDialogVisible] = useState(false);
@@ -104,6 +105,12 @@ export function EditorCanvas({
             <VolumeEditor
               effects={effects}
               onChange={(volumeDb) => onEffectsChange({ volumeDb })}
+            />
+          ) : null}
+          {activeTool === 'pan' ? (
+            <PanEditor
+              effects={effects}
+              onChange={(pan) => onEffectsChange({ pan })}
             />
           ) : null}
           {activeTool === 'reverb' ? (

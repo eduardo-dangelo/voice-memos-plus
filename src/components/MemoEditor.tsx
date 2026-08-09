@@ -1816,7 +1816,7 @@ export function MemoEditor({
           {
             id: 'mute',
             title: effects.muted ? 'Unmute' : 'Mute',
-            systemImage: effects.muted ? 'speaker.slash' : 'speaker.wave.2',
+            systemImage: effects.muted ? 'speaker.wave.2' : 'speaker.slash',
           },
           {
             id: 'solo',
@@ -1840,7 +1840,7 @@ export function MemoEditor({
         {
           id: 'mute',
           title: effects.muted ? 'Unmute' : 'Mute',
-          systemImage: effects.muted ? 'speaker.slash' : 'speaker.wave.2',
+          systemImage: effects.muted ? 'speaker.wave.2' : 'speaker.slash',
         },
         {
           id: 'solo',
@@ -3295,9 +3295,9 @@ export function MemoEditor({
     if (activeLayerEffects && isLayerLocked(activeLayerEffects)) {
       return [];
     }
-    const base: EditorTool[] = ['trim', 'volume', 'reverb', 'delay', 'eq'];
+    const base: EditorTool[] = ['trim', 'volume', 'pan', 'reverb', 'delay', 'eq'];
     if (memo && getPlayableLayers(memo).length > 1) {
-      return ['trim', 'move', 'volume', 'reverb', 'delay', 'eq'];
+      return ['trim', 'move', 'volume', 'pan', 'reverb', 'delay', 'eq'];
     }
     return base;
   }, [activeLayerEffects, memo]);

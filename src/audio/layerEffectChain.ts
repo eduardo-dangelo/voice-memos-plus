@@ -4,9 +4,11 @@ import type {
   BiquadFilterNode,
   ConvolverNode,
   GainNode,
+  StereoPannerNode,
 } from 'react-native-audio-api';
 
 import {
+  clampPan,
   dbToLinear,
   EQ_FREQUENCIES,
   isLayerAudible,
@@ -20,6 +22,8 @@ export type LayerEffectPathNodes = {
   /** Dedicated fade automation node (after volume gain). */
   fadeGain: GainNode;
   eqFilters: BiquadFilterNode[];
+  /** Stereo balance after EQ; dry/wet paths each get their own node. */
+  panner: StereoPannerNode;
 };
 
 export type LayerReverbNodes = {
@@ -145,14 +149,17 @@ export function buildInputEqPath(context: AudioContext): LayerEffectPathNodes {
     filter.Q.value = 1;
     return filter;
   });
+  const panner = context.createStereoPanner();
+  panner.pan.value = 0;
 
   gain.connect(fadeGain);
   fadeGain.connect(eqFilters[0]);
   for (let i = 0; i < eqFilters.length - 1; i += 1) {
     eqFilters[i].connect(eqFilters[i + 1]);
   }
+  eqFilters[eqFilters.length - 1].connect(panner);
 
-  return { gain, fadeGain, eqFilters };
+  return { gain, fadeGain, eqFilters, panner };
 }
 
 function assignReverbImpulse(
@@ -241,6 +248,7 @@ export function applyPathInputEffects(
     isLayerAudible(effects, anySoloActive) ? dbToLinear(effects.volumeDb) : 0,
     now
   );
+  setAudioParamValue(path.panner.pan, clampPan(effects.pan), now);
   effects.eq.bands.forEach((bandDb, index) => {
     const filter = path.eqFilters[index];
     setAudioParamValue(filter.gain, bandDb, now);

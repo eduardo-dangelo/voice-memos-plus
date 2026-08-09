@@ -2,11 +2,14 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
+  clampPan,
   clampTrimValues,
   createDefaultLayerEffects,
+  hasActivePan,
   isLayerLocked,
   isLockedLayerEffectsChangeAllowed,
   MIN_TRIM_SELECTION,
+  normalizeLayerEffects,
   TRIM_SNAP_SECONDS,
 } from '@/src/audio/layerEffects';
 
@@ -54,5 +57,26 @@ describe('layer lock', () => {
   it('allows any change while unlocked', () => {
     const unlocked = createDefaultLayerEffects(5);
     assert.equal(isLockedLayerEffectsChangeAllowed(unlocked, { volumeDb: -3 }), true);
+  });
+});
+
+describe('pan', () => {
+  it('defaults to center and clamps to −1…1', () => {
+    const defaults = createDefaultLayerEffects(5);
+    assert.equal(defaults.pan, 0);
+    assert.equal(clampPan(0.5), 0.5);
+    assert.equal(clampPan(-2), -1);
+    assert.equal(clampPan(2), 1);
+    assert.equal(clampPan(Number.NaN), 0);
+  });
+
+  it('normalizes missing pan and reports active when off-center', () => {
+    const normalized = normalizeLayerEffects({
+      duration: 5,
+      effects: { ...createDefaultLayerEffects(5), pan: undefined as unknown as number },
+    });
+    assert.equal(normalized.pan, 0);
+    assert.equal(hasActivePan(normalized), false);
+    assert.equal(hasActivePan({ ...normalized, pan: 0.5 }), true);
   });
 });

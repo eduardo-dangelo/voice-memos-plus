@@ -116,6 +116,7 @@ export class MemoMixGraph {
     try {
       channel.dry.gain.disconnect();
       channel.dry.fadeGain.disconnect();
+      channel.dry.panner.disconnect();
       channel.dry.dryGain.disconnect();
     } catch {
       // Nodes may already be torn down.
@@ -153,8 +154,7 @@ export class MemoMixGraph {
     const master = this.getMasterGain(context);
     const input = buildInputEqPath(context);
     const dryGain = context.createGain();
-    const postEq = input.eqFilters[input.eqFilters.length - 1];
-    postEq.connect(dryGain);
+    input.panner.connect(dryGain);
     dryGain.connect(master);
     dryGain.gain.value = 1;
 
@@ -178,8 +178,7 @@ export class MemoMixGraph {
 
     const input = buildInputEqPath(context);
     const send = context.createGain();
-    const postEq = input.eqFilters[input.eqFilters.length - 1];
-    postEq.connect(send);
+    input.panner.connect(send);
     send.gain.value = 0;
     return { ...input, send };
   }
@@ -191,6 +190,7 @@ export class MemoMixGraph {
     try {
       path.gain.disconnect();
       path.fadeGain.disconnect();
+      path.panner.disconnect();
       path.send.disconnect();
     } catch {
       // Already torn down.

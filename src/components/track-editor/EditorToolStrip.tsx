@@ -7,6 +7,7 @@ import type { LayerEffects } from '@/src/audio/layerEffects';
 import {
   hasActiveDelay,
   hasActiveEq,
+  hasActivePan,
   hasActiveReverb,
 } from '@/src/audio/layerEffects';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
@@ -22,6 +23,8 @@ type Props = {
 
 function isToolApplied(tool: EditorTool, effects: LayerEffects): boolean {
   switch (tool) {
+    case 'pan':
+      return hasActivePan(effects);
     case 'reverb':
       return hasActiveReverb(effects);
     case 'delay':

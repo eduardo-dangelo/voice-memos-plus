@@ -96,6 +96,8 @@ export type LayerEffects = {
   trimIn: number;
   trimOut: number;
   volumeDb: number;
+  /** Stereo balance −1…1 (0 = center). */
+  pan: number;
   muted?: boolean;
   solo?: boolean;
   /** When true, track edits are blocked except mute/solo and unlock. */
@@ -288,11 +290,21 @@ function inferDelayPreset(delay: Partial<LayerDelayEffects>): DelayPreset {
   return 'custom';
 }
 
+const PAN_ACTIVE_EPSILON = 0.001;
+
+export function clampPan(pan: number): number {
+  if (!Number.isFinite(pan)) {
+    return 0;
+  }
+  return Math.max(-1, Math.min(1, pan));
+}
+
 export function createDefaultLayerEffects(duration: number): LayerEffects {
   return {
     trimIn: 0,
     trimOut: duration > 0 ? duration : 0,
     volumeDb: 0,
+    pan: 0,
     muted: false,
     solo: false,
     locked: false,
@@ -338,6 +350,10 @@ export function hasActiveEq(effects: LayerEffects): boolean {
     return true;
   }
   return effects.eq.bands.some((bandDb) => bandDb !== 0);
+}
+
+export function hasActivePan(effects: LayerEffects): boolean {
+  return Math.abs(effects.pan) > PAN_ACTIVE_EPSILON;
 }
 
 export function hasAnySoloActive(effectsList: LayerEffects[]): boolean {
@@ -446,6 +462,7 @@ export function normalizeLayerEffects(
     trimIn,
     trimOut: layer.duration > 0 ? trimOut : defaults.trimOut,
     volumeDb: layer.effects.volumeDb ?? 0,
+    pan: clampPan(layer.effects.pan ?? 0),
     muted: layer.effects.muted ?? false,
     solo: layer.effects.solo ?? false,
     locked: layer.effects.locked ?? false,
@@ -556,6 +573,7 @@ export function mergeLayerEffects(
   merged.fadeOutSec = fadeOutSec;
   merged.fadeInCurve = clampFadeCurveValue(merged.fadeInCurve ?? 0);
   merged.fadeOutCurve = clampFadeCurveValue(merged.fadeOutCurve ?? 0);
+  merged.pan = clampPan(merged.pan ?? 0);
 
   return merged;
 }
