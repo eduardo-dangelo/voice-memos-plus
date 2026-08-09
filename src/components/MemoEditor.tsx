@@ -2749,7 +2749,48 @@ export function MemoEditor({
   }, [engine, flushEditorState, memo, onDismiss]);
 
   const renderHeaderBar = useCallback(
-    () => (
+    () => {
+      const optionsMenu = (
+        <MemoOptionsMenu
+          includeEditRecording={false}
+          includeMergeLayers={
+            memo
+              ? getPlayableLayersInTimelineOrder(memo.layers).filter(
+                  (layer) => !isLayerLocked(getLayerEffects(layer))
+                ).length > 1
+              : false
+          }
+          includeLockTracks={
+            memo
+              ? getPlayableLayers(memo).some(
+                  (layer) => !isLayerLocked(getLayerEffects(layer))
+                )
+              : false
+          }
+          includeUnlockTracks={
+            memo
+              ? getPlayableLayers(memo).some((layer) =>
+                  isLayerLocked(getLayerEffects(layer))
+                )
+              : false
+          }
+          includeShare={memo ? hasRecording(memo) : false}
+          onShare={handleShare}
+          onRename={handleRename}
+          onMergeLayers={handleMergeAllLayers}
+          onLockTracks={handleLockTracksMenu}
+          onUnlockTracks={handleUnlockTracksMenu}
+          onDuplicate={() => void handleDuplicate()}
+          onDelete={confirmDelete}>
+          <FloatingHeaderIconFace
+            accessibilityLabel="More options"
+            icon="ellipsis"
+            size="small"
+          />
+        </MemoOptionsMenu>
+      );
+
+      return (
       <View style={styles.headerBar}>
         {isPane ? (
           <View style={styles.headerActions}>
@@ -2763,72 +2804,13 @@ export function MemoEditor({
                     ? 'sidebar.left'
                     : 'arrow.up.left.and.arrow.down.right'
                 }
-                size="small"
                 onPress={onToggleSidebar}
               />
             ) : null}
-            {memo && hasRecording(memo) ? (
-              <FloatingHeaderButton
-                accessibilityLabel="Export"
-                icon="square.and.arrow.up"
-                size="small"
-                onPress={handleShare}
-              />
-            ) : null}
-            <FloatingHeaderButton
-              accessibilityLabel="Rename"
-              icon="pencil"
-              size="small"
-              onPress={handleRename}
-            />
-            <FloatingHeaderButton
-              accessibilityLabel="Delete"
-              icon="trash"
-              size="small"
-              tintColor={colors.recordRed}
-              onPress={confirmDelete}
-            />
+            {optionsMenu}
           </View>
         ) : (
-          <View style={styles.headerLeading}>
-            <MemoOptionsMenu
-              includeEditRecording={false}
-              includeMergeLayers={
-                memo
-                  ? getPlayableLayersInTimelineOrder(memo.layers).filter(
-                      (layer) => !isLayerLocked(getLayerEffects(layer))
-                    ).length > 1
-                  : false
-              }
-              includeLockTracks={
-                memo
-                  ? getPlayableLayers(memo).some(
-                      (layer) => !isLayerLocked(getLayerEffects(layer))
-                    )
-                  : false
-              }
-              includeUnlockTracks={
-                memo
-                  ? getPlayableLayers(memo).some((layer) =>
-                      isLayerLocked(getLayerEffects(layer))
-                    )
-                  : false
-              }
-              includeShare={memo ? hasRecording(memo) : false}
-              onShare={handleShare}
-              onRename={handleRename}
-              onMergeLayers={handleMergeAllLayers}
-              onLockTracks={handleLockTracksMenu}
-              onUnlockTracks={handleUnlockTracksMenu}
-              onDuplicate={() => void handleDuplicate()}
-              onDelete={confirmDelete}>
-              <FloatingHeaderIconFace
-                accessibilityLabel="More options"
-                icon="ellipsis"
-                size="small"
-              />
-            </MemoOptionsMenu>
-          </View>
+          <View style={styles.headerLeading}>{optionsMenu}</View>
         )}
         <View style={[styles.headerTitle, isPane && styles.headerTitlePane]}>
           <Pressable
@@ -2855,9 +2837,9 @@ export function MemoEditor({
           <SymbolView name={{ ios: 'checkmark' }} size={22} tintColor="#FFFFFF" />
         </Pressable>
       </View>
-    ),
+      );
+    },
     [
-      colors.recordRed,
       confirmDelete,
       engineState.isRecording,
       handleDone,
@@ -4099,7 +4081,7 @@ function useMemoEditorStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           backgroundColor: colors.sheetBackground,
         },
         paneHeader: {
-          paddingTop: 8,
+          paddingTop: 4,
           paddingBottom: 8,
         },
         content: {
@@ -4139,7 +4121,7 @@ function useMemoEditorStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
         },
         headerTitle: {
           position: 'absolute',
-          // Clears ellipsis (32) + Done (32) + bar padding on iPhone.
+          // Clears ellipsis (32) + matching trailing inset for centered title.
           left: 58,
           right: 58,
           alignItems: 'center',
@@ -4148,8 +4130,9 @@ function useMemoEditorStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           overflow: 'visible',
         },
         headerTitlePane: {
-          // Clears up to 4 small pane actions (32×4 + gaps) on the leading side.
-          left: 152,
+          // Clears regular toggle + small ellipsis (44+8+32) with phone side pad (58−32).
+          left: 110,
+          right: 110,
         },
         headerTitlePressable: {
           maxWidth: '100%',

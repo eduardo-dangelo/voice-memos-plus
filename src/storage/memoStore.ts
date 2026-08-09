@@ -29,6 +29,7 @@ import {
   isTrackColorAllowed,
   pickRandomTrackColor,
 } from '@/constants/VoiceMemosColors';
+import { notifyMemoUpdate } from '@/src/recording/memoUpdateEvents';
 import { createDefaultTitle, sanitizeExportFileName } from '@/src/utils/format';
 import { randomId } from '@/src/utils/id';
 
@@ -301,6 +302,7 @@ export async function updateTitle(memoId: string, title: string): Promise<Memo> 
   memo.titleSource = 'user';
   memo.updatedAt = new Date().toISOString();
   writeManifest(memo);
+  notifyMemoUpdate(memo);
   return memo;
 }
 
