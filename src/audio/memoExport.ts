@@ -22,6 +22,7 @@ import {
   getLayerEffectsForPlayback,
   getMemoExportBounds,
   PLAYBACK_END_TOLERANCE,
+  resolvePlanAgainstBuffer,
 } from '@/src/audio/playbackPlans';
 import { resampleMonoBufferFromRate } from '@/src/audio/wavUtils';
 import { getMemoPlaybackTimeline } from '@/src/storage/paths';
@@ -121,30 +122,18 @@ async function renderLayersOffline(
 
     for (const plan of planSpecs) {
       const buffer = await getLayerBufferForContext(offlineCtx, plan.layer);
-      const trimOut = Math.min(plan.playbackEffects.trimOut, buffer.duration);
-      const trimIn = Math.min(
-        plan.playbackEffects.trimIn,
-        Math.max(0, trimOut - PLAYBACK_END_TOLERANCE)
-      );
-      const playbackEffects = { ...plan.playbackEffects, trimIn, trimOut };
-      const maxBufferOffset = trimOut - PLAYBACK_END_TOLERANCE;
-
-      if (plan.bufferOffset >= maxBufferOffset) {
-        continue;
-      }
-
-      const layerPlayLength = Math.min(plan.layerPlayLength, trimOut - plan.bufferOffset);
-      if (layerPlayLength <= PLAYBACK_END_TOLERANCE) {
+      const resolved = resolvePlanAgainstBuffer(plan, buffer.duration);
+      if (!resolved) {
         continue;
       }
 
       resolvedPlans.push({
         layer: plan.layer,
         buffer,
-        playbackEffects,
-        bufferOffset: plan.bufferOffset,
-        delay: plan.delay,
-        layerPlayLength,
+        playbackEffects: resolved.playbackEffects,
+        bufferOffset: resolved.bufferOffset,
+        delay: resolved.delay,
+        layerPlayLength: resolved.layerPlayLength,
       });
     }
 

@@ -22,6 +22,7 @@ import {
   getLayerActiveStartTime,
   getLayerEffects,
   getLayerFootprintDuration,
+  getLayerLoopCount,
 } from '@/src/storage/types';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
@@ -50,6 +51,8 @@ type MiniTrack = {
   isSoloed: boolean;
   isSoloedOut: boolean;
   isLocked: boolean;
+  isLooped: boolean;
+  loopCount?: number;
 };
 
 type LaneBarGeometry = {
@@ -65,6 +68,8 @@ type LaneGeometry = {
   isMuted: boolean;
   isSoloed: boolean;
   isLocked: boolean;
+  isLooped: boolean;
+  loopCount?: number;
   activeColorKey: string;
   bars: LaneBarGeometry[];
 };
@@ -89,6 +94,7 @@ function buildMiniTracks(memo: Memo): MiniTrack[] {
       const effects = getLayerEffects(layer);
       const activeDuration = getLayerActiveDuration(layer);
       const footprintDuration = getLayerFootprintDuration(layer);
+      const loopCount = getLayerLoopCount(layer);
       return {
         id: layer.id,
         peaks: slicePeaksForTrim(
@@ -105,6 +111,8 @@ function buildMiniTracks(memo: Memo): MiniTrack[] {
         isSoloed: Boolean(effects.solo),
         isSoloedOut: anySoloActive && !effects.solo,
         isLocked: Boolean(effects.locked),
+        isLooped: loopCount > 1,
+        loopCount: loopCount > 1 ? loopCount : undefined,
       };
     });
 }
@@ -291,6 +299,8 @@ export function MiniWaveformTracks({
         isMuted: track.isMuted,
         isSoloed: track.isSoloed,
         isLocked: track.isLocked,
+        isLooped: track.isLooped,
+        loopCount: track.loopCount,
         activeColorKey:
           track.isMuted || track.isSoloedOut ? '__waveformBar__' : track.color,
         bars,
@@ -360,13 +370,39 @@ export function MiniWaveformTracks({
                   <SymbolView name={{ ios: 'lock.fill' }} size={11} tintColor={colors.lockBadge} />
                 </View>
               ) : null}
+              {lane.trackWidth > 0 && lane.isLooped ? (
+                <View
+                  pointerEvents="none"
+                  style={[
+                    styles.floatingLock,
+                    styles.floatingLoop,
+                    { left: lane.left + (lane.isLocked ? 22 : 4) },
+                  ]}>
+                  <SymbolView name={{ ios: 'repeat' }} size={11} tintColor={colors.lockBadge} />
+                  {lane.loopCount != null && lane.loopCount > 1 ? (
+                    <Text style={[styles.loopCountText, { color: colors.lockBadge }]}>
+                      {lane.loopCount}×
+                    </Text>
+                  ) : null}
+                </View>
+              ) : null}
               {lane.trackWidth > 0 && lane.isMuted ? (
                 <View
                   pointerEvents="none"
                   style={[
                     styles.floatingBadge,
                     styles.mutedBadge,
-                    { left: lane.left + (lane.isLocked ? 22 : 4) },
+                    {
+                      left:
+                        lane.left +
+                        4 +
+                        (lane.isLocked ? 18 : 0) +
+                        (lane.isLooped
+                          ? (lane.loopCount ?? 0) >= 10
+                            ? 34
+                            : 28
+                          : 0),
+                    },
                   ]}>
                   <Text style={styles.mutedBadgeText}>M</Text>
                 </View>
@@ -382,6 +418,11 @@ export function MiniWaveformTracks({
                         lane.left +
                         4 +
                         (lane.isLocked ? 18 : 0) +
+                        (lane.isLooped
+                          ? (lane.loopCount ?? 0) >= 10
+                            ? 34
+                            : 28
+                          : 0) +
                         (lane.isMuted ? 22 : 0),
                     },
                   ]}>
@@ -454,6 +495,18 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           height: 16,
           alignItems: 'center',
           justifyContent: 'center',
+        },
+        floatingLoop: {
+          width: 'auto',
+          minWidth: 14,
+          flexDirection: 'row',
+          gap: 2,
+          paddingHorizontal: 1,
+        },
+        loopCountText: {
+          fontSize: 10,
+          fontWeight: '700',
+          lineHeight: 14,
         },
         mutedBadge: {
           zIndex: 6,

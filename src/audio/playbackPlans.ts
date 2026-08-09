@@ -3,6 +3,10 @@ import type { LoadedLayer } from '@/src/audio/MemoAudioEngine';
 
 export const PLAYBACK_END_TOLERANCE = 0.05;
 
+/** Sliding schedule window for looped / long segments (play + monitor-mix). */
+export const PLAYBACK_SCHEDULE_CHUNK_SEC = 12;
+export const PLAYBACK_SCHEDULE_EXTEND_LEAD_SEC = 2;
+
 export type LayerPlaybackPlanSpec = {
   layer: LoadedLayer;
   playbackEffects: LayerEffects;
@@ -10,6 +14,63 @@ export type LayerPlaybackPlanSpec = {
   delay: number;
   layerPlayLength: number;
 };
+
+export type ResolvedLayerPlaybackPlan = {
+  playbackEffects: LayerEffects;
+  bufferOffset: number;
+  delay: number;
+  layerPlayLength: number;
+};
+
+/**
+ * Clamp a planner segment against the decoded buffer duration.
+ * Trusts cycle-aware `plan.bufferOffset` — do not recompute from playhead.
+ */
+export function resolvePlanAgainstBuffer(
+  plan: LayerPlaybackPlanSpec,
+  bufferDuration: number
+): ResolvedLayerPlaybackPlan | null {
+  const trimOut = Math.min(plan.playbackEffects.trimOut, bufferDuration);
+  const trimIn = Math.min(
+    plan.playbackEffects.trimIn,
+    Math.max(0, trimOut - PLAYBACK_END_TOLERANCE)
+  );
+  const playbackEffects: LayerEffects = { ...plan.playbackEffects, trimIn, trimOut };
+  const maxBufferOffset = trimOut - PLAYBACK_END_TOLERANCE;
+
+  if (plan.bufferOffset >= maxBufferOffset) {
+    return null;
+  }
+
+  const layerPlayLength = Math.min(plan.layerPlayLength, trimOut - plan.bufferOffset);
+  if (layerPlayLength <= PLAYBACK_END_TOLERANCE) {
+    return null;
+  }
+
+  return {
+    playbackEffects,
+    bufferOffset: plan.bufferOffset,
+    delay: plan.delay,
+    layerPlayLength,
+  };
+}
+
+/** Split plans into those that start within the schedule horizon vs later. */
+export function partitionPlansByHorizon<T extends { delay: number }>(
+  plans: T[],
+  horizonSec: number
+): { ready: T[]; pending: T[] } {
+  const ready: T[] = [];
+  const pending: T[] = [];
+  for (const plan of plans) {
+    if (plan.delay < horizonSec) {
+      ready.push(plan);
+    } else {
+      pending.push(plan);
+    }
+  }
+  return { ready, pending };
+}
 
 export function getLayerEffectsForPlayback(layer: LoadedLayer): LayerEffects {
   return normalizeLayerEffects({ duration: layer.duration, effects: layer.effects });

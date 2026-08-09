@@ -258,6 +258,16 @@ export function getLayerFootprintDuration(layer: Layer): number {
   return Math.max(0, getLayerFootprintEndTime(layer) - getLayerActiveStartTime(layer));
 }
 
+/** How many keep-region cycles the footprint covers (1 = no loop). */
+export function getLayerLoopCount(layer: Layer): number {
+  const cycle = getLayerActiveDuration(layer);
+  if (cycle <= 0) {
+    return 1;
+  }
+  const footprint = getLayerFootprintDuration(layer);
+  return Math.max(1, Math.min(64, Math.round(footprint / cycle)));
+}
+
 /** Normalize or clear invalid loopUntil on a layer (mutates). */
 export function normalizeLayerLoopUntil(layer: Layer): void {
   const contentEnd = getLayerContentEndTime(layer);

@@ -250,6 +250,10 @@ export type TrackData = {
   isSoloed?: boolean;
   isSoloedOut?: boolean;
   isLocked?: boolean;
+  /** True when the track has an active loopUntil footprint beyond one cycle. */
+  isLooped?: boolean;
+  /** Total cycle plays when looped (same as Loop Track dialog count). */
+  loopCount?: number;
   /** Layer volume in dB; scales waveform bars for every track. */
   volumeDb?: number;
   /** Fade envelope (footprint seconds); scales waveform bars. */
@@ -937,6 +941,12 @@ function areTrackDataEqual(a: TrackData, b: TrackData): boolean {
   if (a.isLocked !== b.isLocked) {
     return false;
   }
+  if (Boolean(a.isLooped) !== Boolean(b.isLooped)) {
+    return false;
+  }
+  if ((a.loopCount ?? 0) !== (b.loopCount ?? 0)) {
+    return false;
+  }
   if (a.volumeDb !== b.volumeDb) {
     return false;
   }
@@ -1214,6 +1224,10 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
   const headerColor = mixHexTowardWhite(trackColor, 0.35, 0.52);
   // Keep selected region fill in the same ballpark as the pre-header selection tint.
   const regionBodyColor = colorWithAlpha(trackColor, 0.08);
+  // Match region header label (#FFFFFF) on the tinted selected header; gray elsewhere.
+  const statusIconTint = track.isActive ? '#FFFFFF' : colors.lockBadge;
+  const loopBadgeWidth =
+    track.isLooped && (track.loopCount ?? 0) >= 10 ? 34 : track.isLooped ? 28 : 0;
   const hasTrackBars = trackWidth > 0;
   const hasLiveBars = liveTrackWidth > 0;
   const fullSelectionStart =
@@ -1324,7 +1338,12 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
                   maxWidth: Math.max(
                     0,
                     trackWidth -
-                      (track.isLocked || track.isMuted || track.isSoloed ? 44 : 10)
+                      (track.isLocked ||
+                      track.isLooped ||
+                      track.isMuted ||
+                      track.isSoloed
+                        ? 44
+                        : 10)
                   ),
                 },
               ]}>
@@ -1333,7 +1352,17 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
           ) : null}
           {track.isLocked ? (
             <View pointerEvents="none" style={styles.regionHeaderLock}>
-              <SymbolView name={{ ios: 'lock.fill' }} size={11} tintColor={colors.lockBadge} />
+              <SymbolView name={{ ios: 'lock.fill' }} size={11} tintColor={statusIconTint} />
+            </View>
+          ) : null}
+          {track.isLooped ? (
+            <View pointerEvents="none" style={[styles.regionHeaderLock, styles.regionHeaderLoop]}>
+              <SymbolView name={{ ios: 'repeat' }} size={11} tintColor={statusIconTint} />
+              {track.loopCount != null && track.loopCount > 1 ? (
+                <Text style={[styles.loopCountText, { color: statusIconTint }]}>
+                  {track.loopCount}×
+                </Text>
+              ) : null}
             </View>
           ) : null}
           {track.isMuted ? (
@@ -1356,7 +1385,28 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
                 styles.floatingLock,
                 { left: sidePadding + trackOffset + 4 },
               ]}>
-              <SymbolView name={{ ios: 'lock.fill' }} size={11} tintColor={colors.lockBadge} />
+              <SymbolView name={{ ios: 'lock.fill' }} size={11} tintColor={statusIconTint} />
+            </View>
+          ) : null}
+          {track.isLooped ? (
+            <View
+              pointerEvents="none"
+              style={[
+                styles.floatingLock,
+                styles.floatingLoop,
+                {
+                  left:
+                    sidePadding +
+                    trackOffset +
+                    (track.isLocked ? 22 : 4),
+                },
+              ]}>
+              <SymbolView name={{ ios: 'repeat' }} size={11} tintColor={statusIconTint} />
+              {track.loopCount != null && track.loopCount > 1 ? (
+                <Text style={[styles.loopCountText, { color: statusIconTint }]}>
+                  {track.loopCount}×
+                </Text>
+              ) : null}
             </View>
           ) : null}
           {track.isMuted ? (
@@ -1369,7 +1419,9 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
                   left:
                     sidePadding +
                     trackOffset +
-                    (track.isLocked ? 22 : 4),
+                    4 +
+                    (track.isLocked ? 18 : 0) +
+                    loopBadgeWidth,
                 },
               ]}>
               <Text style={styles.mutedBadgeText}>M</Text>
@@ -1387,6 +1439,7 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
                     trackOffset +
                     4 +
                     (track.isLocked ? 18 : 0) +
+                    loopBadgeWidth +
                     (track.isMuted ? 22 : 0),
                 },
               ]}>
@@ -1405,6 +1458,7 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
                     trackOffset +
                     4 +
                     (track.isLocked ? 18 : 0) +
+                    loopBadgeWidth +
                     (track.isMuted ? 22 : 0) +
                     (track.isSoloed ? 22 : 0),
                   maxWidth: Math.max(
@@ -1412,6 +1466,7 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
                     trackWidth -
                       8 -
                       (track.isLocked ? 18 : 0) -
+                      loopBadgeWidth -
                       (track.isMuted ? 22 : 0) -
                       (track.isSoloed ? 22 : 0)
                   ),
@@ -3111,6 +3166,25 @@ function createWaveformStyles(colors: VoiceMemosColorScheme) {
     height: 16,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  regionHeaderLoop: {
+    width: 'auto',
+    minWidth: 14,
+    flexDirection: 'row',
+    gap: 2,
+    paddingHorizontal: 1,
+  },
+  floatingLoop: {
+    width: 'auto',
+    minWidth: 14,
+    flexDirection: 'row',
+    gap: 2,
+    paddingHorizontal: 1,
+  },
+  loopCountText: {
+    fontSize: 10,
+    fontWeight: '700',
+    lineHeight: 14,
   },
   regionBodyFill: {
     position: 'absolute',

@@ -123,6 +123,7 @@ import {
   getLayerContentEndTime,
   getLayerEffects,
   getLayerFootprintDuration,
+  getLayerLoopCount,
   getMemoMetronomeSettings,
   getMemoPrecountMode,
   getMemoTimelineDuration,
@@ -3364,6 +3365,7 @@ export function MemoEditor({
         if (isTrimEditing) {
           const effects = getLayerEffects(layer);
           const selectable = isLayerSelectable(effects, anySoloActive);
+          const loopCount = getLayerLoopCount(layer);
           return {
             id: layer.id,
             peaks: layer.waveformPeaks,
@@ -3374,6 +3376,8 @@ export function MemoEditor({
             isSoloed: effects.solo,
             isSoloedOut: anySoloActive && !effects.solo,
             isLocked: effects.locked,
+            isLooped: loopCount > 1,
+            loopCount: loopCount > 1 ? loopCount : undefined,
             volumeDb: effects.volumeDb,
             ...trackFadeFields(effects),
             ...trackMeta,
@@ -3385,6 +3389,7 @@ export function MemoEditor({
           const activeDuration = getLayerActiveDuration(layer);
           const footprintDuration = getLayerFootprintDuration(layer);
           const selectable = isLayerSelectable(effects, anySoloActive);
+          const loopCount = getLayerLoopCount(layer);
 
           return {
             id: layer.id,
@@ -3402,6 +3407,8 @@ export function MemoEditor({
             isSoloed: effects.solo,
             isSoloedOut: anySoloActive && !effects.solo,
             isLocked: effects.locked,
+            isLooped: loopCount > 1,
+            loopCount: loopCount > 1 ? loopCount : undefined,
             volumeDb: effects.volumeDb,
             ...trackFadeFields(effects),
             ...trackMeta,
@@ -3412,6 +3419,7 @@ export function MemoEditor({
         const activeDuration = getLayerActiveDuration(layer);
         const footprintDuration = getLayerFootprintDuration(layer);
         const selectable = isLayerSelectable(effects, anySoloActive);
+        const loopCount = getLayerLoopCount(layer);
         return {
           id: layer.id,
           peaks: slicePeaksForTrim(
@@ -3428,6 +3436,8 @@ export function MemoEditor({
           isSoloed: effects.solo,
           isSoloedOut: anySoloActive && !effects.solo,
           isLocked: effects.locked,
+          isLooped: loopCount > 1,
+          loopCount: loopCount > 1 ? loopCount : undefined,
           volumeDb: effects.volumeDb,
           ...trackFadeFields(effects),
           ...trackMeta,
@@ -3818,12 +3828,7 @@ export function MemoEditor({
     if (!loopDialogLayer) {
       return 1;
     }
-    const cycle = getLayerActiveDuration(loopDialogLayer);
-    if (cycle <= 0) {
-      return 1;
-    }
-    const footprint = getLayerFootprintDuration(loopDialogLayer);
-    return Math.max(1, Math.min(64, Math.round(footprint / cycle)));
+    return getLayerLoopCount(loopDialogLayer);
   }, [loopDialogLayer]);
 
   const handleTrackLoopDialogChange = useCallback(

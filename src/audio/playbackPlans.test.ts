@@ -6,6 +6,9 @@ import type { LoadedLayer } from '@/src/audio/MemoAudioEngine';
 import {
   buildLayerPlaybackPlans,
   filterPlaybackPlansBySilentLayer,
+  partitionPlansByHorizon,
+  PLAYBACK_SCHEDULE_CHUNK_SEC,
+  resolvePlanAgainstBuffer,
 } from '@/src/audio/playbackPlans';
 
 function makeLayer(id: string, startTime = 0, duration = 10): LoadedLayer {
@@ -91,4 +94,49 @@ test('buildLayerPlaybackPlans clips mid-loop play windows', () => {
   assert.ok(Math.abs(plans[0].bufferOffset - 1.5) < 0.001);
   assert.ok(Math.abs(plans[1].layerPlayLength - 2) < 0.001);
   assert.ok(Math.abs(plans[2].layerPlayLength - 0.5) < 0.001);
+});
+
+test('resolvePlanAgainstBuffer trusts cycle offset past first content end', () => {
+  // 10s track looped to 20s; play from 15s → planner offset 5, not rejected.
+  const layer = makeLayer('ten', 0, 10);
+  layer.loopUntil = 20;
+  const plans = buildLayerPlaybackPlans([layer], 15, 20);
+  assert.equal(plans.length, 1);
+  assert.ok(Math.abs(plans[0].bufferOffset - 5) < 0.001);
+
+  const resolved = resolvePlanAgainstBuffer(plans[0], 10);
+  assert.ok(resolved);
+  assert.ok(Math.abs(resolved!.bufferOffset - 5) < 0.001);
+  assert.ok(Math.abs(resolved!.layerPlayLength - 5) < 0.001);
+});
+
+test('resolvePlanAgainstBuffer keeps later cycles at buffer start when starting mid-cycle', () => {
+  // Start at 5s on a 10s looped track — first segment offset 5; later cycles offset 0.
+  const layer = makeLayer('ten', 0, 10);
+  layer.loopUntil = 20;
+  const plans = buildLayerPlaybackPlans([layer], 5, 20);
+  assert.equal(plans.length, 2);
+
+  const resolved = plans.map((plan) => resolvePlanAgainstBuffer(plan, 10));
+  assert.ok(resolved[0]);
+  assert.ok(resolved[1]);
+  assert.ok(Math.abs(resolved[0]!.bufferOffset - 5) < 0.001);
+  assert.ok(Math.abs(resolved[0]!.layerPlayLength - 5) < 0.001);
+  assert.equal(resolved[1]!.bufferOffset, 0);
+  assert.ok(Math.abs(resolved[1]!.layerPlayLength - 10) < 0.001);
+});
+
+test('partitionPlansByHorizon only arms segments inside the schedule window', () => {
+  const layer = makeLayer('looped', 0, 5);
+  layer.loopUntil = 40;
+  const plans = buildLayerPlaybackPlans([layer], 0, 40);
+  assert.equal(plans.length, 8);
+
+  const { ready, pending } = partitionPlansByHorizon(plans, PLAYBACK_SCHEDULE_CHUNK_SEC);
+  assert.ok(ready.every((plan) => plan.delay < PLAYBACK_SCHEDULE_CHUNK_SEC));
+  assert.ok(pending.every((plan) => plan.delay >= PLAYBACK_SCHEDULE_CHUNK_SEC));
+  assert.equal(ready.length + pending.length, plans.length);
+  // 5s cycles: delays 0,5,10 → three ready inside 12s horizon; rest pending.
+  assert.equal(ready.length, 3);
+  assert.equal(pending.length, 5);
 });
