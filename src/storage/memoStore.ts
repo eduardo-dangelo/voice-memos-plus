@@ -897,6 +897,79 @@ export async function deleteLayer(memoId: string, layerId: string): Promise<Memo
   return memo;
 }
 
+function allocateUniqueLayerFileName(
+  memo: Memo,
+  preferredOrder: number,
+  extension: '.m4a' | '.wav'
+): string {
+  const used = new Set(memo.layers.map((entry) => entry.fileName));
+  let index = preferredOrder;
+  let fileName = `layer-${index}${extension}`;
+  while (used.has(fileName)) {
+    index += 1;
+    fileName = `layer-${index}${extension}`;
+  }
+  return fileName;
+}
+
+/** Clones a layer’s audio file and metadata into a new track in the same memo. */
+export async function duplicateLayer(
+  memoId: string,
+  layerId: string
+): Promise<Memo> {
+  const memo = await getMemo(memoId);
+  if (!memo) {
+    throw new Error('Memo not found');
+  }
+
+  const source = memo.layers.find((entry) => entry.id === layerId);
+  if (!source || source.duration <= 0) {
+    throw new Error('Layer not found');
+  }
+
+  const sourceFile = requireLayerFile(memoId, source.fileName);
+  if (!sourceFile.exists) {
+    throw new Error('Layer file not found');
+  }
+
+  const order =
+    memo.layers.reduce((max, entry) => Math.max(max, entry.order), -1) + 1;
+  const extension = source.fileName.toLowerCase().endsWith('.wav')
+    ? '.wav'
+    : '.m4a';
+  const fileName = allocateUniqueLayerFileName(memo, order, extension);
+  const dest = requireLayerFile(memoId, fileName);
+  if (dest.exists) {
+    dest.delete();
+  }
+  sourceFile.copy(dest);
+
+  const layer: Layer = {
+    id: randomId(),
+    order,
+    fileName,
+    label: `${source.label} copy`,
+    color: pickRandomTrackColor(
+      memo.layers.map((entry) => entry.color ?? DEFAULT_TRACK_COLOR)
+    ),
+    startTime: source.startTime,
+    duration: source.duration,
+    ...(source.loopUntil !== undefined ? { loopUntil: source.loopUntil } : {}),
+    ...(source.waveformPeaks
+      ? { waveformPeaks: [...source.waveformPeaks] }
+      : {}),
+    ...(source.effects
+      ? { effects: JSON.parse(JSON.stringify(source.effects)) as Layer['effects'] }
+      : {}),
+  };
+
+  memo.layers.push(layer);
+  updateMemoTimeline(memo);
+  memo.updatedAt = new Date().toISOString();
+  writeManifest(memo);
+  return memo;
+}
+
 /**
  * Offline-mixes the given layers into one survivor track and deletes the rest.
  * Prefer `survivorId` (e.g. long-press anchor); otherwise lowest-order selected.

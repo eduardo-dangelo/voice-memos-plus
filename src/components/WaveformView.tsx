@@ -40,6 +40,7 @@ import {
   WAVEFORM_BAR_WIDTH,
 } from '@/src/audio/waveform';
 import { LoopColumnOverlay } from '@/src/components/LoopColumnOverlay';
+import { TRACK_ROW_ENTER, TRACK_ROW_EXIT } from '@/src/components/listTransitions';
 import {
   LOOP_EXPAND_DURATION_MS,
   LOOP_EXPAND_EASING,
@@ -1752,6 +1753,11 @@ function WaveformViewComponent({
   const [trimGestureActive, setTrimGestureActive] = useState(false);
   const [zoomGestureActive, setZoomGestureActive] = useState(false);
   const [showZoomControls, setShowZoomControls] = useState(false);
+  /** Skip enter on first paint so opening a memo does not fade every row. */
+  const [trackTransitionsReady, setTrackTransitionsReady] = useState(false);
+  useEffect(() => {
+    setTrackTransitionsReady(true);
+  }, []);
   const zoomControlsHideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const maxScrollXRef = useRef(0);
   const maxScrollYRef = useRef(0);
@@ -2812,34 +2818,48 @@ function WaveformViewComponent({
               style={{ flex: 1 }}
               onScroll={handleVerticalScroll}>
               <View style={{ height: tracksContentHeight, position: 'relative' }}>
-                {tracks.map((track, index) => (
-                  <TrackWaveformRow
-                    key={track.id}
-                    bandWidth={bandWidth}
-                    contentWidth={contentWidth}
-                    layoutDuration={layoutDuration}
-                    pixelsPerSecond={layoutPixelsPerSecond}
-                    showBottomDivider={index < tracks.length - 1}
-                    sidePadding={sidePadding}
-                    track={track}
-                    trackHeight={trackHeight}
-                    visibleTimeEnd={barPaintTimeRange.end}
-                    visibleTimeStart={barPaintTimeRange.start}
-                    fadeOverlay={fadeOverlay}
-                    moveOverlay={moveOverlay}
-                    trackLoopOverlay={trackLoopOverlay}
-                    trimOverlay={trimOverlay}
-                    trimScrollHelpers={trimScrollHelpers}
-                    onLongPress={
-                      onTrackLongPressRef.current &&
-                      track.id !== '__recording__' &&
-                      track.id !== 'empty'
-                        ? () => onTrackLongPressRef.current?.(track.id)
-                        : undefined
-                    }
-                    onPress={(locationX) => handleTrackPress(track.id, locationX)}
-                  />
-                ))}
+                {tracks.map((track, index) => {
+                  const animateTrackTransition =
+                    trackTransitionsReady &&
+                    !isRecording &&
+                    !recordingLayoutActive &&
+                    track.id !== '__recording__' &&
+                    track.id !== 'empty';
+                  return (
+                    <Animated.View
+                      key={track.id}
+                      entering={animateTrackTransition ? TRACK_ROW_ENTER : undefined}
+                      exiting={animateTrackTransition ? TRACK_ROW_EXIT : undefined}
+                      needsOffscreenAlphaCompositing
+                      style={{ width: bandWidth, height: trackHeight }}>
+                      <TrackWaveformRow
+                        bandWidth={bandWidth}
+                        contentWidth={contentWidth}
+                        layoutDuration={layoutDuration}
+                        pixelsPerSecond={layoutPixelsPerSecond}
+                        showBottomDivider={index < tracks.length - 1}
+                        sidePadding={sidePadding}
+                        track={track}
+                        trackHeight={trackHeight}
+                        visibleTimeEnd={barPaintTimeRange.end}
+                        visibleTimeStart={barPaintTimeRange.start}
+                        fadeOverlay={fadeOverlay}
+                        moveOverlay={moveOverlay}
+                        trackLoopOverlay={trackLoopOverlay}
+                        trimOverlay={trimOverlay}
+                        trimScrollHelpers={trimScrollHelpers}
+                        onLongPress={
+                          onTrackLongPressRef.current &&
+                          track.id !== '__recording__' &&
+                          track.id !== 'empty'
+                            ? () => onTrackLongPressRef.current?.(track.id)
+                            : undefined
+                        }
+                        onPress={(locationX) => handleTrackPress(track.id, locationX)}
+                      />
+                    </Animated.View>
+                  );
+                })}
                 <MetronomeTrackGrid
                   height={tracksContentHeight}
                   lines={metronomeGridLines}

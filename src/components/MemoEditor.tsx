@@ -97,6 +97,7 @@ import {
   deactivateMemoLoop,
   deleteLayer,
   deleteMemo,
+  duplicateLayer,
   duplicateMemo,
   ensureWaveformPeaks,
   getMemo,
@@ -1604,8 +1605,51 @@ export function MemoEditor({
         }
         const seekTime = Math.min(engine.getPlaybackTime(), current.duration);
         const updated = await deleteLayer(current.id, layerId);
+        memoRef.current = updated;
+        setMemo(updated);
+        setActiveLayerId((currentActive) =>
+          currentActive === layerId ? null : currentActive
+        );
+        setActiveEditor(null);
+        await loadMemoIntoEngine(engine, updated, seekTime);
+      } catch (error) {
+        Alert.alert(
+          'Delete failed',
+          error instanceof Error ? error.message : 'Unknown error'
+        );
+      }
+    },
+    [cancelEditDraft, engine, flushEffectsPersist, flushStartTimePersist, memo]
+  );
+
+  const handleDuplicateTrack = useCallback(
+    async (layerId: string) => {
+      if (!memo) {
+        return;
+      }
+
+      const target = memo.layers.find((entry) => entry.id === layerId);
+      if (!target || target.duration <= 0) {
+        return;
+      }
+      if (isLayerLocked(getLayerEffects(target))) {
+        return;
+      }
+
+      try {
+        await cancelEditDraft();
+        flushEffectsPersist();
+        flushStartTimePersist();
+        const current = memoRef.current;
+        if (!current) {
+          return;
+        }
+        const seekTime = Math.min(engine.getPlaybackTime(), current.duration);
+        const previousIds = new Set(current.layers.map((entry) => entry.id));
+        const updated = await duplicateLayer(current.id, layerId);
         const nextActiveId =
-          getPlayableLayers(updated)[0]?.id ?? updated.layers[0]?.id ?? null;
+          updated.layers.find((entry) => !previousIds.has(entry.id))?.id ??
+          layerId;
         memoRef.current = updated;
         setMemo(updated);
         setActiveLayerId(nextActiveId);
@@ -1613,7 +1657,7 @@ export function MemoEditor({
         await loadMemoIntoEngine(engine, updated, seekTime);
       } catch (error) {
         Alert.alert(
-          'Delete failed',
+          'Duplicate failed',
           error instanceof Error ? error.message : 'Unknown error'
         );
       }
@@ -1790,6 +1834,7 @@ export function MemoEditor({
       const actions: IconActionSheetItem[] = [
         { id: 'export', title: 'Export Track', systemImage: 'square.and.arrow.up' },
         { id: 'rename', title: 'Rename Track', systemImage: 'pencil' },
+        { id: 'duplicate', title: 'Duplicate Track', systemImage: 'plus.square.on.square' },
         { id: 'changeColor', title: 'Change Color', systemImage: 'paintpalette' },
         { id: 'loop', title: 'Loop Track', systemImage: 'repeat' },
         {
@@ -1932,6 +1977,12 @@ export function MemoEditor({
           setTrackMenuMergePicker(false);
           setTrackMenuRename({ layerId, label: layer.label });
           break;
+        case 'duplicate':
+          if (isLayerLocked(effects)) {
+            break;
+          }
+          void handleDuplicateTrack(layerId);
+          break;
         case 'changeColor':
           if (isLayerLocked(effects)) {
             break;
@@ -2003,6 +2054,7 @@ export function MemoEditor({
       engineState.isPlaying,
       engineState.isRecording,
       handleDeleteTrack,
+      handleDuplicateTrack,
       memo,
     ]
   );
