@@ -9,6 +9,7 @@ import type {
   NativeActionEvent,
 } from '@expo/ui/community/menu';
 import { Button, Host, Menu, Section } from '@expo/ui/swift-ui';
+import { UserInterfaceStyleView } from 'user-interface-style';
 
 export type { MenuAction, MenuComponentProps, MenuComponentRef, NativeActionEvent };
 
@@ -68,9 +69,10 @@ function renderAction(
 }
 
 /**
- * Same SwiftUI Menu transitions as `@expo/ui` MenuView, but forces Host
- * `colorScheme` from the app theme so menus stay correct inside form-sheet
- * navigation headers (where trait inheritance resolves to light).
+ * Same SwiftUI Menu transitions as `@expo/ui` MenuView, but forces app theme
+ * via UIKit `overrideUserInterfaceStyle` so native UIMenu chrome stays correct
+ * inside form-sheet navigation headers (where trait inheritance resolves to light).
+ * Host `colorScheme` still themes SwiftUI content.
  */
 export function ThemedMenuView({
   actions,
@@ -95,13 +97,14 @@ export function ThemedMenuView({
   );
 
   return (
-    <Host
-      matchContents
-      colorScheme={hostColorScheme}
-      ignoreSafeArea="all"
-      style={style}
-      testID={testID}>
-      <Menu label={trigger}>{body}</Menu>
-    </Host>
+    <UserInterfaceStyleView colorScheme={hostColorScheme} style={style}>
+      <Host
+        matchContents
+        colorScheme={hostColorScheme}
+        ignoreSafeArea="all"
+        testID={testID}>
+        <Menu label={trigger}>{body}</Menu>
+      </Host>
+    </UserInterfaceStyleView>
   );
 }

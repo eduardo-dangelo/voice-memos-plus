@@ -18,16 +18,79 @@ export type MemoOptionsMenuHandlers = {
   onDelete: () => void;
 };
 
-export type MemoOptionsMenuProps = MemoOptionsMenuHandlers & {
-  children: ReactNode;
+export type MemoOptionActionFlags = {
   includeEditRecording?: boolean;
   includeMoveToFolder?: boolean;
   includeShare?: boolean;
   includeMergeLayers?: boolean;
   includeLockTracks?: boolean;
   includeUnlockTracks?: boolean;
-  style?: StyleProp<ViewStyle>;
 };
+
+export type MemoOptionAction = {
+  id: string;
+  title: string;
+  systemImage: string;
+  destructive?: boolean;
+};
+
+export type MemoOptionsMenuProps = MemoOptionsMenuHandlers &
+  MemoOptionActionFlags & {
+    children: ReactNode;
+    style?: StyleProp<ViewStyle>;
+  };
+
+/** Shared action list for native Menu and IconActionSheet call sites. */
+export function buildMemoOptionActions({
+  includeEditRecording = true,
+  includeMoveToFolder = false,
+  includeShare = true,
+  includeMergeLayers = false,
+  includeLockTracks = false,
+  includeUnlockTracks = false,
+}: MemoOptionActionFlags = {}): MemoOptionAction[] {
+  const items: MemoOptionAction[] = [];
+  if (includeShare) {
+    items.push({ id: 'share', title: 'Export', systemImage: 'square.and.arrow.up' });
+  }
+  items.push({ id: 'rename', title: 'Rename', systemImage: 'pencil' });
+  if (includeEditRecording) {
+    items.push({ id: 'editRecording', title: 'Edit Recording', systemImage: 'waveform' });
+  }
+  if (includeMoveToFolder) {
+    items.push({ id: 'moveToFolder', title: 'Move to Folder', systemImage: 'folder' });
+  }
+  if (includeMergeLayers) {
+    items.push({
+      id: 'mergeLayers',
+      title: 'Merge Layers',
+      systemImage: 'square.stack.3d.down.right',
+    });
+  }
+  if (includeLockTracks) {
+    items.push({ id: 'lockTracks', title: 'Lock Tracks', systemImage: 'lock' });
+  }
+  if (includeUnlockTracks) {
+    items.push({ id: 'unlockTracks', title: 'Unlock Tracks', systemImage: 'lock.open' });
+  }
+  items.push({ id: 'duplicate', title: 'Duplicate', systemImage: 'plus.square.on.square' });
+  items.push({
+    id: 'delete',
+    title: 'Delete',
+    systemImage: 'trash',
+    destructive: true,
+  });
+  return items;
+}
+
+function toMenuActions(items: MemoOptionAction[]): MenuAction[] {
+  return items.map((item) => ({
+    id: item.id,
+    title: item.title,
+    image: item.systemImage,
+    attributes: item.destructive ? { destructive: true } : undefined,
+  }));
+}
 
 export function MemoOptionsMenu({
   children,
@@ -48,43 +111,27 @@ export function MemoOptionsMenu({
   onDelete,
   style,
 }: MemoOptionsMenuProps) {
-  const actions = useMemo((): MenuAction[] => {
-    const items: MenuAction[] = [];
-    if (includeShare) {
-      items.push({ id: 'share', title: 'Export', image: 'square.and.arrow.up' });
-    }
-    items.push({ id: 'rename', title: 'Rename', image: 'pencil' });
-    if (includeEditRecording) {
-      items.push({ id: 'editRecording', title: 'Edit Recording', image: 'waveform' });
-    }
-    if (includeMoveToFolder) {
-      items.push({ id: 'moveToFolder', title: 'Move to Folder', image: 'folder' });
-    }
-    if (includeMergeLayers) {
-      items.push({ id: 'mergeLayers', title: 'Merge Layers', image: 'square.stack.3d.down.right' });
-    }
-    if (includeLockTracks) {
-      items.push({ id: 'lockTracks', title: 'Lock Tracks', image: 'lock' });
-    }
-    if (includeUnlockTracks) {
-      items.push({ id: 'unlockTracks', title: 'Unlock Tracks', image: 'lock.open' });
-    }
-    items.push({ id: 'duplicate', title: 'Duplicate', image: 'plus.square.on.square' });
-    items.push({
-      id: 'delete',
-      title: 'Delete',
-      image: 'trash',
-      attributes: { destructive: true },
-    });
-    return items;
-  }, [
-    includeEditRecording,
-    includeLockTracks,
-    includeMergeLayers,
-    includeMoveToFolder,
-    includeShare,
-    includeUnlockTracks,
-  ]);
+  const actions = useMemo(
+    (): MenuAction[] =>
+      toMenuActions(
+        buildMemoOptionActions({
+          includeEditRecording,
+          includeMoveToFolder,
+          includeShare,
+          includeMergeLayers,
+          includeLockTracks,
+          includeUnlockTracks,
+        })
+      ),
+    [
+      includeEditRecording,
+      includeLockTracks,
+      includeMergeLayers,
+      includeMoveToFolder,
+      includeShare,
+      includeUnlockTracks,
+    ]
+  );
 
   return (
     <ThemedMenuView

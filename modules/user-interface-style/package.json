@@ -1,0 +1,12 @@
+{
+  "name": "user-interface-style",
+  "version": "1.0.0",
+  "description": "Force UIKit overrideUserInterfaceStyle on a view subtree (for native UIMenu theming)",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "peerDependencies": {
+    "expo": "*",
+    "react": "*",
+    "react-native": "*"
+  }
+}
