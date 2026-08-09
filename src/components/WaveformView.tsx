@@ -1226,8 +1226,6 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
   const regionBodyColor = colorWithAlpha(trackColor, 0.08);
   // Match region header label (#FFFFFF) on the tinted selected header; gray elsewhere.
   const statusIconTint = track.isActive ? '#FFFFFF' : colors.lockBadge;
-  const loopBadgeWidth =
-    track.isLooped && (track.loopCount ?? 0) >= 10 ? 34 : track.isLooped ? 28 : 0;
   const hasTrackBars = trackWidth > 0;
   const hasLiveBars = liveTrackWidth > 0;
   const fullSelectionStart =
@@ -1350,6 +1348,16 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
               {track.label}
             </Text>
           ) : null}
+          {track.isMuted ? (
+            <View pointerEvents="none" style={[styles.regionHeaderBadge, styles.mutedBadge]}>
+              <Text style={styles.mutedBadgeText}>M</Text>
+            </View>
+          ) : null}
+          {track.isSoloed ? (
+            <View pointerEvents="none" style={[styles.regionHeaderBadge, styles.soloBadge]}>
+              <Text style={styles.soloBadgeText}>S</Text>
+            </View>
+          ) : null}
           {track.isLocked ? (
             <View pointerEvents="none" style={styles.regionHeaderLock}>
               <SymbolView name={{ ios: 'lock.fill' }} size={11} tintColor={statusIconTint} />
@@ -1365,42 +1373,39 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
               ) : null}
             </View>
           ) : null}
+        </Pressable>
+      ) : trackWidth > 0 ? (
+        <View
+          pointerEvents="none"
+          style={[
+            styles.floatingStatusRow,
+            {
+              left: sidePadding + trackOffset + 4,
+              maxWidth: Math.max(0, trackWidth - 8),
+            },
+          ]}>
+          {track.showLabel && track.label ? (
+            <Text numberOfLines={1} style={styles.floatingStatusLabel}>
+              {track.label}
+            </Text>
+          ) : null}
           {track.isMuted ? (
-            <View pointerEvents="none" style={[styles.regionHeaderBadge, styles.mutedBadge]}>
+            <View style={[styles.regionHeaderBadge, styles.mutedBadge]}>
               <Text style={styles.mutedBadgeText}>M</Text>
             </View>
           ) : null}
           {track.isSoloed ? (
-            <View pointerEvents="none" style={[styles.regionHeaderBadge, styles.soloBadge]}>
+            <View style={[styles.regionHeaderBadge, styles.soloBadge]}>
               <Text style={styles.soloBadgeText}>S</Text>
             </View>
           ) : null}
-        </Pressable>
-      ) : trackWidth > 0 ? (
-        <>
           {track.isLocked ? (
-            <View
-              pointerEvents="none"
-              style={[
-                styles.floatingLock,
-                { left: sidePadding + trackOffset + 4 },
-              ]}>
+            <View style={styles.regionHeaderLock}>
               <SymbolView name={{ ios: 'lock.fill' }} size={11} tintColor={statusIconTint} />
             </View>
           ) : null}
           {track.isLooped ? (
-            <View
-              pointerEvents="none"
-              style={[
-                styles.floatingLock,
-                styles.floatingLoop,
-                {
-                  left:
-                    sidePadding +
-                    trackOffset +
-                    (track.isLocked ? 22 : 4),
-                },
-              ]}>
+            <View style={[styles.regionHeaderLock, styles.regionHeaderLoop]}>
               <SymbolView name={{ ios: 'repeat' }} size={11} tintColor={statusIconTint} />
               {track.loopCount != null && track.loopCount > 1 ? (
                 <Text style={[styles.loopCountText, { color: statusIconTint }]}>
@@ -1409,73 +1414,7 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
               ) : null}
             </View>
           ) : null}
-          {track.isMuted ? (
-            <View
-              pointerEvents="none"
-              style={[
-                styles.floatingBadge,
-                styles.mutedBadge,
-                {
-                  left:
-                    sidePadding +
-                    trackOffset +
-                    4 +
-                    (track.isLocked ? 18 : 0) +
-                    loopBadgeWidth,
-                },
-              ]}>
-              <Text style={styles.mutedBadgeText}>M</Text>
-            </View>
-          ) : null}
-          {track.isSoloed ? (
-            <View
-              pointerEvents="none"
-              style={[
-                styles.floatingBadge,
-                styles.soloBadge,
-                {
-                  left:
-                    sidePadding +
-                    trackOffset +
-                    4 +
-                    (track.isLocked ? 18 : 0) +
-                    loopBadgeWidth +
-                    (track.isMuted ? 22 : 0),
-                },
-              ]}>
-              <Text style={styles.soloBadgeText}>S</Text>
-            </View>
-          ) : null}
-          {track.showLabel && track.label ? (
-            <Text
-              numberOfLines={1}
-              pointerEvents="none"
-              style={[
-                styles.floatingTrackLabel,
-                {
-                  left:
-                    sidePadding +
-                    trackOffset +
-                    4 +
-                    (track.isLocked ? 18 : 0) +
-                    loopBadgeWidth +
-                    (track.isMuted ? 22 : 0) +
-                    (track.isSoloed ? 22 : 0),
-                  maxWidth: Math.max(
-                    0,
-                    trackWidth -
-                      8 -
-                      (track.isLocked ? 18 : 0) -
-                      loopBadgeWidth -
-                      (track.isMuted ? 22 : 0) -
-                      (track.isSoloed ? 22 : 0)
-                  ),
-                },
-              ]}>
-              {track.label}
-            </Text>
-          ) : null}
-        </>
+        </View>
       ) : null}
       {trackWidth > 0 || liveTrackWidth > 0 || replaceTailDimWidth > 0 ? (
         <View pointerEvents="none" style={styles.barsOverlay}>
@@ -3141,6 +3080,19 @@ function createWaveformStyles(colors: VoiceMemosColorScheme) {
     color: colors.secondaryText,
     zIndex: 5,
   },
+  floatingStatusRow: {
+    position: 'absolute',
+    top: 3,
+    zIndex: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    overflow: 'hidden',
+  },
+  floatingStatusLabel: {
+    flexShrink: 1,
+    fontSize: 11,
+    color: colors.secondaryText,
+  },
   floatingBadge: {
     position: 'absolute',
     top: 4,
@@ -3193,35 +3145,35 @@ function createWaveformStyles(colors: VoiceMemosColorScheme) {
   },
   mutedBadge: {
     zIndex: 6,
-    minWidth: 18,
-    height: 16,
-    borderRadius: 3,
-    paddingHorizontal: 4,
+    minWidth: 14,
+    height: 13,
+    borderRadius: 2,
+    paddingHorizontal: 3,
     backgroundColor: colors.secondaryText,
     alignItems: 'center',
     justifyContent: 'center',
   },
   mutedBadgeText: {
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: '700',
     color: colors.background,
-    lineHeight: 12,
+    lineHeight: 11,
   },
   soloBadge: {
     zIndex: 6,
-    minWidth: 18,
-    height: 16,
-    borderRadius: 3,
-    paddingHorizontal: 4,
+    minWidth: 14,
+    height: 13,
+    borderRadius: 2,
+    paddingHorizontal: 3,
     backgroundColor: colors.soloBadge,
     alignItems: 'center',
     justifyContent: 'center',
   },
   soloBadgeText: {
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: '700',
     color: colors.soloBadgeText,
-    lineHeight: 12,
+    lineHeight: 11,
   },
   dimRegion: {
     position: 'absolute',

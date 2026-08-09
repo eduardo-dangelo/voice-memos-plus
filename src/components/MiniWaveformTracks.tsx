@@ -363,70 +363,46 @@ export function MiniWaveformTracks({
                   ))}
                 </View>
               ) : null}
-              {lane.trackWidth > 0 && lane.isLocked ? (
-                <View
-                  pointerEvents="none"
-                  style={[styles.floatingLock, { left: lane.left + 4 }]}>
-                  <SymbolView name={{ ios: 'lock.fill' }} size={11} tintColor={colors.lockBadge} />
-                </View>
-              ) : null}
-              {lane.trackWidth > 0 && lane.isLooped ? (
+              {lane.trackWidth > 0 ? (
                 <View
                   pointerEvents="none"
                   style={[
-                    styles.floatingLock,
-                    styles.floatingLoop,
-                    { left: lane.left + (lane.isLocked ? 22 : 4) },
+                    styles.floatingStatusRow,
+                    { left: lane.left + 4, maxWidth: Math.max(0, lane.trackWidth - 8) },
                   ]}>
-                  <SymbolView name={{ ios: 'repeat' }} size={11} tintColor={colors.lockBadge} />
-                  {lane.loopCount != null && lane.loopCount > 1 ? (
-                    <Text style={[styles.loopCountText, { color: colors.lockBadge }]}>
-                      {lane.loopCount}×
-                    </Text>
+                  {lane.isMuted ? (
+                    <View style={[styles.inlineBadge, styles.mutedBadge]}>
+                      <Text style={styles.mutedBadgeText}>M</Text>
+                    </View>
                   ) : null}
-                </View>
-              ) : null}
-              {lane.trackWidth > 0 && lane.isMuted ? (
-                <View
-                  pointerEvents="none"
-                  style={[
-                    styles.floatingBadge,
-                    styles.mutedBadge,
-                    {
-                      left:
-                        lane.left +
-                        4 +
-                        (lane.isLocked ? 18 : 0) +
-                        (lane.isLooped
-                          ? (lane.loopCount ?? 0) >= 10
-                            ? 34
-                            : 28
-                          : 0),
-                    },
-                  ]}>
-                  <Text style={styles.mutedBadgeText}>M</Text>
-                </View>
-              ) : null}
-              {lane.trackWidth > 0 && lane.isSoloed ? (
-                <View
-                  pointerEvents="none"
-                  style={[
-                    styles.floatingBadge,
-                    styles.soloBadge,
-                    {
-                      left:
-                        lane.left +
-                        4 +
-                        (lane.isLocked ? 18 : 0) +
-                        (lane.isLooped
-                          ? (lane.loopCount ?? 0) >= 10
-                            ? 34
-                            : 28
-                          : 0) +
-                        (lane.isMuted ? 22 : 0),
-                    },
-                  ]}>
-                  <Text style={styles.soloBadgeText}>S</Text>
+                  {lane.isSoloed ? (
+                    <View style={[styles.inlineBadge, styles.soloBadge]}>
+                      <Text style={styles.soloBadgeText}>S</Text>
+                    </View>
+                  ) : null}
+                  {lane.isLocked ? (
+                    <View style={styles.inlineLock}>
+                      <SymbolView
+                        name={{ ios: 'lock.fill' }}
+                        size={11}
+                        tintColor={colors.lockBadge}
+                      />
+                    </View>
+                  ) : null}
+                  {lane.isLooped ? (
+                    <View style={[styles.inlineLock, styles.inlineLoop]}>
+                      <SymbolView
+                        name={{ ios: 'repeat' }}
+                        size={11}
+                        tintColor={colors.lockBadge}
+                      />
+                      {lane.loopCount != null && lane.loopCount > 1 ? (
+                        <Text style={[styles.loopCountText, { color: colors.lockBadge }]}>
+                          {lane.loopCount}×
+                        </Text>
+                      ) : null}
+                    </View>
+                  ) : null}
                 </View>
               ) : null}
             </View>
@@ -503,6 +479,32 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           gap: 2,
           paddingHorizontal: 1,
         },
+        floatingStatusRow: {
+          position: 'absolute',
+          top: 3,
+          zIndex: 6,
+          flexDirection: 'row',
+          alignItems: 'center',
+          overflow: 'hidden',
+        },
+        inlineBadge: {
+          marginLeft: 4,
+        },
+        inlineLock: {
+          marginLeft: 4,
+          zIndex: 6,
+          width: 14,
+          height: 16,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        inlineLoop: {
+          width: 'auto',
+          minWidth: 14,
+          flexDirection: 'row',
+          gap: 2,
+          paddingHorizontal: 1,
+        },
         loopCountText: {
           fontSize: 10,
           fontWeight: '700',
@@ -510,35 +512,35 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
         },
         mutedBadge: {
           zIndex: 6,
-          minWidth: 18,
-          height: 16,
-          borderRadius: 3,
-          paddingHorizontal: 4,
+          minWidth: 14,
+          height: 13,
+          borderRadius: 2,
+          paddingHorizontal: 3,
           backgroundColor: colors.secondaryText,
           alignItems: 'center',
           justifyContent: 'center',
         },
         mutedBadgeText: {
-          fontSize: 10,
+          fontSize: 9,
           fontWeight: '700',
           color: colors.background,
-          lineHeight: 12,
+          lineHeight: 11,
         },
         soloBadge: {
           zIndex: 6,
-          minWidth: 18,
-          height: 16,
-          borderRadius: 3,
-          paddingHorizontal: 4,
+          minWidth: 14,
+          height: 13,
+          borderRadius: 2,
+          paddingHorizontal: 3,
           backgroundColor: colors.soloBadge,
           alignItems: 'center',
           justifyContent: 'center',
         },
         soloBadgeText: {
-          fontSize: 10,
+          fontSize: 9,
           fontWeight: '700',
           color: colors.soloBadgeText,
-          lineHeight: 12,
+          lineHeight: 11,
         },
         playhead: {
           position: 'absolute',
