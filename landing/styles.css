@@ -217,8 +217,22 @@ img {
 }
 
 html:not([data-theme='dark']) .theme-toggle-icon--moon,
-html[data-theme='dark'] .theme-toggle-icon--sun {
+html[data-theme='dark'] .theme-toggle-icon--sun,
+html:not([data-device='ipad']) .theme-toggle-icon--tablet,
+html[data-device='ipad'] .theme-toggle-icon--phone {
   display: block;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .brand-mark .brand-logo {
@@ -323,6 +337,10 @@ html[data-theme='dark'] .hero-backdrop {
   grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.9fr);
   gap: 40px;
   align-items: center;
+}
+
+html[data-device='ipad'] .hero-content {
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.15fr);
 }
 
 .eyebrow {
@@ -443,9 +461,9 @@ html[data-theme='dark'] .button.primary {
 }
 
 .hero-device {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: grid;
+  place-items: center;
+  justify-items: center;
 }
 
 /* —— iPhone Pro hardware frame —— */
@@ -594,6 +612,205 @@ html[data-theme='dark'] .iphone-frame__body {
   border-radius: 0 2px 2px 0;
 }
 
+/* —— iPad Pro landscape hardware frame —— */
+.ipad-frame {
+  --ipad-width: 520px;
+  --ipad-bezel: 14px;
+  --ipad-radius: 28px;
+  --ipad-screen-radius: 12px;
+  --ipad-metal: linear-gradient(
+    145deg,
+    #f4f5f7 0%,
+    #c8c9ce 18%,
+    #e8e9ed 42%,
+    #a8abb3 58%,
+    #d5d6db 78%,
+    #f0f1f4 100%
+  );
+  --ipad-metal-edge: #9a9da6;
+  --ipad-btn: linear-gradient(180deg, #d8d9de, #9ea1a9 45%, #b8bbc2);
+  --ipad-shadow:
+    0 2px 4px rgba(0, 0, 0, 0.08),
+    0 18px 40px rgba(27, 42, 74, 0.18),
+    0 40px 80px rgba(27, 42, 74, 0.12);
+
+  position: relative;
+  width: min(var(--ipad-width), 100%);
+  margin: 0;
+  padding: 0 12px;
+  box-sizing: content-box;
+  filter: drop-shadow(0 22px 44px rgba(27, 42, 74, 0.2));
+}
+
+.ipad-frame--hero {
+  --ipad-width: 560px;
+}
+
+html[data-theme='dark'] .ipad-frame {
+  --ipad-metal: linear-gradient(
+    145deg,
+    #4a4d55 0%,
+    #2a2c32 18%,
+    #3a3d45 40%,
+    #1c1e24 58%,
+    #32353c 78%,
+    #4e515a 100%
+  );
+  --ipad-metal-edge: #1a1c20;
+  --ipad-btn: linear-gradient(180deg, #5a5d66, #2e3036 45%, #454850);
+  --ipad-shadow:
+    0 2px 4px rgba(0, 0, 0, 0.35),
+    0 18px 40px rgba(0, 0, 0, 0.45),
+    0 40px 80px rgba(0, 0, 0, 0.35);
+  filter: drop-shadow(0 22px 48px rgba(0, 0, 0, 0.55));
+}
+
+.ipad-frame__body {
+  position: relative;
+  padding: var(--ipad-bezel);
+  border-radius: var(--ipad-radius);
+  background: var(--ipad-metal);
+  box-shadow:
+    var(--ipad-shadow),
+    inset 0 1px 1px rgba(255, 255, 255, 0.55),
+    inset 0 -1px 1px rgba(0, 0, 0, 0.22),
+    inset 1px 0 1px rgba(255, 255, 255, 0.25),
+    inset -1px 0 1px rgba(0, 0, 0, 0.18);
+  border: 1px solid var(--ipad-metal-edge);
+}
+
+html[data-theme='dark'] .ipad-frame__body {
+  box-shadow:
+    var(--ipad-shadow),
+    inset 0 1px 1px rgba(255, 255, 255, 0.18),
+    inset 0 -1px 1px rgba(0, 0, 0, 0.5),
+    inset 1px 0 1px rgba(255, 255, 255, 0.08),
+    inset -1px 0 1px rgba(0, 0, 0, 0.4);
+}
+
+.ipad-frame__body::before {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  border-radius: calc(var(--ipad-radius) - 3px);
+  pointer-events: none;
+  box-shadow:
+    inset 0 0 0 1.5px #0a0a0c,
+    inset 0 0 0 2.5px rgba(255, 255, 255, 0.12);
+  z-index: 2;
+}
+
+.ipad-frame__camera {
+  position: absolute;
+  top: 50%;
+  left: 7px;
+  width: 8px;
+  height: 8px;
+  margin-top: -4px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #3a3d45, #0a0a0c 70%);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  z-index: 3;
+}
+
+.ipad-frame__screen {
+  position: relative;
+  z-index: 1;
+  overflow: hidden;
+  border-radius: var(--ipad-screen-radius);
+  background: #000;
+  line-height: 0;
+  isolation: isolate;
+  aspect-ratio: 4 / 3;
+}
+
+.ipad-frame__screen img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+}
+
+.ipad-frame__btn {
+  position: absolute;
+  background: var(--ipad-btn);
+  border-radius: 2px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.35);
+  z-index: 0;
+}
+
+.ipad-frame__btn--vol-up {
+  top: 2px;
+  left: 18%;
+  width: 7%;
+  height: 3px;
+  border-radius: 2px 2px 0 0;
+}
+
+.ipad-frame__btn--vol-down {
+  top: 2px;
+  left: 27%;
+  width: 7%;
+  height: 3px;
+  border-radius: 2px 2px 0 0;
+}
+
+.ipad-frame__btn--power {
+  top: 2px;
+  right: 18%;
+  width: 9%;
+  height: 3px;
+  border-radius: 2px 2px 0 0;
+}
+
+.hero-device > .iphone-frame,
+.hero-device > .ipad-frame,
+.feature-visual > .iphone-frame,
+.feature-visual > .ipad-frame {
+  grid-area: 1 / 1;
+  transition:
+    opacity 520ms ease,
+    transform 520ms ease,
+    visibility 520ms ease;
+}
+
+html:not([data-device='ipad']) .iphone-frame,
+html[data-device='ipad'] .ipad-frame {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0) scale(1);
+  z-index: 1;
+}
+
+html:not([data-device='ipad']) .ipad-frame {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateX(18px) scale(0.96);
+  z-index: 0;
+}
+
+html[data-device='ipad'] .iphone-frame {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateX(-18px) scale(0.96);
+  z-index: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-device > .iphone-frame,
+  .hero-device > .ipad-frame,
+  .feature-visual > .iphone-frame,
+  .feature-visual > .ipad-frame {
+    transition: opacity 120ms ease, visibility 120ms ease;
+    transform: none !important;
+  }
+}
+
 .section {
   padding: 72px 0;
 }
@@ -606,6 +823,7 @@ html[data-theme='dark'] .iphone-frame__body {
   );
   border-top: 1px solid var(--border-subtle);
   border-bottom: 1px solid var(--border-subtle);
+  scroll-margin-top: 72px;
 }
 
 .section-header {
@@ -661,6 +879,12 @@ html[data-theme='dark'] .iphone-frame__body {
   outline-offset: 2px;
 }
 
+.feature-card-link.is-active {
+  border-color: var(--accent-sky);
+  box-shadow: var(--shadow-soft);
+  transform: translateY(-2px);
+}
+
 .feature-card h3 {
   font-size: 16px;
   margin: 0 0 8px;
@@ -673,13 +897,120 @@ html[data-theme='dark'] .iphone-frame__body {
   line-height: 1.5;
 }
 
-.section-feature {
+.section-slideshow {
   background: var(--section-feature-bg);
   border-top: 1px solid var(--border-subtle);
+  scroll-margin-top: 72px;
 }
 
-.section-feature-alt {
-  background: var(--section-feature-alt-bg);
+.feature-slideshow {
+  outline: none;
+}
+
+.feature-slideshow:focus-visible {
+  outline: 2px solid var(--accent-sky);
+  outline-offset: 4px;
+  border-radius: var(--radius-md);
+}
+
+.feature-slideshow__viewport {
+  position: relative;
+  min-height: 420px;
+}
+
+.feature-slide {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(10px);
+  scroll-margin-top: 72px;
+  transition:
+    opacity 260ms ease-out,
+    transform 260ms ease-out,
+    visibility 260ms ease-out;
+}
+
+.feature-slide.is-active {
+  position: relative;
+  inset: auto;
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.feature-slideshow__controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 28px;
+}
+
+.slideshow-nav {
+  appearance: none;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-ghost);
+  color: var(--text-main);
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 100ms ease-out, border-color 140ms ease-out,
+    background 140ms ease-out;
+}
+
+.slideshow-nav:hover,
+.slideshow-nav:focus-visible {
+  transform: translateY(-1px);
+  border-color: var(--accent-sky);
+}
+
+.slideshow-nav:focus-visible {
+  outline: 2px solid var(--accent-sky);
+  outline-offset: 2px;
+}
+
+.feature-slideshow__dots {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  max-width: 280px;
+}
+
+.slideshow-dot {
+  appearance: none;
+  border: 0;
+  padding: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--border-strong);
+  cursor: pointer;
+  transition: transform 140ms ease-out, background 140ms ease-out,
+    width 140ms ease-out;
+}
+
+.slideshow-dot.is-active {
+  width: 22px;
+  background: var(--accent-sky);
+}
+
+.slideshow-dot:hover,
+.slideshow-dot:focus-visible {
+  background: var(--accent-primary);
+}
+
+.slideshow-dot:focus-visible {
+  outline: 2px solid var(--accent-sky);
+  outline-offset: 2px;
 }
 
 .feature-layout {
@@ -689,8 +1020,8 @@ html[data-theme='dark'] .iphone-frame__body {
   align-items: center;
 }
 
-.feature-layout--reverse {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+html[data-device='ipad'] .feature-layout {
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.2fr);
 }
 
 .feature-copy h2 {
@@ -719,8 +1050,9 @@ html[data-theme='dark'] .iphone-frame__body {
 }
 
 .feature-visual {
-  display: flex;
-  justify-content: center;
+  display: grid;
+  place-items: center;
+  justify-items: center;
 }
 
 .site-footer {
@@ -792,7 +1124,7 @@ html[data-theme='dark'] .iphone-frame__body {
 
   .hero-device {
     margin-top: 28px;
-    justify-content: flex-start;
+    justify-items: start;
   }
 
   .features-grid {
@@ -800,12 +1132,21 @@ html[data-theme='dark'] .iphone-frame__body {
   }
 
   .feature-layout,
-  .feature-layout--reverse {
+  html[data-device='ipad'] .feature-layout {
     grid-template-columns: minmax(0, 1fr);
   }
 
   .feature-visual {
-    justify-content: flex-start;
+    justify-items: start;
+  }
+
+  .feature-slideshow__viewport {
+    min-height: 0;
+  }
+
+  .ipad-frame,
+  .ipad-frame--hero {
+    --ipad-width: 100%;
   }
 }
 
@@ -847,9 +1188,12 @@ html[data-theme='dark'] .iphone-frame__body {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .feature-layout,
-  .feature-layout--reverse {
+  .feature-layout {
     gap: 24px;
+  }
+
+  .feature-slideshow__controls {
+    gap: 12px;
   }
 }
 

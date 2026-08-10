@@ -15,6 +15,22 @@
     }
   }
 
+  function getStoredDevice() {
+    try {
+      return localStorage.getItem('vmp-device');
+    } catch {
+      return null;
+    }
+  }
+
+  function storeDevice(device) {
+    try {
+      localStorage.setItem('vmp-device', device);
+    } catch {
+      /* ignore quota / private mode */
+    }
+  }
+
   function resolveTheme() {
     const stored = getStoredTheme();
     if (stored === 'light' || stored === 'dark') return stored;
@@ -22,12 +38,25 @@
     return 'light';
   }
 
-  function applyThemeShots(theme) {
+  function resolveDevice() {
+    const stored = getStoredDevice();
+    if (stored === 'iphone' || stored === 'ipad') return stored;
+    return 'iphone';
+  }
+
+  function shotAttr(device, theme) {
+    return 'data-' + device + '-' + theme + '-src';
+  }
+
+  function applyShots() {
+    const theme =
+      document.documentElement.getAttribute('data-theme') === 'dark'
+        ? 'dark'
+        : 'light';
+
     document.querySelectorAll('.theme-shot').forEach((img) => {
-      const nextSrc =
-        theme === 'dark'
-          ? img.getAttribute('data-dark-src')
-          : img.getAttribute('data-light-src');
+      const device = img.closest('.ipad-frame') ? 'ipad' : 'iphone';
+      const nextSrc = img.getAttribute(shotAttr(device, theme));
       if (nextSrc && img.getAttribute('src') !== nextSrc) {
         img.setAttribute('src', nextSrc);
       }
@@ -36,7 +65,7 @@
 
   function applyTheme(theme) {
     document.documentElement.setAttribute('data-theme', theme);
-    applyThemeShots(theme);
+    applyShots();
 
     document.querySelectorAll('[data-theme-toggle]').forEach((btn) => {
       const isDark = theme === 'dark';
@@ -48,8 +77,32 @@
     });
   }
 
+  function applyDevice(device) {
+    document.documentElement.setAttribute('data-device', device);
+    applyShots();
+
+    document.querySelectorAll('[data-device-toggle]').forEach((btn) => {
+      const isIpad = device === 'ipad';
+      btn.setAttribute('aria-pressed', String(isIpad));
+      btn.setAttribute(
+        'aria-label',
+        isIpad ? 'Switch to iPhone' : 'Switch to iPad'
+      );
+    });
+  }
+
   // Script is at end of body — apply screenshot sources before paint settles.
   applyTheme(resolveTheme());
+  applyDevice(resolveDevice());
+
+  document.querySelectorAll('.theme-shot').forEach((img) => {
+    img.addEventListener('error', () => {
+      img.style.visibility = 'hidden';
+    });
+    img.addEventListener('load', () => {
+      img.style.visibility = '';
+    });
+  });
 
   document.addEventListener('DOMContentLoaded', () => {
     const yearEl = document.getElementById('year');
@@ -103,5 +156,152 @@
         applyTheme(next);
       });
     });
+
+    document.querySelectorAll('[data-device-toggle]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const current =
+          document.documentElement.getAttribute('data-device') === 'ipad'
+            ? 'ipad'
+            : 'iphone';
+        const next = current === 'ipad' ? 'iphone' : 'ipad';
+        storeDevice(next);
+        applyDevice(next);
+      });
+    });
+
+    initSlideshow();
   });
+
+  function initSlideshow() {
+    const root = document.querySelector('[data-slideshow]');
+    if (!root) return;
+
+    const slides = Array.from(root.querySelectorAll('[data-slide-id]'));
+    if (!slides.length) return;
+
+    const prevBtn = root.querySelector('[data-slideshow-prev]');
+    const nextBtn = root.querySelector('[data-slideshow-next]');
+    const dots = Array.from(root.querySelectorAll('[data-slideshow-dot]'));
+    const cards = Array.from(
+      document.querySelectorAll('[data-slide-target]')
+    );
+    const live = root.querySelector('[data-slideshow-live]');
+
+    let index = 0;
+    let syncingHash = false;
+
+    function slideIndexById(id) {
+      return slides.findIndex((slide) => slide.getAttribute('data-slide-id') === id);
+    }
+
+    function setSlide(nextIndex, options) {
+      const opts = options || {};
+      const total = slides.length;
+      const clamped = ((nextIndex % total) + total) % total;
+      index = clamped;
+
+      slides.forEach((slide, i) => {
+        const active = i === index;
+        slide.classList.toggle('is-active', active);
+        slide.setAttribute('aria-hidden', String(!active));
+      });
+
+      dots.forEach((dot, i) => {
+        const active = i === index;
+        dot.classList.toggle('is-active', active);
+        dot.setAttribute('aria-selected', String(active));
+        dot.setAttribute('tabindex', active ? '0' : '-1');
+      });
+
+      const activeId = slides[index].getAttribute('data-slide-id');
+      cards.forEach((card) => {
+        const match = card.getAttribute('data-slide-target') === activeId;
+        card.classList.toggle('is-active', match);
+        if (match) {
+          card.setAttribute('aria-current', 'true');
+        } else {
+          card.removeAttribute('aria-current');
+        }
+      });
+
+      if (live) {
+        const label =
+          slides[index].querySelector('.eyebrow')?.textContent?.trim() ||
+          'Feature ' + (index + 1);
+        live.textContent = 'Showing ' + label + ', slide ' + (index + 1) + ' of ' + total;
+      }
+
+      if (opts.updateHash !== false && activeId) {
+        syncingHash = true;
+        const url = new URL(window.location.href);
+        url.hash = activeId;
+        history.replaceState(null, '', url.pathname + url.search + '#' + activeId);
+        syncingHash = false;
+      }
+
+      if (opts.scroll) {
+        const target =
+          document.getElementById('feature-slideshow') || root;
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
+
+    function go(delta) {
+      setSlide(index + delta, { updateHash: true });
+    }
+
+    if (prevBtn) prevBtn.addEventListener('click', () => go(-1));
+    if (nextBtn) nextBtn.addEventListener('click', () => go(1));
+
+    dots.forEach((dot, i) => {
+      dot.addEventListener('click', () => {
+        setSlide(i, { updateHash: true });
+      });
+    });
+
+    cards.forEach((card) => {
+      card.addEventListener('click', (event) => {
+        const id = card.getAttribute('data-slide-target');
+        const slideIndex = slideIndexById(id);
+        if (slideIndex < 0) return;
+        event.preventDefault();
+        setSlide(slideIndex, { updateHash: true, scroll: true });
+      });
+    });
+
+    root.addEventListener('keydown', (event) => {
+      if (event.key === 'ArrowLeft') {
+        event.preventDefault();
+        go(-1);
+      } else if (event.key === 'ArrowRight') {
+        event.preventDefault();
+        go(1);
+      }
+    });
+
+    function applyHash() {
+      if (syncingHash) return;
+      const hash = window.location.hash.replace(/^#/, '');
+      if (!hash) return;
+      const slideIndex = slideIndexById(hash);
+      if (slideIndex >= 0) {
+        setSlide(slideIndex, { updateHash: false });
+      }
+    }
+
+    window.addEventListener('hashchange', applyHash);
+
+    const initialHash = window.location.hash.replace(/^#/, '');
+    const initialIndex = slideIndexById(initialHash);
+    setSlide(initialIndex >= 0 ? initialIndex : 0, {
+      updateHash: initialIndex >= 0,
+    });
+
+    if (initialIndex >= 0) {
+      requestAnimationFrame(() => {
+        const target = document.getElementById('feature-slideshow');
+        if (target) target.scrollIntoView({ behavior: 'auto', block: 'start' });
+      });
+    }
+  }
 })();

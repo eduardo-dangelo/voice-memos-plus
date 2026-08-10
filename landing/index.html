@@ -12,15 +12,25 @@
     <script>
       (function () {
         try {
-          var stored = localStorage.getItem('vmp-theme');
+          var storedTheme = localStorage.getItem('vmp-theme');
           var theme =
-            stored ||
+            storedTheme ||
             (window.matchMedia('(prefers-color-scheme: dark)').matches
               ? 'dark'
               : 'light');
           document.documentElement.setAttribute('data-theme', theme);
         } catch (e) {
           document.documentElement.setAttribute('data-theme', 'light');
+        }
+        try {
+          var storedDevice = localStorage.getItem('vmp-device');
+          var device =
+            storedDevice === 'ipad' || storedDevice === 'iphone'
+              ? storedDevice
+              : 'iphone';
+          document.documentElement.setAttribute('data-device', device);
+        } catch (e) {
+          document.documentElement.setAttribute('data-device', 'iphone');
         }
       })();
     </script>
@@ -43,6 +53,24 @@
             <a href="#features" class="nav-link">Features</a>
             <a href="privacy.html" class="nav-link">Privacy</a>
           </nav>
+          <button
+            type="button"
+            class="theme-toggle"
+            data-device-toggle
+            aria-label="Switch to iPad"
+            aria-pressed="false"
+          >
+            <span class="theme-toggle-icon theme-toggle-icon--phone" aria-hidden="true">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                <path d="M15.5 1h-7A2.5 2.5 0 0 0 6 3.5v17A2.5 2.5 0 0 0 8.5 23h7a2.5 2.5 0 0 0 2.5-2.5v-17A2.5 2.5 0 0 0 15.5 1zm-3.5 20a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5zM16 18H8V4h8v14z" />
+              </svg>
+            </span>
+            <span class="theme-toggle-icon theme-toggle-icon--tablet" aria-hidden="true">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                <path d="M20.5 4h-17A2.5 2.5 0 0 0 1 6.5v11A2.5 2.5 0 0 0 3.5 20h17a2.5 2.5 0 0 0 2.5-2.5v-11A2.5 2.5 0 0 0 20.5 4zM12 18.25a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5zM21 15H3V7h18v8z" />
+              </svg>
+            </span>
+          </button>
           <button
             type="button"
             class="theme-toggle"
@@ -101,9 +129,11 @@
                 <div class="iphone-frame__screen">
                   <img
                     class="theme-shot"
-                    src="./assets/screenshots/light/hero.png"
-                    data-light-src="./assets/screenshots/light/hero.png"
-                    data-dark-src="./assets/screenshots/dark/hero.png"
+                    src="./assets/screenshots/iphone/light/hero.png"
+                    data-iphone-light-src="./assets/screenshots/iphone/light/hero.png"
+                    data-iphone-dark-src="./assets/screenshots/iphone/dark/hero.png"
+                    data-ipad-light-src="./assets/screenshots/ipad/light/hero.png"
+                    data-ipad-dark-src="./assets/screenshots/ipad/dark/hero.png"
                     alt="Voice Memos Plus multi-track editor"
                     width="1179"
                     height="2556"
@@ -114,6 +144,27 @@
               <span class="iphone-frame__btn iphone-frame__btn--vol-up" aria-hidden="true"></span>
               <span class="iphone-frame__btn iphone-frame__btn--vol-down" aria-hidden="true"></span>
               <span class="iphone-frame__btn iphone-frame__btn--power" aria-hidden="true"></span>
+            </figure>
+            <figure class="ipad-frame ipad-frame--hero">
+              <div class="ipad-frame__body">
+                <div class="ipad-frame__camera" aria-hidden="true"></div>
+                <div class="ipad-frame__screen">
+                  <img
+                    class="theme-shot"
+                    src="./assets/screenshots/ipad/light/hero.png"
+                    data-iphone-light-src="./assets/screenshots/iphone/light/hero.png"
+                    data-iphone-dark-src="./assets/screenshots/iphone/dark/hero.png"
+                    data-ipad-light-src="./assets/screenshots/ipad/light/hero.png"
+                    data-ipad-dark-src="./assets/screenshots/ipad/dark/hero.png"
+                    alt="Voice Memos Plus multi-track editor on iPad"
+                    width="2732"
+                    height="2048"
+                  />
+                </div>
+              </div>
+              <span class="ipad-frame__btn ipad-frame__btn--vol-up" aria-hidden="true"></span>
+              <span class="ipad-frame__btn ipad-frame__btn--vol-down" aria-hidden="true"></span>
+              <span class="ipad-frame__btn ipad-frame__btn--power" aria-hidden="true"></span>
             </figure>
           </div>
         </div>
@@ -131,43 +182,43 @@
           </header>
 
           <div class="features-grid">
-            <a href="#stack" class="feature-card feature-card-link fade-on-scroll">
+            <a href="#stack" class="feature-card feature-card-link fade-on-scroll" data-slide-target="stack">
               <h3>Stack</h3>
               <p>Overdub new layers while monitoring the mix.</p>
             </a>
-            <a href="#edit" class="feature-card feature-card-link fade-on-scroll">
+            <a href="#edit" class="feature-card feature-card-link fade-on-scroll" data-slide-target="edit">
               <h3>Edit track</h3>
               <p>Trim, move, volume, mute, and solo per layer.</p>
             </a>
-            <a href="#effects" class="feature-card feature-card-link fade-on-scroll">
+            <a href="#effects" class="feature-card feature-card-link fade-on-scroll" data-slide-target="effects">
               <h3>Effects</h3>
               <p>Reverb, delay, and EQ on every track.</p>
             </a>
-            <a href="#fade" class="feature-card feature-card-link fade-on-scroll">
+            <a href="#fade" class="feature-card feature-card-link fade-on-scroll" data-slide-target="fade">
               <h3>Fade</h3>
               <p>Soft fade-ins and clean fade-outs.</p>
             </a>
-            <a href="#long-press-track-menu" class="feature-card feature-card-link fade-on-scroll">
+            <a href="#long-press-track-menu" class="feature-card feature-card-link fade-on-scroll" data-slide-target="long-press-track-menu">
               <h3>Long press track menu</h3>
               <p>Hold a track for rename, color, merge, and more.</p>
             </a>
-            <a href="#loop" class="feature-card feature-card-link fade-on-scroll">
+            <a href="#loop" class="feature-card feature-card-link fade-on-scroll" data-slide-target="loop">
               <h3>Loop</h3>
               <p>Repeat a timeline region while you refine.</p>
             </a>
-            <a href="#loop-track" class="feature-card feature-card-link fade-on-scroll">
+            <a href="#loop-track" class="feature-card feature-card-link fade-on-scroll" data-slide-target="loop-track">
               <h3>Loop track</h3>
               <p>Stretch a short take into a lasting bed.</p>
             </a>
-            <a href="#metronome" class="feature-card feature-card-link fade-on-scroll">
+            <a href="#metronome" class="feature-card feature-card-link fade-on-scroll" data-slide-target="metronome">
               <h3>Metronome &amp; grid</h3>
               <p>BPM, precount, and beat lines on the timeline.</p>
             </a>
-            <a href="#merge" class="feature-card feature-card-link fade-on-scroll">
+            <a href="#merge" class="feature-card feature-card-link fade-on-scroll" data-slide-target="merge">
               <h3>Merge layers</h3>
               <p>Flatten the stack when you’re ready.</p>
             </a>
-            <a href="#export" class="feature-card feature-card-link fade-on-scroll">
+            <a href="#export" class="feature-card feature-card-link fade-on-scroll" data-slide-target="export">
               <h3>Export</h3>
               <p>Share m4a or wav, or save a Project (.vmp).</p>
             </a>
@@ -175,382 +226,654 @@
         </div>
       </section>
 
-      <section class="section section-feature" id="stack">
-        <div class="container feature-layout">
-          <div class="feature-copy">
-            <p class="eyebrow">Stack</p>
-            <h2>Layer new takes over what you already recorded.</h2>
-            <p class="feature-intro">
-              Overdub with a monitor mix so harmony, percussion, or a second vocal lands in the same
-              memo. Headphones recommended for a clean stack.
-            </p>
-            <ul class="feature-list">
-              <li>Record a new layer while hearing what you already captured.</li>
-              <li>Keep everything in one memo — no bouncing between apps.</li>
-            </ul>
-          </div>
-          <div class="feature-visual">
-            <figure class="iphone-frame fade-on-scroll">
-              <div class="iphone-frame__body">
-                <div class="iphone-frame__screen">
-                  <img
-                    class="theme-shot"
-                    src="./assets/screenshots/light/stack.png"
-                    data-light-src="./assets/screenshots/light/stack.png"
-                    data-dark-src="./assets/screenshots/dark/stack.png"
-                    alt="Stack or replace recording options"
-                    width="1179"
-                    height="2556"
-                  />
-                </div>
-              </div>
-              <span class="iphone-frame__btn iphone-frame__btn--silent" aria-hidden="true"></span>
-              <span class="iphone-frame__btn iphone-frame__btn--vol-up" aria-hidden="true"></span>
-              <span class="iphone-frame__btn iphone-frame__btn--vol-down" aria-hidden="true"></span>
-              <span class="iphone-frame__btn iphone-frame__btn--power" aria-hidden="true"></span>
-            </figure>
-          </div>
-        </div>
-      </section>
+      <section class="section section-slideshow" id="feature-slideshow">
+        <div class="container">
+          <div
+            class="feature-slideshow fade-on-scroll"
+            data-slideshow
+            tabindex="0"
+            role="region"
+            aria-roledescription="carousel"
+            aria-label="Feature details"
+          >
+            <p class="visually-hidden" data-slideshow-live aria-live="polite"></p>
 
-      <section class="section section-feature section-feature-alt" id="edit">
-        <div class="container feature-layout feature-layout--reverse">
-          <div class="feature-visual">
-            <figure class="iphone-frame fade-on-scroll">
-              <div class="iphone-frame__body">
-                <div class="iphone-frame__screen">
-                  <img
-                    class="theme-shot"
-                    src="./assets/screenshots/light/edit.png"
-                    data-light-src="./assets/screenshots/light/edit.png"
-                    data-dark-src="./assets/screenshots/dark/edit.png"
-                    alt="Trim tool active on a selected track"
-                    width="1179"
-                    height="2556"
-                  />
+            <div class="feature-slideshow__viewport">
+              <article class="feature-slide is-active" data-slide-id="stack" id="stack" aria-hidden="false">
+                <div class="feature-layout">
+                  <div class="feature-copy">
+                    <p class="eyebrow">Stack</p>
+                    <h2>Layer new takes over what you already recorded.</h2>
+                    <p class="feature-intro">
+                      Overdub with a monitor mix so harmony, percussion, or a second vocal lands in the same
+                      memo. Headphones recommended for a clean stack.
+                    </p>
+                    <ul class="feature-list">
+                      <li>Record a new layer while hearing what you already captured.</li>
+                      <li>Keep everything in one memo — no bouncing between apps.</li>
+                    </ul>
+                  </div>
+                  <div class="feature-visual">
+                    <figure class="iphone-frame">
+                      <div class="iphone-frame__body">
+                        <div class="iphone-frame__screen">
+                          <img
+                            class="theme-shot"
+                            src="./assets/screenshots/iphone/light/stack.png"
+                            data-iphone-light-src="./assets/screenshots/iphone/light/stack.png"
+                            data-iphone-dark-src="./assets/screenshots/iphone/dark/stack.png"
+                            data-ipad-light-src="./assets/screenshots/ipad/light/stack.png"
+                            data-ipad-dark-src="./assets/screenshots/ipad/dark/stack.png"
+                            alt="Stack or replace recording options"
+                            width="1179"
+                            height="2556"
+                          />
+                        </div>
+                      </div>
+                      <span class="iphone-frame__btn iphone-frame__btn--silent" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--vol-up" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--vol-down" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--power" aria-hidden="true"></span>
+                    </figure>
+                    <figure class="ipad-frame">
+                      <div class="ipad-frame__body">
+                        <div class="ipad-frame__camera" aria-hidden="true"></div>
+                        <div class="ipad-frame__screen">
+                          <img
+                            class="theme-shot"
+                            src="./assets/screenshots/ipad/light/stack.png"
+                            data-iphone-light-src="./assets/screenshots/iphone/light/stack.png"
+                            data-iphone-dark-src="./assets/screenshots/iphone/dark/stack.png"
+                            data-ipad-light-src="./assets/screenshots/ipad/light/stack.png"
+                            data-ipad-dark-src="./assets/screenshots/ipad/dark/stack.png"
+                            alt="Stack or replace recording options on iPad"
+                            width="2732"
+                            height="2048"
+                          />
+                        </div>
+                      </div>
+                      <span class="ipad-frame__btn ipad-frame__btn--vol-up" aria-hidden="true"></span>
+                      <span class="ipad-frame__btn ipad-frame__btn--vol-down" aria-hidden="true"></span>
+                      <span class="ipad-frame__btn ipad-frame__btn--power" aria-hidden="true"></span>
+                    </figure>
+                  </div>
                 </div>
-              </div>
-              <span class="iphone-frame__btn iphone-frame__btn--silent" aria-hidden="true"></span>
-              <span class="iphone-frame__btn iphone-frame__btn--vol-up" aria-hidden="true"></span>
-              <span class="iphone-frame__btn iphone-frame__btn--vol-down" aria-hidden="true"></span>
-              <span class="iphone-frame__btn iphone-frame__btn--power" aria-hidden="true"></span>
-            </figure>
-          </div>
-          <div class="feature-copy">
-            <p class="eyebrow">Edit track</p>
-            <h2>Trim, move, and balance every layer.</h2>
-            <p class="feature-intro">
-              Scrub the waveform, cut what you don’t need, slide clips into place, then set volume,
-              mute, or solo so the mix stays clear while you work.
-            </p>
-            <ul class="feature-list">
-              <li>Trim and reposition clips with waveform precision.</li>
-              <li>Mute, solo, and level each layer independently.</li>
-            </ul>
-          </div>
-        </div>
-      </section>
+              </article>
 
-      <section class="section section-feature" id="effects">
-        <div class="container feature-layout">
-          <div class="feature-copy">
-            <p class="eyebrow">Effects</p>
-            <h2>Reverb, delay, and EQ on each layer.</h2>
-            <p class="feature-intro">
-              Treat every track like its own channel strip — add space, echoes, and tone without
-              bouncing out to another app.
-            </p>
-            <ul class="feature-list">
-              <li>Apply reverb, delay, and EQ per layer.</li>
-              <li>Hear changes in context with the rest of the stack.</li>
-            </ul>
-          </div>
-          <div class="feature-visual">
-            <figure class="iphone-frame fade-on-scroll">
-              <div class="iphone-frame__body">
-                <div class="iphone-frame__screen">
-                  <img
-                    class="theme-shot"
-                    src="./assets/screenshots/light/effects.png"
-                    data-light-src="./assets/screenshots/light/effects.png"
-                    data-dark-src="./assets/screenshots/dark/effects.png"
-                    alt="EQ curve and presets on a track"
-                    width="1179"
-                    height="2556"
-                  />
+              <article class="feature-slide" data-slide-id="edit" id="edit" aria-hidden="true">
+                <div class="feature-layout">
+                  <div class="feature-copy">
+                    <p class="eyebrow">Edit track</p>
+                    <h2>Trim, move, and balance every layer.</h2>
+                    <p class="feature-intro">
+                      Scrub the waveform, cut what you don’t need, slide clips into place, then set volume,
+                      mute, or solo so the mix stays clear while you work.
+                    </p>
+                    <ul class="feature-list">
+                      <li>Trim and reposition clips with waveform precision.</li>
+                      <li>Mute, solo, and level each layer independently.</li>
+                    </ul>
+                  </div>
+                  <div class="feature-visual">
+                    <figure class="iphone-frame">
+                      <div class="iphone-frame__body">
+                        <div class="iphone-frame__screen">
+                          <img
+                            class="theme-shot"
+                            src="./assets/screenshots/iphone/light/edit.png"
+                            data-iphone-light-src="./assets/screenshots/iphone/light/edit.png"
+                            data-iphone-dark-src="./assets/screenshots/iphone/dark/edit.png"
+                            data-ipad-light-src="./assets/screenshots/ipad/light/edit.png"
+                            data-ipad-dark-src="./assets/screenshots/ipad/dark/edit.png"
+                            alt="Trim tool active on a selected track"
+                            width="1179"
+                            height="2556"
+                          />
+                        </div>
+                      </div>
+                      <span class="iphone-frame__btn iphone-frame__btn--silent" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--vol-up" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--vol-down" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--power" aria-hidden="true"></span>
+                    </figure>
+                    <figure class="ipad-frame">
+                      <div class="ipad-frame__body">
+                        <div class="ipad-frame__camera" aria-hidden="true"></div>
+                        <div class="ipad-frame__screen">
+                          <img
+                            class="theme-shot"
+                            src="./assets/screenshots/ipad/light/edit.png"
+                            data-iphone-light-src="./assets/screenshots/iphone/light/edit.png"
+                            data-iphone-dark-src="./assets/screenshots/iphone/dark/edit.png"
+                            data-ipad-light-src="./assets/screenshots/ipad/light/edit.png"
+                            data-ipad-dark-src="./assets/screenshots/ipad/dark/edit.png"
+                            alt="Trim tool active on a selected track on iPad"
+                            width="2732"
+                            height="2048"
+                          />
+                        </div>
+                      </div>
+                      <span class="ipad-frame__btn ipad-frame__btn--vol-up" aria-hidden="true"></span>
+                      <span class="ipad-frame__btn ipad-frame__btn--vol-down" aria-hidden="true"></span>
+                      <span class="ipad-frame__btn ipad-frame__btn--power" aria-hidden="true"></span>
+                    </figure>
+                  </div>
                 </div>
-              </div>
-              <span class="iphone-frame__btn iphone-frame__btn--silent" aria-hidden="true"></span>
-              <span class="iphone-frame__btn iphone-frame__btn--vol-up" aria-hidden="true"></span>
-              <span class="iphone-frame__btn iphone-frame__btn--vol-down" aria-hidden="true"></span>
-              <span class="iphone-frame__btn iphone-frame__btn--power" aria-hidden="true"></span>
-            </figure>
-          </div>
-        </div>
-      </section>
+              </article>
 
-      <section class="section section-feature section-feature-alt" id="fade">
-        <div class="container feature-layout feature-layout--reverse">
-          <div class="feature-visual">
-            <figure class="iphone-frame fade-on-scroll">
-              <div class="iphone-frame__body">
-                <div class="iphone-frame__screen">
-                  <img
-                    class="theme-shot"
-                    src="./assets/screenshots/light/fade.png"
-                    data-light-src="./assets/screenshots/light/fade.png"
-                    data-dark-src="./assets/screenshots/dark/fade.png"
-                    alt="Fade-in curve on a selected track"
-                    width="1179"
-                    height="2556"
-                  />
+              <article class="feature-slide" data-slide-id="effects" id="effects" aria-hidden="true">
+                <div class="feature-layout">
+                  <div class="feature-copy">
+                    <p class="eyebrow">Effects</p>
+                    <h2>Reverb, delay, and EQ on each layer.</h2>
+                    <p class="feature-intro">
+                      Treat every track like its own channel strip — add space, echoes, and tone without
+                      bouncing out to another app.
+                    </p>
+                    <ul class="feature-list">
+                      <li>Apply reverb, delay, and EQ per layer.</li>
+                      <li>Hear changes in context with the rest of the stack.</li>
+                    </ul>
+                  </div>
+                  <div class="feature-visual">
+                    <figure class="iphone-frame">
+                      <div class="iphone-frame__body">
+                        <div class="iphone-frame__screen">
+                          <img
+                            class="theme-shot"
+                            src="./assets/screenshots/iphone/light/effects.png"
+                            data-iphone-light-src="./assets/screenshots/iphone/light/effects.png"
+                            data-iphone-dark-src="./assets/screenshots/iphone/dark/effects.png"
+                            data-ipad-light-src="./assets/screenshots/ipad/light/effects.png"
+                            data-ipad-dark-src="./assets/screenshots/ipad/dark/effects.png"
+                            alt="EQ curve and presets on a track"
+                            width="1179"
+                            height="2556"
+                          />
+                        </div>
+                      </div>
+                      <span class="iphone-frame__btn iphone-frame__btn--silent" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--vol-up" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--vol-down" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--power" aria-hidden="true"></span>
+                    </figure>
+                    <figure class="ipad-frame">
+                      <div class="ipad-frame__body">
+                        <div class="ipad-frame__camera" aria-hidden="true"></div>
+                        <div class="ipad-frame__screen">
+                          <img
+                            class="theme-shot"
+                            src="./assets/screenshots/ipad/light/effects.png"
+                            data-iphone-light-src="./assets/screenshots/iphone/light/effects.png"
+                            data-iphone-dark-src="./assets/screenshots/iphone/dark/effects.png"
+                            data-ipad-light-src="./assets/screenshots/ipad/light/effects.png"
+                            data-ipad-dark-src="./assets/screenshots/ipad/dark/effects.png"
+                            alt="EQ curve and presets on a track on iPad"
+                            width="2732"
+                            height="2048"
+                          />
+                        </div>
+                      </div>
+                      <span class="ipad-frame__btn ipad-frame__btn--vol-up" aria-hidden="true"></span>
+                      <span class="ipad-frame__btn ipad-frame__btn--vol-down" aria-hidden="true"></span>
+                      <span class="ipad-frame__btn ipad-frame__btn--power" aria-hidden="true"></span>
+                    </figure>
+                  </div>
                 </div>
-              </div>
-              <span class="iphone-frame__btn iphone-frame__btn--silent" aria-hidden="true"></span>
-              <span class="iphone-frame__btn iphone-frame__btn--vol-up" aria-hidden="true"></span>
-              <span class="iphone-frame__btn iphone-frame__btn--vol-down" aria-hidden="true"></span>
-              <span class="iphone-frame__btn iphone-frame__btn--power" aria-hidden="true"></span>
-            </figure>
-          </div>
-          <div class="feature-copy">
-            <p class="eyebrow">Fade</p>
-            <h2>Soft starts and clean endings.</h2>
-            <p class="feature-intro">
-              Shape fade-in and fade-out per layer so stacked takes breathe in and out instead of
-              clicking at the edges.
-            </p>
-            <ul class="feature-list">
-              <li>Set fade-in and fade-out length on each layer.</li>
-              <li>Curve the fade so entries and exits feel natural.</li>
-            </ul>
-          </div>
-        </div>
-      </section>
+              </article>
 
-      <section class="section section-feature" id="long-press-track-menu">
-        <div class="container feature-layout">
-          <div class="feature-copy">
-            <p class="eyebrow">Long press track menu</p>
-            <h2>Hold a track for every option.</h2>
-            <p class="feature-intro">
-              Long-press a layer to open its menu — rename, change color, loop the track, merge,
-              export, or delete without hunting through separate screens.
-            </p>
-            <ul class="feature-list">
-              <li>Long-press any track to open its actions.</li>
-              <li>Rename, recolor, merge, export, or remove from one place.</li>
-            </ul>
-          </div>
-          <div class="feature-visual">
-            <figure class="iphone-frame fade-on-scroll">
-              <div class="iphone-frame__body">
-                <div class="iphone-frame__screen">
-                  <img
-                    class="theme-shot"
-                    src="./assets/screenshots/light/track-menu.png"
-                    data-light-src="./assets/screenshots/light/track-menu.png"
-                    data-dark-src="./assets/screenshots/dark/track-menu.png"
-                    alt="Long press track menu with rename, color, loop, and more"
-                    width="1179"
-                    height="2556"
-                  />
+              <article class="feature-slide" data-slide-id="fade" id="fade" aria-hidden="true">
+                <div class="feature-layout">
+                  <div class="feature-copy">
+                    <p class="eyebrow">Fade</p>
+                    <h2>Soft starts and clean endings.</h2>
+                    <p class="feature-intro">
+                      Shape fade-in and fade-out per layer so stacked takes breathe in and out instead of
+                      clicking at the edges.
+                    </p>
+                    <ul class="feature-list">
+                      <li>Set fade-in and fade-out length on each layer.</li>
+                      <li>Curve the fade so entries and exits feel natural.</li>
+                    </ul>
+                  </div>
+                  <div class="feature-visual">
+                    <figure class="iphone-frame">
+                      <div class="iphone-frame__body">
+                        <div class="iphone-frame__screen">
+                          <img
+                            class="theme-shot"
+                            src="./assets/screenshots/iphone/light/fade.png"
+                            data-iphone-light-src="./assets/screenshots/iphone/light/fade.png"
+                            data-iphone-dark-src="./assets/screenshots/iphone/dark/fade.png"
+                            data-ipad-light-src="./assets/screenshots/ipad/light/fade.png"
+                            data-ipad-dark-src="./assets/screenshots/ipad/dark/fade.png"
+                            alt="Fade-in curve on a selected track"
+                            width="1179"
+                            height="2556"
+                          />
+                        </div>
+                      </div>
+                      <span class="iphone-frame__btn iphone-frame__btn--silent" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--vol-up" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--vol-down" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--power" aria-hidden="true"></span>
+                    </figure>
+                    <figure class="ipad-frame">
+                      <div class="ipad-frame__body">
+                        <div class="ipad-frame__camera" aria-hidden="true"></div>
+                        <div class="ipad-frame__screen">
+                          <img
+                            class="theme-shot"
+                            src="./assets/screenshots/ipad/light/fade.png"
+                            data-iphone-light-src="./assets/screenshots/iphone/light/fade.png"
+                            data-iphone-dark-src="./assets/screenshots/iphone/dark/fade.png"
+                            data-ipad-light-src="./assets/screenshots/ipad/light/fade.png"
+                            data-ipad-dark-src="./assets/screenshots/ipad/dark/fade.png"
+                            alt="Fade-in curve on a selected track on iPad"
+                            width="2732"
+                            height="2048"
+                          />
+                        </div>
+                      </div>
+                      <span class="ipad-frame__btn ipad-frame__btn--vol-up" aria-hidden="true"></span>
+                      <span class="ipad-frame__btn ipad-frame__btn--vol-down" aria-hidden="true"></span>
+                      <span class="ipad-frame__btn ipad-frame__btn--power" aria-hidden="true"></span>
+                    </figure>
+                  </div>
                 </div>
-              </div>
-              <span class="iphone-frame__btn iphone-frame__btn--silent" aria-hidden="true"></span>
-              <span class="iphone-frame__btn iphone-frame__btn--vol-up" aria-hidden="true"></span>
-              <span class="iphone-frame__btn iphone-frame__btn--vol-down" aria-hidden="true"></span>
-              <span class="iphone-frame__btn iphone-frame__btn--power" aria-hidden="true"></span>
-            </figure>
-          </div>
-        </div>
-      </section>
+              </article>
 
-      <section class="section section-feature section-feature-alt" id="loop">
-        <div class="container feature-layout feature-layout--reverse">
-          <div class="feature-visual">
-            <figure class="iphone-frame fade-on-scroll">
-              <div class="iphone-frame__body">
-                <div class="iphone-frame__screen">
-                  <img
-                    class="theme-shot"
-                    src="./assets/screenshots/light/loop.png"
-                    data-light-src="./assets/screenshots/light/loop.png"
-                    data-dark-src="./assets/screenshots/dark/loop.png"
-                    alt="Timeline loop region highlighted on the waveform"
-                    width="1179"
-                    height="2556"
-                  />
+              <article class="feature-slide" data-slide-id="long-press-track-menu" id="long-press-track-menu" aria-hidden="true">
+                <div class="feature-layout">
+                  <div class="feature-copy">
+                    <p class="eyebrow">Long press track menu</p>
+                    <h2>Hold a track for every option.</h2>
+                    <p class="feature-intro">
+                      Long-press a layer to open its menu — rename, change color, loop the track, merge,
+                      export, or delete without hunting through separate screens.
+                    </p>
+                    <ul class="feature-list">
+                      <li>Long-press any track to open its actions.</li>
+                      <li>Rename, recolor, merge, export, or remove from one place.</li>
+                    </ul>
+                  </div>
+                  <div class="feature-visual">
+                    <figure class="iphone-frame">
+                      <div class="iphone-frame__body">
+                        <div class="iphone-frame__screen">
+                          <img
+                            class="theme-shot"
+                            src="./assets/screenshots/iphone/light/track-menu.png"
+                            data-iphone-light-src="./assets/screenshots/iphone/light/track-menu.png"
+                            data-iphone-dark-src="./assets/screenshots/iphone/dark/track-menu.png"
+                            data-ipad-light-src="./assets/screenshots/ipad/light/track-menu.png"
+                            data-ipad-dark-src="./assets/screenshots/ipad/dark/track-menu.png"
+                            alt="Long press track menu with rename, color, loop, and more"
+                            width="1179"
+                            height="2556"
+                          />
+                        </div>
+                      </div>
+                      <span class="iphone-frame__btn iphone-frame__btn--silent" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--vol-up" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--vol-down" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--power" aria-hidden="true"></span>
+                    </figure>
+                    <figure class="ipad-frame">
+                      <div class="ipad-frame__body">
+                        <div class="ipad-frame__camera" aria-hidden="true"></div>
+                        <div class="ipad-frame__screen">
+                          <img
+                            class="theme-shot"
+                            src="./assets/screenshots/ipad/light/track-menu.png"
+                            data-iphone-light-src="./assets/screenshots/iphone/light/track-menu.png"
+                            data-iphone-dark-src="./assets/screenshots/iphone/dark/track-menu.png"
+                            data-ipad-light-src="./assets/screenshots/ipad/light/track-menu.png"
+                            data-ipad-dark-src="./assets/screenshots/ipad/dark/track-menu.png"
+                            alt="Long press track menu on iPad"
+                            width="2732"
+                            height="2048"
+                          />
+                        </div>
+                      </div>
+                      <span class="ipad-frame__btn ipad-frame__btn--vol-up" aria-hidden="true"></span>
+                      <span class="ipad-frame__btn ipad-frame__btn--vol-down" aria-hidden="true"></span>
+                      <span class="ipad-frame__btn ipad-frame__btn--power" aria-hidden="true"></span>
+                    </figure>
+                  </div>
                 </div>
-              </div>
-              <span class="iphone-frame__btn iphone-frame__btn--silent" aria-hidden="true"></span>
-              <span class="iphone-frame__btn iphone-frame__btn--vol-up" aria-hidden="true"></span>
-              <span class="iphone-frame__btn iphone-frame__btn--vol-down" aria-hidden="true"></span>
-              <span class="iphone-frame__btn iphone-frame__btn--power" aria-hidden="true"></span>
-            </figure>
-          </div>
-          <div class="feature-copy">
-            <p class="eyebrow">Loop</p>
-            <h2>Practice and polish inside a region.</h2>
-            <p class="feature-intro">
-              Set a loop on the timeline and repeat a section while you stack, replace, or listen —
-              perfect for refining a phrase.
-            </p>
-            <ul class="feature-list">
-              <li>Drag loop start and end on the timeline.</li>
-              <li>Keep cycling a section while you overdub or edit.</li>
-            </ul>
-          </div>
-        </div>
-      </section>
+              </article>
 
-      <section class="section section-feature" id="loop-track">
-        <div class="container feature-layout">
-          <div class="feature-copy">
-            <p class="eyebrow">Loop track</p>
-            <h2>Turn a short take into a lasting bed.</h2>
-            <p class="feature-intro">
-              Loop an individual track for a set duration so a groove, pad, or ostinato keeps
-              running under new layers.
-            </p>
-            <ul class="feature-list">
-              <li>Repeat a single layer without re-recording it.</li>
-              <li>Set how long the track keeps cycling under the mix.</li>
-            </ul>
-          </div>
-          <div class="feature-visual">
-            <figure class="iphone-frame fade-on-scroll">
-              <div class="iphone-frame__body">
-                <div class="iphone-frame__screen">
-                  <img
-                    class="theme-shot"
-                    src="./assets/screenshots/light/track-menu.png"
-                    data-light-src="./assets/screenshots/light/track-menu.png"
-                    data-dark-src="./assets/screenshots/dark/track-menu.png"
-                    alt="Track menu showing the Loop Track action"
-                    width="1179"
-                    height="2556"
-                  />
+              <article class="feature-slide" data-slide-id="loop" id="loop" aria-hidden="true">
+                <div class="feature-layout">
+                  <div class="feature-copy">
+                    <p class="eyebrow">Loop</p>
+                    <h2>Practice and polish inside a region.</h2>
+                    <p class="feature-intro">
+                      Set a loop on the timeline and repeat a section while you stack, replace, or listen —
+                      perfect for refining a phrase.
+                    </p>
+                    <ul class="feature-list">
+                      <li>Drag loop start and end on the timeline.</li>
+                      <li>Keep cycling a section while you overdub or edit.</li>
+                    </ul>
+                  </div>
+                  <div class="feature-visual">
+                    <figure class="iphone-frame">
+                      <div class="iphone-frame__body">
+                        <div class="iphone-frame__screen">
+                          <img
+                            class="theme-shot"
+                            src="./assets/screenshots/iphone/light/loop.png"
+                            data-iphone-light-src="./assets/screenshots/iphone/light/loop.png"
+                            data-iphone-dark-src="./assets/screenshots/iphone/dark/loop.png"
+                            data-ipad-light-src="./assets/screenshots/ipad/light/loop.png"
+                            data-ipad-dark-src="./assets/screenshots/ipad/dark/loop.png"
+                            alt="Timeline loop region highlighted on the waveform"
+                            width="1179"
+                            height="2556"
+                          />
+                        </div>
+                      </div>
+                      <span class="iphone-frame__btn iphone-frame__btn--silent" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--vol-up" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--vol-down" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--power" aria-hidden="true"></span>
+                    </figure>
+                    <figure class="ipad-frame">
+                      <div class="ipad-frame__body">
+                        <div class="ipad-frame__camera" aria-hidden="true"></div>
+                        <div class="ipad-frame__screen">
+                          <img
+                            class="theme-shot"
+                            src="./assets/screenshots/ipad/light/loop.png"
+                            data-iphone-light-src="./assets/screenshots/iphone/light/loop.png"
+                            data-iphone-dark-src="./assets/screenshots/iphone/dark/loop.png"
+                            data-ipad-light-src="./assets/screenshots/ipad/light/loop.png"
+                            data-ipad-dark-src="./assets/screenshots/ipad/dark/loop.png"
+                            alt="Timeline loop region on iPad"
+                            width="2732"
+                            height="2048"
+                          />
+                        </div>
+                      </div>
+                      <span class="ipad-frame__btn ipad-frame__btn--vol-up" aria-hidden="true"></span>
+                      <span class="ipad-frame__btn ipad-frame__btn--vol-down" aria-hidden="true"></span>
+                      <span class="ipad-frame__btn ipad-frame__btn--power" aria-hidden="true"></span>
+                    </figure>
+                  </div>
                 </div>
-              </div>
-              <span class="iphone-frame__btn iphone-frame__btn--silent" aria-hidden="true"></span>
-              <span class="iphone-frame__btn iphone-frame__btn--vol-up" aria-hidden="true"></span>
-              <span class="iphone-frame__btn iphone-frame__btn--vol-down" aria-hidden="true"></span>
-              <span class="iphone-frame__btn iphone-frame__btn--power" aria-hidden="true"></span>
-            </figure>
-          </div>
-        </div>
-      </section>
+              </article>
 
-      <section class="section section-feature section-feature-alt" id="merge">
-        <div class="container feature-layout feature-layout--reverse">
-          <div class="feature-visual">
-            <figure class="iphone-frame fade-on-scroll">
-              <div class="iphone-frame__body">
-                <div class="iphone-frame__screen">
-                  <img
-                    class="theme-shot"
-                    src="./assets/screenshots/light/memo-menu.png"
-                    data-light-src="./assets/screenshots/light/memo-menu.png"
-                    data-dark-src="./assets/screenshots/dark/memo-menu.png"
-                    alt="Memo menu with Merge Layers option"
-                    width="1179"
-                    height="2556"
-                  />
+              <article class="feature-slide" data-slide-id="loop-track" id="loop-track" aria-hidden="true">
+                <div class="feature-layout">
+                  <div class="feature-copy">
+                    <p class="eyebrow">Loop track</p>
+                    <h2>Turn a short take into a lasting bed.</h2>
+                    <p class="feature-intro">
+                      Loop an individual track for a set duration so a groove, pad, or ostinato keeps
+                      running under new layers.
+                    </p>
+                    <ul class="feature-list">
+                      <li>Repeat a single layer without re-recording it.</li>
+                      <li>Set how long the track keeps cycling under the mix.</li>
+                    </ul>
+                  </div>
+                  <div class="feature-visual">
+                    <figure class="iphone-frame">
+                      <div class="iphone-frame__body">
+                        <div class="iphone-frame__screen">
+                          <img
+                            class="theme-shot"
+                            src="./assets/screenshots/iphone/light/track-menu.png"
+                            data-iphone-light-src="./assets/screenshots/iphone/light/track-menu.png"
+                            data-iphone-dark-src="./assets/screenshots/iphone/dark/track-menu.png"
+                            data-ipad-light-src="./assets/screenshots/ipad/light/track-menu.png"
+                            data-ipad-dark-src="./assets/screenshots/ipad/dark/track-menu.png"
+                            alt="Track menu showing the Loop Track action"
+                            width="1179"
+                            height="2556"
+                          />
+                        </div>
+                      </div>
+                      <span class="iphone-frame__btn iphone-frame__btn--silent" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--vol-up" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--vol-down" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--power" aria-hidden="true"></span>
+                    </figure>
+                    <figure class="ipad-frame">
+                      <div class="ipad-frame__body">
+                        <div class="ipad-frame__camera" aria-hidden="true"></div>
+                        <div class="ipad-frame__screen">
+                          <img
+                            class="theme-shot"
+                            src="./assets/screenshots/ipad/light/track-menu.png"
+                            data-iphone-light-src="./assets/screenshots/iphone/light/track-menu.png"
+                            data-iphone-dark-src="./assets/screenshots/iphone/dark/track-menu.png"
+                            data-ipad-light-src="./assets/screenshots/ipad/light/track-menu.png"
+                            data-ipad-dark-src="./assets/screenshots/ipad/dark/track-menu.png"
+                            alt="Track menu showing Loop Track on iPad"
+                            width="2732"
+                            height="2048"
+                          />
+                        </div>
+                      </div>
+                      <span class="ipad-frame__btn ipad-frame__btn--vol-up" aria-hidden="true"></span>
+                      <span class="ipad-frame__btn ipad-frame__btn--vol-down" aria-hidden="true"></span>
+                      <span class="ipad-frame__btn ipad-frame__btn--power" aria-hidden="true"></span>
+                    </figure>
+                  </div>
                 </div>
-              </div>
-              <span class="iphone-frame__btn iphone-frame__btn--silent" aria-hidden="true"></span>
-              <span class="iphone-frame__btn iphone-frame__btn--vol-up" aria-hidden="true"></span>
-              <span class="iphone-frame__btn iphone-frame__btn--vol-down" aria-hidden="true"></span>
-              <span class="iphone-frame__btn iphone-frame__btn--power" aria-hidden="true"></span>
-            </figure>
-          </div>
-          <div class="feature-copy">
-            <p class="eyebrow">Merge layers</p>
-            <h2>Flatten when you’re ready.</h2>
-            <p class="feature-intro">
-              Combine layers into one when the stack is locked — simplify the project and keep
-              moving.
-            </p>
-            <ul class="feature-list">
-              <li>Merge selected layers into a single track.</li>
-              <li>Reduce clutter once the arrangement is set.</li>
-            </ul>
-          </div>
-        </div>
-      </section>
+              </article>
 
-      <section class="section section-feature" id="export">
-        <div class="container feature-layout">
-          <div class="feature-copy">
-            <p class="eyebrow">Export</p>
-            <h2>Share a mix or save the project.</h2>
-            <p class="feature-intro">
-              Export m4a or wav for sharing, or a Project (<strong>.vmp</strong>) so layers and
-              settings come back intact.
-            </p>
-            <ul class="feature-list">
-              <li>Share a finished mix as m4a or wav.</li>
-              <li>Save a Project file to reopen layers later.</li>
-            </ul>
-          </div>
-          <div class="feature-visual">
-            <figure class="iphone-frame fade-on-scroll">
-              <div class="iphone-frame__body">
-                <div class="iphone-frame__screen">
-                  <img
-                    class="theme-shot"
-                    src="./assets/screenshots/light/memo-menu.png"
-                    data-light-src="./assets/screenshots/light/memo-menu.png"
-                    data-dark-src="./assets/screenshots/dark/memo-menu.png"
-                    alt="Memo menu with Export option"
-                    width="1179"
-                    height="2556"
-                  />
+              <article class="feature-slide" data-slide-id="merge" id="merge" aria-hidden="true">
+                <div class="feature-layout">
+                  <div class="feature-copy">
+                    <p class="eyebrow">Merge layers</p>
+                    <h2>Flatten when you’re ready.</h2>
+                    <p class="feature-intro">
+                      Combine layers into one when the stack is locked — simplify the project and keep
+                      moving.
+                    </p>
+                    <ul class="feature-list">
+                      <li>Merge selected layers into a single track.</li>
+                      <li>Reduce clutter once the arrangement is set.</li>
+                    </ul>
+                  </div>
+                  <div class="feature-visual">
+                    <figure class="iphone-frame">
+                      <div class="iphone-frame__body">
+                        <div class="iphone-frame__screen">
+                          <img
+                            class="theme-shot"
+                            src="./assets/screenshots/iphone/light/memo-menu.png"
+                            data-iphone-light-src="./assets/screenshots/iphone/light/memo-menu.png"
+                            data-iphone-dark-src="./assets/screenshots/iphone/dark/memo-menu.png"
+                            data-ipad-light-src="./assets/screenshots/ipad/light/memo-menu.png"
+                            data-ipad-dark-src="./assets/screenshots/ipad/dark/memo-menu.png"
+                            alt="Memo menu with Merge Layers option"
+                            width="1179"
+                            height="2556"
+                          />
+                        </div>
+                      </div>
+                      <span class="iphone-frame__btn iphone-frame__btn--silent" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--vol-up" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--vol-down" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--power" aria-hidden="true"></span>
+                    </figure>
+                    <figure class="ipad-frame">
+                      <div class="ipad-frame__body">
+                        <div class="ipad-frame__camera" aria-hidden="true"></div>
+                        <div class="ipad-frame__screen">
+                          <img
+                            class="theme-shot"
+                            src="./assets/screenshots/ipad/light/memo-menu.png"
+                            data-iphone-light-src="./assets/screenshots/iphone/light/memo-menu.png"
+                            data-iphone-dark-src="./assets/screenshots/iphone/dark/memo-menu.png"
+                            data-ipad-light-src="./assets/screenshots/ipad/light/memo-menu.png"
+                            data-ipad-dark-src="./assets/screenshots/ipad/dark/memo-menu.png"
+                            alt="Memo menu with Merge Layers on iPad"
+                            width="2732"
+                            height="2048"
+                          />
+                        </div>
+                      </div>
+                      <span class="ipad-frame__btn ipad-frame__btn--vol-up" aria-hidden="true"></span>
+                      <span class="ipad-frame__btn ipad-frame__btn--vol-down" aria-hidden="true"></span>
+                      <span class="ipad-frame__btn ipad-frame__btn--power" aria-hidden="true"></span>
+                    </figure>
+                  </div>
                 </div>
-              </div>
-              <span class="iphone-frame__btn iphone-frame__btn--silent" aria-hidden="true"></span>
-              <span class="iphone-frame__btn iphone-frame__btn--vol-up" aria-hidden="true"></span>
-              <span class="iphone-frame__btn iphone-frame__btn--vol-down" aria-hidden="true"></span>
-              <span class="iphone-frame__btn iphone-frame__btn--power" aria-hidden="true"></span>
-            </figure>
-          </div>
-        </div>
-      </section>
+              </article>
 
-      <section class="section section-feature section-feature-alt" id="metronome">
-        <div class="container feature-layout feature-layout--reverse">
-          <div class="feature-visual">
-            <figure class="iphone-frame fade-on-scroll">
-              <div class="iphone-frame__body">
-                <div class="iphone-frame__screen">
-                  <img
-                    class="theme-shot"
-                    src="./assets/screenshots/light/metronome.png"
-                    data-light-src="./assets/screenshots/light/metronome.png"
-                    data-dark-src="./assets/screenshots/dark/metronome.png"
-                    alt="Metronome settings with tempo and time signature"
-                    width="1179"
-                    height="2556"
-                  />
+              <article class="feature-slide" data-slide-id="export" id="export" aria-hidden="true">
+                <div class="feature-layout">
+                  <div class="feature-copy">
+                    <p class="eyebrow">Export</p>
+                    <h2>Share a mix or save the project.</h2>
+                    <p class="feature-intro">
+                      Export m4a or wav for sharing, or a Project (<strong>.vmp</strong>) so layers and
+                      settings come back intact.
+                    </p>
+                    <ul class="feature-list">
+                      <li>Share a finished mix as m4a or wav.</li>
+                      <li>Save a Project file to reopen layers later.</li>
+                    </ul>
+                  </div>
+                  <div class="feature-visual">
+                    <figure class="iphone-frame">
+                      <div class="iphone-frame__body">
+                        <div class="iphone-frame__screen">
+                          <img
+                            class="theme-shot"
+                            src="./assets/screenshots/iphone/light/memo-menu.png"
+                            data-iphone-light-src="./assets/screenshots/iphone/light/memo-menu.png"
+                            data-iphone-dark-src="./assets/screenshots/iphone/dark/memo-menu.png"
+                            data-ipad-light-src="./assets/screenshots/ipad/light/memo-menu.png"
+                            data-ipad-dark-src="./assets/screenshots/ipad/dark/memo-menu.png"
+                            alt="Memo menu with Export option"
+                            width="1179"
+                            height="2556"
+                          />
+                        </div>
+                      </div>
+                      <span class="iphone-frame__btn iphone-frame__btn--silent" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--vol-up" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--vol-down" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--power" aria-hidden="true"></span>
+                    </figure>
+                    <figure class="ipad-frame">
+                      <div class="ipad-frame__body">
+                        <div class="ipad-frame__camera" aria-hidden="true"></div>
+                        <div class="ipad-frame__screen">
+                          <img
+                            class="theme-shot"
+                            src="./assets/screenshots/ipad/light/memo-menu.png"
+                            data-iphone-light-src="./assets/screenshots/iphone/light/memo-menu.png"
+                            data-iphone-dark-src="./assets/screenshots/iphone/dark/memo-menu.png"
+                            data-ipad-light-src="./assets/screenshots/ipad/light/memo-menu.png"
+                            data-ipad-dark-src="./assets/screenshots/ipad/dark/memo-menu.png"
+                            alt="Memo menu with Export on iPad"
+                            width="2732"
+                            height="2048"
+                          />
+                        </div>
+                      </div>
+                      <span class="ipad-frame__btn ipad-frame__btn--vol-up" aria-hidden="true"></span>
+                      <span class="ipad-frame__btn ipad-frame__btn--vol-down" aria-hidden="true"></span>
+                      <span class="ipad-frame__btn ipad-frame__btn--power" aria-hidden="true"></span>
+                    </figure>
+                  </div>
                 </div>
+              </article>
+
+              <article class="feature-slide" data-slide-id="metronome" id="metronome" aria-hidden="true">
+                <div class="feature-layout">
+                  <div class="feature-copy">
+                    <p class="eyebrow">Metronome &amp; grid</p>
+                    <h2>Stay locked to the beat.</h2>
+                    <p class="feature-intro">
+                      Set BPM and time signature, hear a click with optional precount, and see grid lines on
+                      the timeline so stacks and edits land in time.
+                    </p>
+                    <ul class="feature-list">
+                      <li>Metronome with BPM, time signature, and precount.</li>
+                      <li>Beat grid lines on the waveform for visual timing.</li>
+                    </ul>
+                  </div>
+                  <div class="feature-visual">
+                    <figure class="iphone-frame">
+                      <div class="iphone-frame__body">
+                        <div class="iphone-frame__screen">
+                          <img
+                            class="theme-shot"
+                            src="./assets/screenshots/iphone/light/metronome.png"
+                            data-iphone-light-src="./assets/screenshots/iphone/light/metronome.png"
+                            data-iphone-dark-src="./assets/screenshots/iphone/dark/metronome.png"
+                            data-ipad-light-src="./assets/screenshots/ipad/light/metronome.png"
+                            data-ipad-dark-src="./assets/screenshots/ipad/dark/metronome.png"
+                            alt="Metronome settings with tempo and time signature"
+                            width="1179"
+                            height="2556"
+                          />
+                        </div>
+                      </div>
+                      <span class="iphone-frame__btn iphone-frame__btn--silent" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--vol-up" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--vol-down" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--power" aria-hidden="true"></span>
+                    </figure>
+                    <figure class="ipad-frame">
+                      <div class="ipad-frame__body">
+                        <div class="ipad-frame__camera" aria-hidden="true"></div>
+                        <div class="ipad-frame__screen">
+                          <img
+                            class="theme-shot"
+                            src="./assets/screenshots/ipad/light/metronome.png"
+                            data-iphone-light-src="./assets/screenshots/iphone/light/metronome.png"
+                            data-iphone-dark-src="./assets/screenshots/iphone/dark/metronome.png"
+                            data-ipad-light-src="./assets/screenshots/ipad/light/metronome.png"
+                            data-ipad-dark-src="./assets/screenshots/ipad/dark/metronome.png"
+                            alt="Metronome settings on iPad"
+                            width="2732"
+                            height="2048"
+                          />
+                        </div>
+                      </div>
+                      <span class="ipad-frame__btn ipad-frame__btn--vol-up" aria-hidden="true"></span>
+                      <span class="ipad-frame__btn ipad-frame__btn--vol-down" aria-hidden="true"></span>
+                      <span class="ipad-frame__btn ipad-frame__btn--power" aria-hidden="true"></span>
+                    </figure>
+                  </div>
+                </div>
+              </article>
+            </div>
+
+            <div class="feature-slideshow__controls">
+              <button type="button" class="slideshow-nav" data-slideshow-prev aria-label="Previous feature">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="20" height="20" aria-hidden="true">
+                  <path d="M15.41 7.41 14 6l-6 6 6 6 1.41-1.41L10.83 12z" />
+                </svg>
+              </button>
+              <div class="feature-slideshow__dots" role="tablist" aria-label="Feature slides">
+                <button type="button" class="slideshow-dot is-active" data-slideshow-dot aria-label="Stack" aria-selected="true" tabindex="0"></button>
+                <button type="button" class="slideshow-dot" data-slideshow-dot aria-label="Edit track" aria-selected="false" tabindex="-1"></button>
+                <button type="button" class="slideshow-dot" data-slideshow-dot aria-label="Effects" aria-selected="false" tabindex="-1"></button>
+                <button type="button" class="slideshow-dot" data-slideshow-dot aria-label="Fade" aria-selected="false" tabindex="-1"></button>
+                <button type="button" class="slideshow-dot" data-slideshow-dot aria-label="Long press track menu" aria-selected="false" tabindex="-1"></button>
+                <button type="button" class="slideshow-dot" data-slideshow-dot aria-label="Loop" aria-selected="false" tabindex="-1"></button>
+                <button type="button" class="slideshow-dot" data-slideshow-dot aria-label="Loop track" aria-selected="false" tabindex="-1"></button>
+                <button type="button" class="slideshow-dot" data-slideshow-dot aria-label="Merge layers" aria-selected="false" tabindex="-1"></button>
+                <button type="button" class="slideshow-dot" data-slideshow-dot aria-label="Export" aria-selected="false" tabindex="-1"></button>
+                <button type="button" class="slideshow-dot" data-slideshow-dot aria-label="Metronome and grid" aria-selected="false" tabindex="-1"></button>
               </div>
-              <span class="iphone-frame__btn iphone-frame__btn--silent" aria-hidden="true"></span>
-              <span class="iphone-frame__btn iphone-frame__btn--vol-up" aria-hidden="true"></span>
-              <span class="iphone-frame__btn iphone-frame__btn--vol-down" aria-hidden="true"></span>
-              <span class="iphone-frame__btn iphone-frame__btn--power" aria-hidden="true"></span>
-            </figure>
-          </div>
-          <div class="feature-copy">
-            <p class="eyebrow">Metronome &amp; grid</p>
-            <h2>Stay locked to the beat.</h2>
-            <p class="feature-intro">
-              Set BPM and time signature, hear a click with optional precount, and see grid lines on
-              the timeline so stacks and edits land in time.
-            </p>
-            <ul class="feature-list">
-              <li>Metronome with BPM, time signature, and precount.</li>
-              <li>Beat grid lines on the waveform for visual timing.</li>
-            </ul>
+              <button type="button" class="slideshow-nav" data-slideshow-next aria-label="Next feature">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="20" height="20" aria-hidden="true">
+                  <path d="M8.59 16.59 10 18l6-6-6-6-1.41 1.41L13.17 12z" />
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
       </section>
