@@ -16,9 +16,8 @@ export function getTimelineZoomBounds(
   duration: number,
   trackCount: number
 ): TimelineZoomBounds {
-  // Cap max first. Never let a tiny placeholder duration (e.g. 0.01s while
-  // arming a new recording) inflate min above max — that froze live zoom at
-  // tens of thousands of px/s and blanked the recording timeline.
+  // Cap max first so tiny placeholder durations cannot push bounds into
+  // nonsensical ranges (historically tens of thousands of px/s).
   const pixelsPerSecondMax =
     viewportWidth > 0
       ? Math.min(
@@ -26,20 +25,32 @@ export function getTimelineZoomBounds(
           viewportWidth / TIMELINE_VISIBLE_SECONDS_AT_MAX_ZOOM
         )
       : TIMELINE_MAX_PIXELS_PER_SECOND;
-  const rawMin =
-    viewportWidth > 0 && duration > 0
-      ? Math.max(TIMELINE_MIN_PIXELS_PER_SECOND, viewportWidth / duration)
-      : TIMELINE_MIN_PIXELS_PER_SECOND;
-  const pixelsPerSecondMin = Math.min(rawMin, pixelsPerSecondMax);
+
+  // fitPps = pps needed to exactly fill the viewport with the full duration.
+  // That is only a zoom-*out* floor for long content. When fitPps is above the
+  // design default, the clip is shorter than the viewport at 1× — do not raise
+  // min (that forced zoom-*in* on empty/short iPad timelines and stretched
+  // design-density peaks).
+  let pixelsPerSecondMin = TIMELINE_MIN_PIXELS_PER_SECOND;
+  if (viewportWidth > 0 && duration > 0) {
+    const fitPps = viewportWidth / duration;
+    if (fitPps > TIMELINE_DEFAULT_PIXELS_PER_SECOND) {
+      pixelsPerSecondMin = TIMELINE_MIN_PIXELS_PER_SECOND;
+    } else {
+      pixelsPerSecondMin = Math.max(TIMELINE_MIN_PIXELS_PER_SECOND, fitPps);
+    }
+  }
+  pixelsPerSecondMin = Math.min(pixelsPerSecondMin, pixelsPerSecondMax);
+
   const pixelsPerSecondDefault = Math.max(
-    TIMELINE_DEFAULT_PIXELS_PER_SECOND,
-    pixelsPerSecondMin
+    pixelsPerSecondMin,
+    Math.min(TIMELINE_DEFAULT_PIXELS_PER_SECOND, pixelsPerSecondMax)
   );
 
   return {
     pixelsPerSecondMin,
     pixelsPerSecondMax,
-    pixelsPerSecondDefault: Math.min(pixelsPerSecondDefault, pixelsPerSecondMax),
+    pixelsPerSecondDefault,
     trackZoomMin: 1,
     trackZoomMax: Math.max(1, trackCount),
   };

@@ -38,6 +38,7 @@ import {
   peakToAbsoluteScale,
   WAVEFORM_BAR_GAP,
   WAVEFORM_BAR_WIDTH,
+  WAVEFORM_PIXELS_PER_SECOND,
 } from '@/src/audio/waveform';
 import { LoopColumnOverlay } from '@/src/components/LoopColumnOverlay';
 import { TRACK_ROW_ENTER, TRACK_ROW_EXIT } from '@/src/components/listTransitions';
@@ -85,8 +86,6 @@ const TIMELINE_HEADROOM_SECONDS = 30;
 const LAYOUT_DURATION_STEP_SECONDS = 30;
 /** Min interval between React viewport/grid commits while auto-scrolling. */
 const VIEWPORT_COMMIT_MIN_MS = 100;
-/** Cap follow-scroll while recording — 60fps RAF heats long multi-layer takes. */
-const RECORDING_FOLLOW_SCROLL_MS = 50;
 const TRIM_SIDE_BORDER = 16;
 const TRIM_SIDE_BORDER_EXPANDED = 24;
 const TRIM_EDGE_BORDER = 2;
@@ -1899,6 +1898,8 @@ function WaveformViewComponent({
     [viewportWidth, duration, tracks.length]
   );
   zoomBoundsRef.current = zoomBounds;
+  // Frozen for the whole take — rotation / split-view width changes must not
+  // recompute pps mid-record (headroom still uses the new viewportWidth).
   const frozenZoom = followRecordingScroll ? frozenZoomRef.current : null;
   const layoutPixelsPerSecond = frozenZoom?.pixelsPerSecond ?? pixelsPerSecond;
   const layoutTrackZoom = frozenZoom?.trackZoom ?? trackZoom;
@@ -2097,13 +2098,25 @@ function WaveformViewComponent({
     const wasFollowing = prevFollowRecordingScrollRef.current;
     if (followRecordingScroll && !wasFollowing) {
       const bounds = zoomBoundsRef.current;
+      // Clamp first, then cap at capture density. Cap-after-clamp so an inflated
+      // bounds.min cannot re-raise pps above WAVEFORM_PIXELS_PER_SECOND (live
+      // peaks are always captured at design density; higher display pps upsamples
+      // / stretches bars). Zoomed-in → Record intentionally drops to 1× for the
+      // take; do not force zoom-*up* when already zoomed out.
+      // Sync React state so stop/unfreeze does not snap back to a stretched pps.
+      const frozenPps = Math.min(
+        WAVEFORM_PIXELS_PER_SECOND,
+        clampTimelinePixelsPerSecond(pixelsPerSecond, bounds)
+      );
       const snapshot: FrozenTimelineZoom = {
-        // Clamp at freeze time so a bad armed-state pps cannot lock the take.
-        pixelsPerSecond: clampTimelinePixelsPerSecond(pixelsPerSecond, bounds),
+        pixelsPerSecond: frozenPps,
         trackZoom: clampTimelineTrackZoom(trackZoom, bounds),
         verticalScrollY: verticalScrollOffsetRef.current,
       };
       frozenZoomRef.current = snapshot;
+      if (frozenPps !== pixelsPerSecond) {
+        setPixelsPerSecond(frozenPps);
+      }
       verticalScrollRef.current?.scrollTo({ y: snapshot.verticalScrollY, animated: false });
     } else if (!followRecordingScroll && wasFollowing) {
       frozenZoomRef.current = null;
@@ -2728,46 +2741,36 @@ function WaveformViewComponent({
   }, [isPlaying, followRecordingScroll, duration, contentWidth, viewportWidth, layoutPixelsPerSecond]);
 
   useEffect(() => {
-    if (!followRecordingScroll) {
-      return;
-    }
-
-    const syncRecordingScroll = () => {
-      if (viewportWidth <= 0) {
-        return;
-      }
-      const propTime = currentTimeRef.current;
-      const liveTime = getRecordingTimeRef.current?.() ?? propTime;
-      const x = recordingTimeToScrollX(
-        liveTime,
-        contentWidthRef.current,
-        layoutPixelsPerSecond
-      );
-      scrollOffsetRef.current = x;
-      syncMetronomeGridRef.current(x);
-      scrollRef.current?.scrollTo({ x, animated: false });
-    };
-
-    const subscription = AppState.addEventListener('change', (nextState) => {
-      if (nextState === 'active') {
-        syncRecordingScroll();
-      }
-    });
-
-    return () => {
-      subscription.remove();
-    };
-  }, [followRecordingScroll, viewportWidth, layoutPixelsPerSecond]);
-
-  useEffect(() => {
     if (!followRecordingScroll || viewportWidth <= 0) {
       return;
     }
 
+    let raf = 0;
     let bufferSyncRaf = 0;
     let pendingBufferScrollX = 0;
+    let appState: string = AppState.currentState;
+
+    const syncRecordingScroll = () => {
+      const time = getRecordingTimeRef.current?.() ?? currentTimeRef.current;
+      const x = recordingTimeToScrollX(
+        time,
+        contentWidthRef.current,
+        layoutPixelsPerSecond
+      );
+      scrollOffsetRef.current = x;
+      scrollRef.current?.scrollTo({ x, animated: false });
+      syncMetronomeGridRef.current(x);
+    };
+
     const tick = () => {
+      // App Switcher / background: stop scroll RAF; capture keeps running.
+      if (appState !== 'active') {
+        raf = 0;
+        return;
+      }
+      // Keep scheduling while scrubbing — an early return would kill the loop.
       if (isUserScrollingRef.current) {
+        raf = requestAnimationFrame(tick);
         return;
       }
       const time = getRecordingTimeRef.current?.() ?? currentTimeRef.current;
@@ -2782,9 +2785,14 @@ function WaveformViewComponent({
         followLayoutDurationRef.current = nextLayoutDuration;
         setFollowLayoutDuration(nextLayoutDuration);
       }
-      const width = contentWidthRef.current;
-      const x = recordingTimeToScrollX(time, width, layoutPixelsPerSecond);
+      const x = recordingTimeToScrollX(
+        time,
+        contentWidthRef.current,
+        layoutPixelsPerSecond
+      );
       scrollOffsetRef.current = x;
+      // Scroll first; coalesce React viewport/grid updates onto the next frame so
+      // bar remounts never land in the same frame as scrollTo (reads as shake).
       scrollRef.current?.scrollTo({
         x,
         animated: false,
@@ -2796,12 +2804,35 @@ function WaveformViewComponent({
           syncMetronomeGridRef.current(pendingBufferScrollX);
         });
       }
+      raf = requestAnimationFrame(tick);
     };
 
-    tick();
-    const interval = setInterval(tick, RECORDING_FOLLOW_SCROLL_MS);
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      appState = nextState;
+      if (nextState === 'active') {
+        syncRecordingScroll();
+        if (raf === 0) {
+          raf = requestAnimationFrame(tick);
+        }
+      } else if (raf !== 0) {
+        cancelAnimationFrame(raf);
+        raf = 0;
+        if (bufferSyncRaf !== 0) {
+          cancelAnimationFrame(bufferSyncRaf);
+          bufferSyncRaf = 0;
+        }
+      }
+    });
+
+    if (appState === 'active') {
+      raf = requestAnimationFrame(tick);
+    } else {
+      syncRecordingScroll();
+    }
+
     return () => {
-      clearInterval(interval);
+      subscription.remove();
+      cancelAnimationFrame(raf);
       if (bufferSyncRaf !== 0) {
         cancelAnimationFrame(bufferSyncRaf);
       }

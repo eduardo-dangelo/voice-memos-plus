@@ -12,6 +12,7 @@ import {
   TIMELINE_FULL_ZOOM_SPAN_PX,
   TIMELINE_MIN_PIXELS_PER_SECOND,
   TIMELINE_DEFAULT_PIXELS_PER_SECOND,
+  TIMELINE_MAX_PIXELS_PER_SECOND,
 } from './timelineZoom';
 
 test('getTimelineZoomBounds fits full recording at min zoom', () => {
@@ -29,10 +30,61 @@ test('getTimelineZoomBounds clamps very long recordings', () => {
 test('getTimelineZoomBounds does not inflate min for tiny placeholder durations', () => {
   const bounds = getTimelineZoomBounds(393, 0.01, 1);
   assert.ok(bounds.pixelsPerSecondMin <= bounds.pixelsPerSecondMax);
-  assert.ok(bounds.pixelsPerSecondMax <= 384);
+  assert.ok(bounds.pixelsPerSecondMax <= TIMELINE_MAX_PIXELS_PER_SECOND);
   assert.ok(bounds.pixelsPerSecondDefault <= bounds.pixelsPerSecondMax);
   // Must not lock live recording zoom to viewport/0.01 (~39300).
-  assert.ok(bounds.pixelsPerSecondMin < 1000);
+  assert.equal(bounds.pixelsPerSecondMin, TIMELINE_MIN_PIXELS_PER_SECOND);
+  assert.equal(bounds.pixelsPerSecondDefault, TIMELINE_DEFAULT_PIXELS_PER_SECOND);
+});
+
+test('getTimelineZoomBounds keeps design default on wide iPad placeholder', () => {
+  // Armed / empty memo on iPad landscape — must not freeze record at ~viewport/4.
+  const bounds = getTimelineZoomBounds(1200, 0.01, 1);
+  assert.equal(bounds.pixelsPerSecondMin, TIMELINE_MIN_PIXELS_PER_SECOND);
+  assert.equal(bounds.pixelsPerSecondDefault, TIMELINE_DEFAULT_PIXELS_PER_SECOND);
+  assert.ok(bounds.pixelsPerSecondMin <= bounds.pixelsPerSecondMax);
+});
+
+test('getTimelineZoomBounds does not force short clips to fill wide viewport', () => {
+  // Intentional: short clips at 1× leave empty side space rather than raising
+  // pps above capture density (which upsamples / stretches design-density peaks).
+  const bounds = getTimelineZoomBounds(1200, 5, 1);
+  assert.equal(bounds.pixelsPerSecondMin, TIMELINE_MIN_PIXELS_PER_SECOND);
+  assert.equal(bounds.pixelsPerSecondDefault, TIMELINE_DEFAULT_PIXELS_PER_SECOND);
+});
+
+test('getTimelineZoomBounds keeps min <= default on normal viewports', () => {
+  for (const [width, duration] of [
+    [393, 0.01],
+    [1200, 0.01],
+    [1200, 5],
+    [400, 20],
+    [400, 3600],
+    [1180, 60],
+  ] as const) {
+    const bounds = getTimelineZoomBounds(width, duration, 1);
+    assert.ok(
+      bounds.pixelsPerSecondMax >= TIMELINE_DEFAULT_PIXELS_PER_SECOND,
+      `expected max >= default at ${width}x${duration}`
+    );
+    assert.ok(
+      bounds.pixelsPerSecondMin <= TIMELINE_DEFAULT_PIXELS_PER_SECOND,
+      `expected min <= default at ${width}x${duration}`
+    );
+    assert.equal(
+      bounds.pixelsPerSecondDefault,
+      TIMELINE_DEFAULT_PIXELS_PER_SECOND,
+      `1× baseline must stay design density at ${width}x${duration}`
+    );
+  }
+});
+
+test('getTimelineZoomBounds clamps default to max on tiny viewports', () => {
+  // max = min(384, 100/4) = 25 < DEFAULT — default must not exceed max.
+  const bounds = getTimelineZoomBounds(100, 5, 1);
+  assert.equal(bounds.pixelsPerSecondMax, 25);
+  assert.equal(bounds.pixelsPerSecondDefault, 25);
+  assert.ok(bounds.pixelsPerSecondDefault <= bounds.pixelsPerSecondMax);
 });
 
 test('clampTimelinePixelsPerSecond respects bounds', () => {
