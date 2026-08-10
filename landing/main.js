@@ -69,11 +69,10 @@
 
     document.querySelectorAll('[data-theme-toggle]').forEach((btn) => {
       const isDark = theme === 'dark';
+      const label = isDark ? 'Switch to light mode' : 'Switch to dark mode';
       btn.setAttribute('aria-pressed', String(isDark));
-      btn.setAttribute(
-        'aria-label',
-        isDark ? 'Switch to light mode' : 'Switch to dark mode'
-      );
+      btn.setAttribute('aria-label', label);
+      btn.setAttribute('data-tooltip', label);
     });
   }
 
@@ -83,11 +82,10 @@
 
     document.querySelectorAll('[data-device-toggle]').forEach((btn) => {
       const isIpad = device === 'ipad';
+      const label = isIpad ? 'Switch to iPhone' : 'Switch to iPad';
       btn.setAttribute('aria-pressed', String(isIpad));
-      btn.setAttribute(
-        'aria-label',
-        isIpad ? 'Switch to iPhone' : 'Switch to iPad'
-      );
+      btn.setAttribute('aria-label', label);
+      btn.setAttribute('data-tooltip', label);
     });
   }
 
