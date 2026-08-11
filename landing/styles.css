@@ -492,6 +492,11 @@ html[data-device='ipad'] .hero-content {
   line-height: 1.55;
 }
 
+.hero-subtitle strong {
+  color: var(--text-main);
+  font-weight: 650;
+}
+
 .hero-ctas {
   display: flex;
   flex-wrap: wrap;
@@ -983,10 +988,55 @@ html[data-device='ipad'] .iphone-frame {
   border: 1px solid var(--border-card);
   box-shadow: var(--shadow-card);
   font-size: 14px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  column-gap: 12px;
+  row-gap: 6px;
+  align-items: start;
+}
+
+.feature-card-icon {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin: 0;
+  border-radius: 12px;
+  border: 1px solid var(--border-card);
+  background: var(--bg-ghost);
+  color: var(--accent-primary);
+  line-height: 0;
+}
+
+.feature-card-icon svg {
+  display: block;
+  width: 24px;
+  height: 24px;
+}
+
+.feature-card h3 {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: center;
+  font-size: 16px;
+  margin: 0;
+  color: var(--accent-primary);
+}
+
+.feature-card p {
+  grid-column: 2;
+  grid-row: 2;
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.5;
 }
 
 .feature-card-link {
-  display: block;
+  display: grid;
   color: inherit;
   transition: transform 140ms ease-out, box-shadow 140ms ease-out,
     border-color 140ms ease-out;
@@ -997,6 +1047,12 @@ html[data-device='ipad'] .iphone-frame {
   transform: translateY(-2px);
   box-shadow: var(--shadow-soft);
   border-color: var(--border-strong);
+}
+
+.feature-card-link:hover .feature-card-icon,
+.feature-card-link:focus-visible .feature-card-icon {
+  color: var(--accent-sky);
+  border-color: color-mix(in srgb, var(--accent-sky) 40%, var(--border-card));
 }
 
 .feature-card-link:focus-visible {
@@ -1010,16 +1066,9 @@ html[data-device='ipad'] .iphone-frame {
   transform: translateY(-2px);
 }
 
-.feature-card h3 {
-  font-size: 16px;
-  margin: 0 0 8px;
-  color: var(--accent-primary);
-}
-
-.feature-card p {
-  margin: 0;
-  color: var(--text-muted);
-  line-height: 1.5;
+.feature-card-link.is-active .feature-card-icon {
+  color: var(--accent-sky);
+  border-color: color-mix(in srgb, var(--accent-sky) 45%, var(--border-card));
 }
 
 .section-slideshow {
