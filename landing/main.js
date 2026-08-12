@@ -63,9 +63,25 @@
     });
   }
 
+  function applyBrandLogos() {
+    const theme =
+      document.documentElement.getAttribute('data-theme') === 'dark'
+        ? 'dark'
+        : 'light';
+
+    document.querySelectorAll('.theme-logo').forEach((img) => {
+      const attr = theme === 'dark' ? 'data-dark-src' : 'data-light-src';
+      const nextSrc = img.getAttribute(attr);
+      if (nextSrc && img.getAttribute('src') !== nextSrc) {
+        img.setAttribute('src', nextSrc);
+      }
+    });
+  }
+
   function applyTheme(theme) {
     document.documentElement.setAttribute('data-theme', theme);
     applyShots();
+    applyBrandLogos();
 
     document.querySelectorAll('[data-theme-toggle]').forEach((btn) => {
       const isDark = theme === 'dark';
