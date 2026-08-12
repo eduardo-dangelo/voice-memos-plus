@@ -1,0 +1,1002 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Voice Memos Plus</title>
+    <meta
+      name="description"
+      content="Voice Memos Plus is a powerful multi-track voice memo packed with features that take your recordings to the next level."
+    />
+    <link rel="icon" href="./assets/icon.png" type="image/png" />
+    <script>
+      (function () {
+        try {
+          var storedTheme = localStorage.getItem('vmp-theme');
+          var theme =
+            storedTheme ||
+            (window.matchMedia('(prefers-color-scheme: dark)').matches
+              ? 'dark'
+              : 'light');
+          document.documentElement.setAttribute('data-theme', theme);
+        } catch (e) {
+          document.documentElement.setAttribute('data-theme', 'light');
+        }
+        try {
+          var storedDevice = localStorage.getItem('vmp-device');
+          var device =
+            storedDevice === 'ipad' || storedDevice === 'iphone'
+              ? storedDevice
+              : 'iphone';
+          document.documentElement.setAttribute('data-device', device);
+        } catch (e) {
+          document.documentElement.setAttribute('data-device', 'iphone');
+        }
+      })();
+    </script>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container header-inner">
+        <div class="brand">
+          <span class="brand-mark">
+            <img
+              src="./assets/icon.png"
+              data-light-src="./assets/icon.png"
+              data-dark-src="./assets/icon-dark.png"
+              alt="Voice Memos Plus"
+              class="brand-logo theme-logo"
+              width="32"
+              height="32"
+            />
+          </span>
+          <span class="brand-text">
+            <span class="brand-title">Voice Memos Plus</span>
+            <span class="brand-subtitle">Multi-track voice memos</span>
+          </span>
+        </div>
+        <div class="header-actions">
+          <nav class="main-nav" aria-label="Primary">
+            <a href="#features" class="nav-link">Features</a>
+            <a href="privacy.html" class="nav-link">Privacy</a>
+          </nav>
+          <button
+            type="button"
+            class="theme-toggle"
+            data-device-toggle
+            data-tooltip="Switch to iPad"
+            aria-label="Switch to iPad"
+            aria-pressed="false"
+          >
+            <span class="theme-toggle-icon theme-toggle-icon--phone" aria-hidden="true">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                <path d="M15.5 1h-7A2.5 2.5 0 0 0 6 3.5v17A2.5 2.5 0 0 0 8.5 23h7a2.5 2.5 0 0 0 2.5-2.5v-17A2.5 2.5 0 0 0 15.5 1zm-3.5 20a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5zM16 18H8V4h8v14z" />
+              </svg>
+            </span>
+            <span class="theme-toggle-icon theme-toggle-icon--tablet" aria-hidden="true">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                <path d="M20 5H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Zm0 2v10H4V7h16ZM5.25 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z" />
+              </svg>
+            </span>
+          </button>
+          <button
+            type="button"
+            class="theme-toggle"
+            data-theme-toggle
+            data-tooltip="Switch to dark mode"
+            aria-label="Switch to dark mode"
+            aria-pressed="false"
+          >
+            <span class="theme-toggle-icon theme-toggle-icon--moon" aria-hidden="true">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                <path d="M21.752 15.002A9.72 9.72 0 0 1 18 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 0 0 3 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 0 0 9.002-5.998Z" />
+              </svg>
+            </span>
+            <span class="theme-toggle-icon theme-toggle-icon--sun" aria-hidden="true">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                <path d="M12 18a6 6 0 1 1 0-12 6 6 0 0 1 0 12zm0-16a1 1 0 0 1 1 1v1a1 1 0 1 1-2 0V3a1 1 0 0 1 1-1zm0 18a1 1 0 0 1 1 1v1a1 1 0 1 1-2 0v-1a1 1 0 0 1 1-1zm10-8a1 1 0 0 1-1 1h-1a1 1 0 1 1 0-2h1a1 1 0 0 1 1 1zM4 12a1 1 0 0 1-1 1H2a1 1 0 1 1 0-2h1a1 1 0 0 1 1 1zm14.95 6.36a1 1 0 0 1 0 1.41l-.71.71a1 1 0 1 1-1.41-1.41l.71-.71a1 1 0 0 1 1.41 0zM6.76 5.05a1 1 0 0 1 0 1.41l-.71.71A1 1 0 0 1 4.64 5.76l.71-.71a1 1 0 0 1 1.41 0zm12.02 0a1 1 0 0 1 1.41 0l.71.71a1 1 0 1 1-1.41 1.41l-.71-.71a1 1 0 0 1 0-1.41zM6.05 17.24a1 1 0 0 1 1.41 0l.71.71a1 1 0 1 1-1.41 1.41l-.71-.71a1 1 0 0 1 0-1.41z" />
+              </svg>
+            </span>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero" id="top">
+        <div class="hero-backdrop"></div>
+        <div class="hero-overlay"></div>
+        <div class="container hero-content">
+          <div class="hero-copy">
+            <p class="eyebrow">Ever wonder if Voice Memos could do more?</p>
+            <h1>Voice Memos Plus</h1>
+            <p class="hero-subtitle">
+              <strong>Voice Memos Plus</strong> is a powerful multi-track voice recorder that is packed with
+              features that will take your recordings to the next level.
+            </p>
+            <div class="hero-ctas">
+              <span
+                class="button primary is-disabled"
+                aria-disabled="true"
+                title="App Store link coming soon"
+              >
+                <span class="cta-apple-icon" aria-hidden="true"
+                  ><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                    <path
+                      d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"
+                    /></svg></span
+                ><span class="cta-apple-label">Coming soon</span>
+              </span>
+              <button class="button ghost" type="button" data-scroll-target="#features">
+                Explore features
+              </button>
+            </div>
+          </div>
+
+          <div class="hero-device">
+            <figure class="iphone-frame iphone-frame--hero">
+              <div class="iphone-frame__body">
+                <div class="iphone-frame__screen">
+                  <img
+                    class="theme-shot"
+                    src="./assets/screenshots/iphone/light/hero.png"
+                    data-iphone-light-src="./assets/screenshots/iphone/light/hero.png"
+                    data-iphone-dark-src="./assets/screenshots/iphone/dark/hero.png"
+                    data-ipad-light-src="./assets/screenshots/ipad/light/hero.png"
+                    data-ipad-dark-src="./assets/screenshots/ipad/dark/hero.png"
+                    alt="Voice Memos Plus multi-track editor"
+                    width="556"
+                    height="1205"
+                  />
+                </div>
+              </div>
+              <span class="iphone-frame__btn iphone-frame__btn--silent" aria-hidden="true"></span>
+              <span class="iphone-frame__btn iphone-frame__btn--vol-up" aria-hidden="true"></span>
+              <span class="iphone-frame__btn iphone-frame__btn--vol-down" aria-hidden="true"></span>
+              <span class="iphone-frame__btn iphone-frame__btn--power" aria-hidden="true"></span>
+            </figure>
+            <figure class="ipad-frame ipad-frame--hero">
+              <div class="ipad-frame__body">
+                <div class="ipad-frame__camera" aria-hidden="true"></div>
+                <div class="ipad-frame__screen">
+                  <img
+                    class="theme-shot"
+                    src="./assets/screenshots/ipad/light/hero.png"
+                    data-iphone-light-src="./assets/screenshots/iphone/light/hero.png"
+                    data-iphone-dark-src="./assets/screenshots/iphone/dark/hero.png"
+                    data-ipad-light-src="./assets/screenshots/ipad/light/hero.png"
+                    data-ipad-dark-src="./assets/screenshots/ipad/dark/hero.png"
+                    alt="Voice Memos Plus multi-track editor on iPad"
+                    width="2388"
+                    height="1668"
+                  />
+                </div>
+              </div>
+              <span class="ipad-frame__btn ipad-frame__btn--vol-up" aria-hidden="true"></span>
+              <span class="ipad-frame__btn ipad-frame__btn--vol-down" aria-hidden="true"></span>
+              <span class="ipad-frame__btn ipad-frame__btn--power" aria-hidden="true"></span>
+            </figure>
+          </div>
+        </div>
+      </section>
+
+      <section class="section section-features" id="features">
+        <div class="container">
+          <header class="section-header">
+            <p class="eyebrow">Key features</p>
+            <h2>Record. Stack. Shape. Share.</h2>
+            <p class="section-intro">
+              A familiar memo flow — plus the tools to build richer takes on the device in your
+              pocket.
+            </p>
+          </header>
+
+          <div class="features-grid">
+            <a href="#stack" class="feature-card feature-card-link fade-on-scroll" data-slide-target="stack">
+              <h3>Stack</h3>
+              <p>Build harmony, parts, and ideas on top of the same memo.</p>
+            </a>
+            <a href="#edit" class="feature-card feature-card-link fade-on-scroll" data-slide-target="edit">
+              <h3>Edit track</h3>
+              <p>Trim, move, volume, and pan per layer.</p>
+            </a>
+            <a href="#effects" class="feature-card feature-card-link fade-on-scroll" data-slide-target="effects">
+              <h3>Effects</h3>
+              <p>Reverb, delay, and EQ on every track.</p>
+            </a>
+            <a href="#fade" class="feature-card feature-card-link fade-on-scroll" data-slide-target="fade">
+              <h3>Fade</h3>
+              <p>Soft fade-ins and clean fade-outs.</p>
+            </a>
+            <a href="#long-press-track-menu" class="feature-card feature-card-link fade-on-scroll" data-slide-target="long-press-track-menu">
+              <h3>Track Menu</h3>
+              <p>Hold a track for rename, color, loop, and more.</p>
+            </a>
+            <a href="#loop" class="feature-card feature-card-link fade-on-scroll" data-slide-target="loop">
+              <h3>Loop</h3>
+              <p>Repeat a timeline region while you refine.</p>
+            </a>
+            <a href="#loop-track" class="feature-card feature-card-link fade-on-scroll" data-slide-target="loop-track">
+              <h3>Loop track</h3>
+              <p>Stretch a short take into a lasting bed.</p>
+            </a>
+            <a href="#metronome" class="feature-card feature-card-link fade-on-scroll" data-slide-target="metronome">
+              <h3>Metronome &amp; grid</h3>
+              <p>BPM, precount, and beat lines on the timeline.</p>
+            </a>
+          </div>
+        </div>
+      </section>
+
+      <section class="section section-slideshow" id="feature-slideshow">
+        <div class="container">
+          <div
+            class="feature-slideshow fade-on-scroll"
+            data-slideshow
+            tabindex="0"
+            role="region"
+            aria-roledescription="carousel"
+            aria-label="Feature details"
+          >
+            <p class="visually-hidden" data-slideshow-live aria-live="polite"></p>
+
+            <div class="feature-slideshow__viewport">
+              <article class="feature-slide is-active" data-slide-id="stack" id="stack" aria-hidden="false">
+                <div class="feature-layout">
+                  <div class="feature-copy">
+                    <p class="eyebrow">Stack</p>
+                    <h2>Add as many layers as your idea needs.</h2>
+                    <p class="feature-intro">
+                      Don’t stop at a single take. Build harmony, parts, and ideas on top of each other.
+                      Harmony, guitar, a second vocal — all in the same memo on your phone.
+                    </p>
+                    <ul class="feature-list">
+                      <li>Overdub while monitoring what’s already there.</li>
+                      <li>Grow a quick sketch into an arrangement.</li>
+                    </ul>
+                  </div>
+                  <div class="feature-visual">
+                    <figure class="iphone-frame">
+                      <div class="iphone-frame__body">
+                        <div class="iphone-frame__screen">
+                          <img
+                            class="theme-shot"
+                            src="./assets/screenshots/iphone/light/stack.png"
+                            data-iphone-light-src="./assets/screenshots/iphone/light/stack.png"
+                            data-iphone-dark-src="./assets/screenshots/iphone/dark/stack.png"
+                            data-ipad-light-src="./assets/screenshots/ipad/light/stack.png"
+                            data-ipad-dark-src="./assets/screenshots/ipad/dark/stack.png"
+                            alt="Multi-track stack with layered waveforms"
+                            width="556"
+                            height="1205"
+                          />
+                        </div>
+                      </div>
+                      <span class="iphone-frame__btn iphone-frame__btn--silent" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--vol-up" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--vol-down" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--power" aria-hidden="true"></span>
+                    </figure>
+                    <figure class="ipad-frame">
+                      <div class="ipad-frame__body">
+                        <div class="ipad-frame__camera" aria-hidden="true"></div>
+                        <div class="ipad-frame__screen">
+                          <img
+                            class="theme-shot"
+                            src="./assets/screenshots/ipad/light/stack.png"
+                            data-iphone-light-src="./assets/screenshots/iphone/light/stack.png"
+                            data-iphone-dark-src="./assets/screenshots/iphone/dark/stack.png"
+                            data-ipad-light-src="./assets/screenshots/ipad/light/stack.png"
+                            data-ipad-dark-src="./assets/screenshots/ipad/dark/stack.png"
+                            alt="Multi-track stack with layered waveforms on iPad"
+                            width="1224"
+                            height="855"
+                          />
+                        </div>
+                      </div>
+                      <span class="ipad-frame__btn ipad-frame__btn--vol-up" aria-hidden="true"></span>
+                      <span class="ipad-frame__btn ipad-frame__btn--vol-down" aria-hidden="true"></span>
+                      <span class="ipad-frame__btn ipad-frame__btn--power" aria-hidden="true"></span>
+                    </figure>
+                  </div>
+                </div>
+              </article>
+
+              <article class="feature-slide" data-slide-id="edit" id="edit" aria-hidden="true">
+                <div class="feature-layout">
+                  <div class="feature-copy">
+                    <p class="eyebrow">Edit track</p>
+                    <h2>Shape every layer with precision.</h2>
+                    <p class="feature-intro">
+                      Switch between trim, move, volume, and pan to shape each layer as you need. Each tool opens right
+                      on the waveform so edits stay fast and visual.
+                    </p>
+                    <ul class="feature-list feature-list--icons">
+                      <li>
+                        <span class="feature-list-icon" aria-hidden="true">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22" width="22" height="22">
+                            <defs>
+                              <mask id="edit-trim-mask" maskUnits="userSpaceOnUse" x="0" y="0" width="22" height="22">
+                                <rect x="0" y="0" width="22" height="22" fill="white" />
+                                <path fill="black" d="M4.7209 18.1176 C6.6254 18.1176 8.1615 16.5814 8.1615 14.663 C8.1615 14.3224 8.1824 14.2321 8.3283 14.1556 L20.4506 7.7191 C20.2699 5.7521 18.56 5.4045 16.3774 6.183 L10.4414 8.3169 C9.4196 8.6784 8.8914 9.2483 8.6272 10.2145 L8.4882 10.7288 C8.4604 10.8679 8.3283 10.986 8.0017 11.1528 L7.0216 11.6742 C6.9104 11.7367 6.8548 11.7715 6.7922 11.7715 C6.4725 11.7715 6.1388 11.2293 4.7209 11.2293 C2.8233 11.2293 1.2941 12.7654 1.2941 14.663 C1.2941 16.5745 2.8233 18.1176 4.7209 18.1176 Z" />
+                              </mask>
+                            </defs>
+                            <path fill="currentColor" mask="url(#edit-trim-mask)" d="M4.7209 3.9448 C3.1708 3.9448 1.9266 5.2029 1.9266 6.7669 C1.9266 8.3239 3.1708 9.575 4.7209 9.575 C6.0207 9.575 6.2292 9.0328 6.8061 9.0328 C6.9382 9.0328 7.0355 9.0607 7.2093 9.1441 L8.2936 9.721 C8.8358 9.999 9.0026 10.1797 9.0999 10.5412 L9.2389 11.0486 C9.4544 11.8201 9.8228 12.2233 10.6569 12.5222 L16.5929 14.6561 C18.3236 15.2677 19.4566 15.094 19.7416 14.0513 L7.9808 7.8095 C7.5568 7.5801 7.529 7.3507 7.529 6.7669 C7.529 5.196 6.2778 3.9448 4.7209 3.9448 Z M4.7209 5.0848 C5.6592 5.0848 6.396 5.8355 6.396 6.7669 C6.396 7.6913 5.6592 8.442 4.7209 8.442 C3.8103 8.442 3.0666 7.6913 3.0666 6.7669 C3.0666 5.8355 3.8103 5.0848 4.7209 5.0848 Z" />
+                            <path fill="currentColor" d="M4.7209 17.485 C6.2778 17.485 7.529 16.2339 7.529 14.663 C7.529 14.0861 7.5568 13.8567 7.9808 13.6273 L19.7416 7.3786 C19.4566 6.3359 18.3236 6.1622 16.5929 6.7738 L10.6569 8.9077 C9.8228 9.2066 9.4474 9.6098 9.2389 10.3882 L9.0999 10.8957 C9.0026 11.2571 8.8358 11.4378 8.2936 11.7159 L7.2093 12.2858 C7.0355 12.3762 6.9382 12.404 6.8061 12.404 C6.2292 12.404 6.0207 11.8618 4.7209 11.8618 C3.1708 11.8618 1.9266 13.113 1.9266 14.663 C1.9266 16.2269 3.1708 17.485 4.7209 17.485 Z M4.7209 16.3451 C3.8103 16.3451 3.0666 15.6014 3.0666 14.663 C3.0666 13.7455 3.8103 12.9948 4.7209 12.9948 C5.6592 12.9948 6.396 13.7455 6.396 14.663 C6.396 15.6014 5.6592 16.3451 4.7209 16.3451 Z M10.8167 10.9235 C10.5039 10.9235 10.2329 10.6663 10.2329 10.3466 C10.2329 10.0129 10.5039 9.7627 10.8167 9.7627 C11.1365 9.7627 11.4076 10.0129 11.4076 10.3466 C11.4076 10.6663 11.1365 10.9235 10.8167 10.9235 Z" />
+                          </svg>
+                        </span>
+                        <span><strong>Trim</strong>: Cut the waveform to what you need.</span>
+                      </li>
+                      <li>
+                        <span class="feature-list-icon" aria-hidden="true">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22" width="22" height="22">
+                            <path fill="currentColor" d="M19.2715 11.2944 C19.2715 11.0756 19.1839 10.8743 19.0089 10.708 L14.3348 6.1302 C14.186 5.9814 13.9585 5.8851 13.7659 5.8851 C13.302 5.8851 12.9956 6.209 12.9956 6.6554 C12.9956 6.883 13.0657 7.058 13.2057 7.1893 L15.2627 9.185 L17.731 11.2944 L15.2627 13.4039 L13.2057 15.3908 C13.0657 15.5308 12.9956 15.7059 12.9956 15.9247 C12.9956 16.3799 13.302 16.7037 13.7659 16.7037 C13.9585 16.7037 14.186 16.6074 14.3348 16.4586 L19.0089 11.8809 C19.1839 11.7146 19.2715 11.5132 19.2715 11.2944 Z M2.6935 11.2944 C2.6935 11.6708 2.9999 11.9771 3.3762 11.9859 L6.4397 12.0734 L14.8688 12.0734 L17.9323 11.9859 C18.3087 11.9771 18.615 11.6708 18.615 11.2944 C18.615 10.9093 18.3087 10.6117 17.9323 10.6029 L14.8688 10.5154 L6.4397 10.5154 L3.3762 10.6029 C2.9999 10.6117 2.6935 10.9093 2.6935 11.2944 Z M2.037 11.2944 C2.037 11.5132 2.1246 11.7146 2.2996 11.8809 L6.9737 16.4586 C7.1225 16.6074 7.35 16.7037 7.5426 16.7037 C8.0065 16.7037 8.3129 16.3799 8.3129 15.9247 C8.3129 15.7059 8.2428 15.5308 8.1028 15.3908 L6.0459 13.4039 L3.5775 11.2944 L6.0459 9.185 L8.1028 7.1893 C8.2428 7.058 8.3129 6.883 8.3129 6.6554 C8.3129 6.209 8.0065 5.8851 7.5426 5.8851 C7.35 5.8851 7.1225 5.9814 6.9737 6.1302 L2.2996 10.708 C2.1246 10.8743 2.037 11.0756 2.037 11.2944 Z" />
+                          </svg>
+                        </span>
+                        <span><strong>Move</strong>: Slide clips along the timeline.</span>
+                      </li>
+                      <li>
+                        <span class="feature-list-icon" aria-hidden="true">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22" width="22" height="22">
+                            <path fill="currentColor" d="M17.1133 16.2477 C17.3954 16.4383 17.7461 16.3697 17.9519 16.08 C18.9277 14.7383 19.4995 12.8934 19.4995 11.0104 C19.4995 9.1274 18.9353 7.2672 17.9519 5.9408 C17.7461 5.6511 17.3954 5.5825 17.1133 5.773 C16.8313 5.9636 16.7855 6.3219 17.0066 6.6345 C17.8376 7.8085 18.3178 9.3866 18.3178 11.0104 C18.3178 12.6342 17.8223 14.197 17.0066 15.3862 C16.7932 15.6988 16.8313 16.0571 17.1133 16.2477 Z" />
+                            <path fill="currentColor" d="M14.2927 14.258 C14.5442 14.4333 14.9025 14.3799 15.1084 14.0826 C15.6954 13.3127 16.0461 12.1768 16.0461 11.0104 C16.0461 9.844 15.6954 8.7157 15.1084 7.9381 C14.9025 7.6408 14.5442 7.5798 14.2927 7.7628 C13.9801 7.9762 13.9343 8.3574 14.1707 8.67 C14.6128 9.2798 14.8644 10.126 14.8644 11.0104 C14.8644 11.8947 14.6052 12.7333 14.1707 13.3508 C13.942 13.671 13.9801 14.0369 14.2927 14.258 Z" />
+                            <path fill="currentColor" d="M10.702 17.7419 C11.2051 17.7419 11.5634 17.3836 11.5634 16.8881 L11.5634 5.1937 C11.5634 4.6981 11.2051 4.2941 10.6867 4.2941 C10.3284 4.2941 10.0921 4.4542 9.7033 4.8201 L6.4481 7.8695 C6.4023 7.9152 6.3337 7.9381 6.2575 7.9381 L4.0772 7.9381 C3.0404 7.9381 2.4839 8.5099 2.4839 9.6076 L2.4839 12.4436 C2.4839 13.549 3.0404 14.1131 4.0772 14.1131 L6.2575 14.1131 C6.3337 14.1131 6.4023 14.136 6.4481 14.1817 L9.7033 17.2616 C10.0464 17.5971 10.3437 17.7419 10.702 17.7419 Z" />
+                          </svg>
+                        </span>
+                        <span><strong>Volume</strong>: Set level per layer.</span>
+                      </li>
+                      <li>
+                        <span class="feature-list-icon" aria-hidden="true">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22" width="22" height="22">
+                            <defs>
+                              <mask id="edit-pan-mask" maskUnits="userSpaceOnUse" x="0" y="0" width="22" height="22">
+                                <rect x="0" y="0" width="22" height="22" fill="white" />
+                                <path fill="black" d="M6.9887 6.5458 L6.9887 17.4473 C6.9887 19.4066 8.1322 20.5806 10.0914 20.5806 L17.1507 20.5806 C19.1176 20.5806 20.2611 19.399 20.2611 17.4473 L20.2611 6.5458 C20.2611 4.5865 19.1176 3.4049 17.1507 3.4049 L10.0914 3.4049 C8.1322 3.4049 6.9887 4.5789 6.9887 6.5458 Z" />
+                              </mask>
+                            </defs>
+                            <path fill="currentColor" mask="url(#edit-pan-mask)" d="M3.8325 14.6724 L9.6416 14.6724 C11.0062 14.6724 11.7 13.971 11.7 12.5988 L11.7 3.9995 C11.7 2.6273 10.9986 1.9183 9.6416 1.9183 L3.8325 1.9183 C2.4832 1.9183 1.7742 2.6273 1.7742 3.9995 L1.7742 12.5988 C1.7742 13.971 2.4756 14.6724 3.8325 14.6724 Z M3.8935 13.5136 C3.2684 13.5136 2.933 13.1858 2.933 12.5759 L2.933 4.03 C2.933 3.4201 3.2684 3.0771 3.8935 3.0771 L9.5806 3.0771 C10.2134 3.0771 10.5412 3.4201 10.5412 4.03 L10.5412 12.5759 C10.5412 13.1858 10.2134 13.5136 9.5806 13.5136 Z M6.7371 6.8507 C7.5757 6.8507 8.2389 6.1722 8.2389 5.3489 C8.2389 4.5179 7.5757 3.8394 6.7371 3.8394 C5.9061 3.8394 5.2353 4.5179 5.2353 5.3489 C5.2353 6.1722 5.9061 6.8507 6.7371 6.8507 Z M6.7371 6.0731 C6.3254 6.0731 6.0052 5.7529 6.0052 5.3489 C6.0052 4.9448 6.3254 4.6094 6.7371 4.6094 C7.1487 4.6094 7.4689 4.9448 7.4689 5.3489 C7.4689 5.7529 7.1487 6.0731 6.7371 6.0731 Z M6.7371 12.736 C8.2389 12.736 9.4205 11.5468 9.4205 10.0602 C9.4205 8.5889 8.2313 7.392 6.7371 7.392 C5.2505 7.392 4.0536 8.5889 4.0536 10.0602 C4.0536 11.5468 5.2429 12.736 6.7371 12.736 Z M6.7371 11.1503 C6.112 11.1503 5.6393 10.6701 5.6393 10.0754 C5.6393 9.4656 6.1196 8.9853 6.7371 8.9853 C7.3546 8.9853 7.8349 9.4656 7.8349 10.0754 C7.8349 10.6701 7.3622 11.1503 6.7371 11.1503 Z" />
+                            <path fill="currentColor" d="M8.0331 6.5458 L8.0331 17.4473 C8.0331 18.8272 8.7192 19.5362 10.0914 19.5362 L17.1507 19.5362 C18.5306 19.5362 19.2243 18.8272 19.2243 17.4473 L19.2243 6.5458 C19.2243 5.1583 18.5306 4.4493 17.1507 4.4493 L10.0914 4.4493 C8.7116 4.4493 8.0331 5.1583 8.0331 6.5458 Z M9.2528 6.5534 C9.2528 5.974 9.5501 5.6767 10.1372 5.6767 L17.105 5.6767 C17.6996 5.6767 17.997 5.974 17.997 6.5534 L17.997 17.4321 C17.997 18.0115 17.692 18.3088 17.105 18.3088 L10.1372 18.3088 C9.5501 18.3088 9.2528 18.0115 9.2528 17.4321 Z M13.6211 10.1288 C14.5511 10.1288 15.3059 9.3817 15.3059 8.4516 C15.3059 7.5292 14.5588 6.7973 13.6211 6.7973 C12.6986 6.7973 11.9515 7.5216 11.9515 8.4516 C11.9515 9.3893 12.6986 10.1288 13.6211 10.1288 Z M13.6211 9.275 C13.1713 9.275 12.813 8.9091 12.813 8.4516 C12.813 7.9942 13.1637 7.6359 13.6211 7.6359 C14.0709 7.6359 14.4368 8.0095 14.4368 8.4516 C14.4368 8.9091 14.0785 9.275 13.6211 9.275 Z M13.6211 17.2034 C15.283 17.2034 16.6171 15.8769 16.6171 14.2074 C16.6171 12.5454 15.283 11.219 13.6211 11.219 C11.9668 11.219 10.6327 12.5531 10.6327 14.2074 C10.6327 15.8693 11.9668 17.2034 13.6211 17.2034 Z M13.6211 15.4347 C12.9426 15.4347 12.3937 14.9011 12.3937 14.2074 C12.3937 13.506 12.935 12.9647 13.6211 12.9647 C14.3224 12.9647 14.8561 13.506 14.8561 14.2074 C14.8561 14.9011 14.3224 15.4347 13.6211 15.4347 Z" />
+                          </svg>
+                        </span>
+                        <span><strong>Pan</strong>: Place each layer in the stereo field.</span>
+                      </li>
+                    </ul>
+                  </div>
+                  <div class="feature-visual">
+                    <figure class="iphone-frame">
+                      <div class="iphone-frame__body">
+                        <div class="iphone-frame__screen">
+                          <img
+                            class="theme-shot"
+                            src="./assets/screenshots/iphone/light/edit.png"
+                            data-iphone-light-src="./assets/screenshots/iphone/light/edit.png"
+                            data-iphone-dark-src="./assets/screenshots/iphone/dark/edit.png"
+                            data-ipad-light-src="./assets/screenshots/ipad/light/edit.png"
+                            data-ipad-dark-src="./assets/screenshots/ipad/dark/edit.png"
+                            alt="Trim tool active on a selected track"
+                            width="556"
+                            height="1205"
+                          />
+                        </div>
+                      </div>
+                      <span class="iphone-frame__btn iphone-frame__btn--silent" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--vol-up" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--vol-down" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--power" aria-hidden="true"></span>
+                    </figure>
+                    <figure class="ipad-frame">
+                      <div class="ipad-frame__body">
+                        <div class="ipad-frame__camera" aria-hidden="true"></div>
+                        <div class="ipad-frame__screen">
+                          <img
+                            class="theme-shot"
+                            src="./assets/screenshots/ipad/light/edit.png"
+                            data-iphone-light-src="./assets/screenshots/iphone/light/edit.png"
+                            data-iphone-dark-src="./assets/screenshots/iphone/dark/edit.png"
+                            data-ipad-light-src="./assets/screenshots/ipad/light/edit.png"
+                            data-ipad-dark-src="./assets/screenshots/ipad/dark/edit.png"
+                            alt="Trim tool active on a selected track on iPad"
+                            width="1224"
+                            height="855"
+                          />
+                        </div>
+                      </div>
+                      <span class="ipad-frame__btn ipad-frame__btn--vol-up" aria-hidden="true"></span>
+                      <span class="ipad-frame__btn ipad-frame__btn--vol-down" aria-hidden="true"></span>
+                      <span class="ipad-frame__btn ipad-frame__btn--power" aria-hidden="true"></span>
+                    </figure>
+                  </div>
+                </div>
+              </article>
+
+              <article class="feature-slide" data-slide-id="effects" id="effects" aria-hidden="true">
+                <div class="feature-layout">
+                  <div class="feature-copy">
+                    <p class="eyebrow">Effects</p>
+                    <h2>Reverb, delay, and EQ on each layer.</h2>
+                    <p class="feature-intro">
+                      Treat every track like its own channel strip — add space, echoes, and tone without
+                      bouncing out to another app.
+                    </p>
+                    <ul class="feature-list feature-list--icons">
+                      <li>
+                        <span class="feature-list-icon" aria-hidden="true">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22" width="22" height="22">
+                            <path fill="currentColor" d="M1.375 11.1692 C1.375 13.6433 2.3055 15.9105 3.9155 17.5944 C4.1814 17.875 4.5433 17.8455 4.7501 17.6091 C4.9642 17.3802 4.9199 17.0405 4.6688 16.782 C3.2509 15.3049 2.4828 13.3257 2.4828 11.1692 C2.4828 9.0127 3.2509 7.0335 4.6688 5.5564 C4.9199 5.2905 4.9642 4.9582 4.7501 4.7219 C4.5433 4.493 4.1814 4.4634 3.9155 4.744 C2.3055 6.4279 1.375 8.6951 1.375 11.1692 Z M20.6136 11.1692 C20.6136 8.6951 19.683 6.4279 18.073 4.744 C17.8072 4.4634 17.4453 4.493 17.2385 4.7219 C17.0243 4.9582 17.0687 5.2905 17.3197 5.5564 C18.7303 7.0335 19.5058 9.0127 19.5058 11.1692 C19.5058 13.3257 18.7303 15.3049 17.3197 16.782 C17.0687 17.0405 17.0243 17.3802 17.2385 17.6091 C17.4453 17.8455 17.8072 17.875 18.073 17.5944 C19.683 15.9105 20.6136 13.6433 20.6136 11.1692 Z" />
+                            <path fill="currentColor" d="M4.0189 11.1692 C4.0189 12.9195 4.6467 14.5517 5.7766 15.7702 C6.0351 16.0582 6.4117 16.0656 6.6333 15.8071 C6.8475 15.5634 6.7884 15.2459 6.5373 14.9726 C5.6215 13.9461 5.1193 12.6167 5.1193 11.1692 C5.1193 9.7217 5.6215 8.3924 6.5373 7.3658 C6.7884 7.0925 6.8475 6.775 6.6333 6.5239 C6.4117 6.2728 6.0351 6.2728 5.7766 6.5608 C4.6467 7.7868 4.0189 9.4115 4.0189 11.1692 Z M17.9697 11.1692 C17.9697 9.4115 17.3419 7.7868 16.212 6.5608 C15.9535 6.2728 15.5768 6.2728 15.3553 6.5239 C15.1337 6.775 15.2002 7.0925 15.4439 7.3658 C16.367 8.3924 16.8693 9.7217 16.8693 11.1692 C16.8693 12.6167 16.367 13.9461 15.4439 14.9726 C15.2002 15.2459 15.1337 15.5634 15.3553 15.8071 C15.5768 16.0656 15.9535 16.0582 16.212 15.7702 C17.3419 14.5517 17.9697 12.9195 17.9697 11.1692 Z" />
+                            <path fill="currentColor" d="M6.6555 11.1692 C6.6555 12.1588 6.9952 13.0894 7.586 13.8205 C7.8297 14.1307 8.2359 14.1307 8.4575 13.8796 C8.679 13.6285 8.583 13.3331 8.3688 13.0303 C7.97 12.5281 7.7632 11.8782 7.7632 11.1692 C7.7632 10.4602 7.97 9.8103 8.3688 9.3007 C8.583 9.0053 8.679 8.7099 8.4575 8.4588 C8.2359 8.2077 7.8297 8.2077 7.586 8.5105 C6.9952 9.2417 6.6555 10.1722 6.6555 11.1692 Z M15.3331 11.1692 C15.3331 10.1722 14.9934 9.2417 14.4026 8.5105 C14.1589 8.2077 13.7527 8.2077 13.5311 8.4588 C13.3096 8.7099 13.3982 9.0053 13.6197 9.3007 C14.0185 9.8103 14.2253 10.4602 14.2253 11.1692 C14.2253 11.8782 14.0185 12.5281 13.6197 13.0303 C13.3982 13.3331 13.3096 13.6285 13.5311 13.8796 C13.7527 14.1307 14.1589 14.1307 14.4026 13.8205 C14.9934 13.0894 15.3331 12.1588 15.3331 11.1692 Z" />
+                            <path fill="currentColor" d="M9.6465 11.184 C9.6465 11.9003 10.2742 12.5059 11.0054 12.5059 C11.7365 12.5059 12.3347 11.9003 12.3347 11.1692 C12.3347 10.4307 11.7439 9.8251 11.0054 9.8251 C10.2594 9.8251 9.6465 10.4454 9.6465 11.184 Z" />
+                          </svg>
+                        </span>
+                        <span><strong>Reverb</strong>: Add space and depth per layer.</span>
+                      </li>
+                      <li>
+                        <span class="feature-list-icon" aria-hidden="true">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22" width="22" height="22">
+                            <path fill="currentColor" d="M4.8053 9.3457 L0.7878 9.3457 C0.1576 9.3457 0 9.7746 0.3414 10.2648 L2.302 13.0482 C2.5909 13.4508 3.011 13.4421 3.2911 13.0482 L5.2517 10.256 C5.5843 9.7746 5.4268 9.3457 4.8053 9.3457 Z M10.7923 2.1071 C5.8994 2.1071 1.8644 6.1509 1.8644 11.0438 C1.8644 11.4552 2.197 11.7965 2.6084 11.7965 C3.0197 11.7965 3.3611 11.4552 3.3611 11.0438 C3.3611 6.9737 6.7222 3.6038 10.7923 3.6038 C13.2869 3.6038 15.4751 4.8117 16.8143 6.6761 C17.0769 7.035 17.497 7.1487 17.8559 6.9212 C18.2147 6.7111 18.311 6.2297 18.0134 5.8446 C16.3679 3.5951 13.742 2.1071 10.7923 2.1071 Z M16.7793 12.7243 L20.7881 12.7243 C21.4183 12.7243 21.5846 12.2954 21.2345 11.8053 L19.2826 9.0219 C18.9938 8.6192 18.5736 8.628 18.2935 9.0219 L16.3329 11.814 C15.9915 12.2954 16.1578 12.7243 16.7793 12.7243 Z M10.7923 19.963 C15.6764 19.963 19.7203 15.9104 19.7203 11.0263 C19.7203 10.6149 19.3789 10.2735 18.9675 10.2735 C18.5561 10.2735 18.2235 10.6149 18.2235 11.0263 C18.2235 15.0876 14.8537 18.4662 10.7923 18.4662 C8.2977 18.4662 6.1095 17.2583 4.7703 15.394 C4.499 15.0351 4.0876 14.9213 3.72 15.1401 C3.3699 15.3589 3.2736 15.8404 3.5712 16.2255 C5.2167 18.475 7.8426 19.963 10.7923 19.963 Z" />
+                            <path fill="currentColor" d="M10.7923 5.9146 C10.3897 5.9146 10.0658 6.2297 10.0658 6.6323 L10.0658 11.5777 C10.0658 11.7878 10.1358 11.9628 10.2846 12.1641 L12.4028 14.9563 C12.7092 15.3589 13.1381 15.4202 13.5057 15.1664 C13.8296 14.9388 13.8646 14.5012 13.5932 14.1248 L10.7135 10.2297 L11.51 12.6718 L11.51 6.6323 C11.51 6.2297 11.1862 5.9146 10.7923 5.9146 Z" />
+                          </svg>
+                        </span>
+                        <span><strong>Delay</strong>: Create echoes that repeat in time.</span>
+                      </li>
+                      <li>
+                        <span class="feature-list-icon" aria-hidden="true">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22" width="22" height="22">
+                            <defs>
+                              <mask id="effects-eq-mask0" maskUnits="userSpaceOnUse" x="0" y="0" width="22" height="22">
+                                <rect x="0" y="0" width="22" height="22" fill="white" />
+                                <path fill="black" d="M13.9935 18.7407 C15.1489 18.7407 16.0942 17.7954 16.0942 16.64 C16.0942 15.4846 15.1489 14.5393 13.9935 14.5393 C12.8381 14.5393 11.884 15.4846 11.884 16.64 C11.884 17.7954 12.8381 18.7407 13.9935 18.7407 Z" />
+                                <path fill="black" d="M7.8139 13.4014 C8.9693 13.4014 9.9146 12.4474 9.9146 11.292 C9.9146 10.1366 8.9693 9.1913 7.8139 9.1913 C6.6586 9.1913 5.7133 10.1366 5.7133 11.292 C5.7133 12.4474 6.6586 13.4014 7.8139 13.4014 Z" />
+                                <path fill="black" d="M13.9935 8.0447 C15.1489 8.0447 16.0942 7.0993 16.0942 5.944 C16.0942 4.7886 15.1489 3.8345 13.9935 3.8345 C12.8381 3.8345 11.884 4.7886 11.884 5.944 C11.884 7.0993 12.8381 8.0447 13.9935 8.0447 Z" />
+                              </mask>
+                              <mask id="effects-eq-mask1" maskUnits="userSpaceOnUse" x="0" y="0" width="22" height="22">
+                                <rect x="0" y="0" width="22" height="22" fill="white" />
+                                <path fill="black" d="M7.8139 13.4014 C8.9693 13.4014 9.9146 12.4474 9.9146 11.292 C9.9146 10.1366 8.9693 9.1913 7.8139 9.1913 C6.6586 9.1913 5.7133 10.1366 5.7133 11.292 C5.7133 12.4474 6.6586 13.4014 7.8139 13.4014 Z" />
+                                <path fill="black" d="M13.9935 8.0447 C15.1489 8.0447 16.0942 7.0993 16.0942 5.944 C16.0942 4.7886 15.1489 3.8345 13.9935 3.8345 C12.8381 3.8345 11.884 4.7886 11.884 5.944 C11.884 7.0993 12.8381 8.0447 13.9935 8.0447 Z" />
+                              </mask>
+                              <mask id="effects-eq-mask2" maskUnits="userSpaceOnUse" x="0" y="0" width="22" height="22">
+                                <rect x="0" y="0" width="22" height="22" fill="white" />
+                                <path fill="black" d="M13.9935 8.0447 C15.1489 8.0447 16.0942 7.0993 16.0942 5.944 C16.0942 4.7886 15.1489 3.8345 13.9935 3.8345 C12.8381 3.8345 11.884 4.7886 11.884 5.944 C11.884 7.0993 12.8381 8.0447 13.9935 8.0447 Z" />
+                              </mask>
+                            </defs>
+                            <path fill="currentColor" mask="url(#effects-eq-mask0)" d="M2.7373 17.3402 L19.0001 17.3402 C19.359 17.3402 19.6741 17.0339 19.6741 16.64 C19.6741 16.2461 19.359 15.931 19.0001 15.931 L2.7373 15.931 C2.3434 15.931 2.037 16.2461 2.037 16.64 C2.037 17.0339 2.3434 17.3402 2.7373 17.3402 Z" />
+                            <path fill="currentColor" mask="url(#effects-eq-mask1)" d="M13.9935 18.7407 C15.1489 18.7407 16.0942 17.7954 16.0942 16.64 C16.0942 15.4846 15.1489 14.5393 13.9935 14.5393 C12.8381 14.5393 11.884 15.4846 11.884 16.64 C11.884 17.7954 12.8381 18.7407 13.9935 18.7407 Z M13.9935 17.6641 C13.4158 17.6641 12.9694 17.2089 12.9694 16.64 C12.9694 16.0535 13.4158 15.6159 13.9935 15.6159 C14.5712 15.6159 15.0176 16.0535 15.0176 16.64 C15.0176 17.2089 14.5712 17.6641 13.9935 17.6641 Z" />
+                            <path fill="currentColor" mask="url(#effects-eq-mask1)" d="M2.7373 11.9922 L19.0001 11.9922 C19.359 11.9922 19.6741 11.6859 19.6741 11.292 C19.6741 10.8981 19.359 10.583 19.0001 10.583 L2.7373 10.583 C2.3434 10.583 2.037 10.8981 2.037 11.292 C2.037 11.6859 2.3434 11.9922 2.7373 11.9922 Z" />
+                            <path fill="currentColor" mask="url(#effects-eq-mask2)" d="M7.8139 13.4014 C8.9693 13.4014 9.9146 12.4474 9.9146 11.292 C9.9146 10.1366 8.9693 9.1913 7.8139 9.1913 C6.6586 9.1913 5.7133 10.1366 5.7133 11.292 C5.7133 12.4474 6.6586 13.4014 7.8139 13.4014 Z M7.8139 12.3161 C7.245 12.3161 6.7899 11.8609 6.7899 11.292 C6.7899 10.7143 7.245 10.2679 7.8139 10.2679 C8.3916 10.2679 8.838 10.7143 8.838 11.292 C8.838 11.8609 8.3916 12.3161 7.8139 12.3161 Z" />
+                            <path fill="currentColor" mask="url(#effects-eq-mask2)" d="M2.7373 6.6529 L19.0001 6.6529 C19.359 6.6529 19.6741 6.3378 19.6741 5.944 C19.6741 5.5501 19.359 5.2437 19.0001 5.2437 L2.7373 5.2437 C2.3434 5.2437 2.037 5.5501 2.037 5.944 C2.037 6.3378 2.3434 6.6529 2.7373 6.6529 Z" />
+                            <path fill="currentColor" d="M13.9935 8.0447 C15.1489 8.0447 16.0942 7.0993 16.0942 5.944 C16.0942 4.7886 15.1489 3.8345 13.9935 3.8345 C12.8381 3.8345 11.884 4.7886 11.884 5.944 C11.884 7.0993 12.8381 8.0447 13.9935 8.0447 Z M13.9935 6.968 C13.4158 6.968 12.9694 6.5129 12.9694 5.9352 C12.9694 5.3575 13.4158 4.9111 13.9935 4.9111 C14.5712 4.9111 15.0176 5.3575 15.0176 5.9352 C15.0176 6.5129 14.5712 6.968 13.9935 6.968 Z" />
+                          </svg>
+                        </span>
+                        <span><strong>EQ</strong>: Shape tone with a curve per layer.</span>
+                      </li>
+                    </ul>
+                  </div>
+                  <div class="feature-visual">
+                    <figure class="iphone-frame">
+                      <div class="iphone-frame__body">
+                        <div class="iphone-frame__screen">
+                          <img
+                            class="theme-shot"
+                            src="./assets/screenshots/iphone/light/effects.png"
+                            data-iphone-light-src="./assets/screenshots/iphone/light/effects.png"
+                            data-iphone-dark-src="./assets/screenshots/iphone/dark/effects.png"
+                            data-ipad-light-src="./assets/screenshots/ipad/light/effects.png"
+                            data-ipad-dark-src="./assets/screenshots/ipad/dark/effects.png"
+                            alt="EQ curve and presets on a track"
+                            width="556"
+                            height="1205"
+                          />
+                        </div>
+                      </div>
+                      <span class="iphone-frame__btn iphone-frame__btn--silent" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--vol-up" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--vol-down" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--power" aria-hidden="true"></span>
+                    </figure>
+                    <figure class="ipad-frame">
+                      <div class="ipad-frame__body">
+                        <div class="ipad-frame__camera" aria-hidden="true"></div>
+                        <div class="ipad-frame__screen">
+                          <img
+                            class="theme-shot"
+                            src="./assets/screenshots/ipad/light/effects.png"
+                            data-iphone-light-src="./assets/screenshots/iphone/light/effects.png"
+                            data-iphone-dark-src="./assets/screenshots/iphone/dark/effects.png"
+                            data-ipad-light-src="./assets/screenshots/ipad/light/effects.png"
+                            data-ipad-dark-src="./assets/screenshots/ipad/dark/effects.png"
+                            alt="EQ curve and presets on a track on iPad"
+                            width="1224"
+                            height="855"
+                          />
+                        </div>
+                      </div>
+                      <span class="ipad-frame__btn ipad-frame__btn--vol-up" aria-hidden="true"></span>
+                      <span class="ipad-frame__btn ipad-frame__btn--vol-down" aria-hidden="true"></span>
+                      <span class="ipad-frame__btn ipad-frame__btn--power" aria-hidden="true"></span>
+                    </figure>
+                  </div>
+                </div>
+              </article>
+
+              <article class="feature-slide" data-slide-id="fade" id="fade" aria-hidden="true">
+                <div class="feature-layout">
+                  <div class="feature-copy">
+                    <p class="eyebrow">Fade</p>
+                    <h2>Soft starts and clean endings.</h2>
+                    <p class="feature-intro">
+                      Shape fade-in and fade-out per layer so stacked takes breathe in and out instead of
+                      clicking at the edges.
+                    </p>
+                    <ul class="feature-list">
+                      <li>Set fade-in and fade-out length on each layer.</li>
+                      <li>Curve the fade so entries and exits feel natural.</li>
+                    </ul>
+                  </div>
+                  <div class="feature-visual">
+                    <figure class="iphone-frame">
+                      <div class="iphone-frame__body">
+                        <div class="iphone-frame__screen">
+                          <img
+                            class="theme-shot"
+                            src="./assets/screenshots/iphone/light/fade.png"
+                            data-iphone-light-src="./assets/screenshots/iphone/light/fade.png"
+                            data-iphone-dark-src="./assets/screenshots/iphone/dark/fade.png"
+                            data-ipad-light-src="./assets/screenshots/ipad/light/fade.png"
+                            data-ipad-dark-src="./assets/screenshots/ipad/dark/fade.png"
+                            alt="Fade-in curve on a selected track"
+                            width="556"
+                            height="1205"
+                          />
+                        </div>
+                      </div>
+                      <span class="iphone-frame__btn iphone-frame__btn--silent" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--vol-up" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--vol-down" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--power" aria-hidden="true"></span>
+                    </figure>
+                    <figure class="ipad-frame">
+                      <div class="ipad-frame__body">
+                        <div class="ipad-frame__camera" aria-hidden="true"></div>
+                        <div class="ipad-frame__screen">
+                          <img
+                            class="theme-shot"
+                            src="./assets/screenshots/ipad/light/fade.png"
+                            data-iphone-light-src="./assets/screenshots/iphone/light/fade.png"
+                            data-iphone-dark-src="./assets/screenshots/iphone/dark/fade.png"
+                            data-ipad-light-src="./assets/screenshots/ipad/light/fade.png"
+                            data-ipad-dark-src="./assets/screenshots/ipad/dark/fade.png"
+                            alt="Fade-in curve on a selected track on iPad"
+                            width="1224"
+                            height="855"
+                          />
+                        </div>
+                      </div>
+                      <span class="ipad-frame__btn ipad-frame__btn--vol-up" aria-hidden="true"></span>
+                      <span class="ipad-frame__btn ipad-frame__btn--vol-down" aria-hidden="true"></span>
+                      <span class="ipad-frame__btn ipad-frame__btn--power" aria-hidden="true"></span>
+                    </figure>
+                  </div>
+                </div>
+              </article>
+
+              <article class="feature-slide" data-slide-id="long-press-track-menu" id="long-press-track-menu" aria-hidden="true">
+                <div class="feature-layout">
+                  <div class="feature-copy">
+                    <p class="eyebrow">Track Menu</p>
+                    <h2>Long-press for track options.</h2>
+                    <p class="feature-intro">
+                      Instantly access editing options by long-pressing any layer, all without leaving the editor.
+                 
+                    </p>
+                    <ul class="feature-list feature-list--icons">
+                      <li>
+                        <span class="feature-list-icon" aria-hidden="true">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22" width="22" height="22">
+  <defs>
+    <mask id="track-menu-export-mask0" maskUnits="userSpaceOnUse" x="0" y="0" width="22" height="22">
+      <rect x="0" y="0" width="22" height="22" fill="white"/>
+      <path fill="black" d="M12.818 13.8536 L12.818 3.4471 C12.818 2.2654 11.832 1.2875 10.6422 1.2875 C9.4524 1.2875 8.4663 2.2654 8.4663 3.4471 L8.4663 13.8536 C8.4663 15.0353 9.4524 16.0132 10.6422 16.0132 C11.832 16.0132 12.818 15.0353 12.818 13.8536 Z"/>
+    </mask>
+  </defs>
+  <path data-layer="monochrome-0" fill="currentColor" mask="url(#track-menu-export-mask0)" d="M6.8202 20.862 L14.4642 20.862 C16.6563 20.862 17.8787 19.6477 17.8787 17.4556 L17.8787 11.1807 C17.8787 8.9967 16.6563 7.7743 14.4642 7.7743 L6.8202 7.7743 C4.628 7.7743 3.4138 8.9967 3.4138 11.1807 L3.4138 17.4556 C3.4138 19.6477 4.628 20.862 6.8202 20.862 Z M6.8202 19.5499 C5.4837 19.5499 4.7258 18.8002 4.7258 17.4556 L4.7258 11.1807 C4.7258 9.8442 5.4837 9.0863 6.8202 9.0863 L14.4642 9.0863 C15.8088 9.0863 16.5667 9.8442 16.5667 11.1807 L16.5667 17.4556 C16.5667 18.8002 15.8088 19.5499 14.4642 19.5499 Z"/>
+  <path data-layer="monochrome-0" fill="currentColor" d="M7.8796 6.3645 C8.0344 6.3645 8.2137 6.2993 8.3278 6.1689 L9.5909 4.8243 L10.6422 3.7078 L11.7016 4.8243 L12.9566 6.1689 C13.0706 6.2993 13.2418 6.3645 13.3966 6.3645 C13.7389 6.3645 13.9915 6.1282 13.9915 5.794 C13.9915 5.6148 13.9263 5.4844 13.8041 5.3621 L11.1148 2.7707 C10.9518 2.6077 10.8133 2.5588 10.6422 2.5588 C10.4792 2.5588 10.3407 2.6077 10.1695 2.7707 L7.4884 5.3621 C7.3662 5.4844 7.2928 5.6148 7.2928 5.794 C7.2928 6.1282 7.5373 6.3645 7.8796 6.3645 Z M10.6422 14.4811 C10.9926 14.4811 11.2941 14.1959 11.2941 13.8536 L11.2941 5.5659 L11.1963 3.3656 C11.18 3.0722 10.9437 2.8196 10.6422 2.8196 C10.3488 2.8196 10.1125 3.0722 10.0962 3.3656 L9.9984 5.5659 L9.9984 13.8536 C9.9984 14.1959 10.2918 14.4811 10.6422 14.4811 Z"/>
+</svg>
+                        </span>
+                        <span><strong>Export track</strong></span>
+                      </li>
+                      <li>
+                        <span class="feature-list-icon" aria-hidden="true">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22" width="22" height="22">
+  <path data-layer="monochrome-0" fill="currentColor" d="M5.2786 18.5914 L16.4888 7.3915 L14.6906 5.5831 L3.4702 16.783 L2.4941 19.0744 C2.3913 19.321 2.6585 19.6087 2.9051 19.5059 Z M17.393 6.5079 L18.4308 5.4906 C18.9548 4.9666 18.9856 4.4015 18.513 3.9288 L18.1636 3.5795 C17.7012 3.1171 17.1361 3.1582 16.6121 3.6719 L15.5743 4.6995 Z"/>
+</svg>
+                        </span>
+                        <span><strong>Rename track</strong></span>
+                      </li>
+                      <li>
+                        <span class="feature-list-icon" aria-hidden="true">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22" width="22" height="22">
+  <defs>
+    <mask id="track-menu-duplicate-mask0" maskUnits="userSpaceOnUse" x="0" y="0" width="22" height="22">
+      <rect x="0" y="0" width="22" height="22" fill="white"/>
+      <path fill="black" d="M8.7081 20.0358 L17.1821 20.0358 C18.9377 20.0358 19.8239 19.158 19.8239 17.4193 L19.8239 8.8778 C19.8239 7.1391 18.9377 6.2613 17.1821 6.2613 L8.7081 6.2613 C6.9356 6.2613 6.0578 7.1306 6.0578 8.8778 L6.0578 17.4193 C6.0578 19.158 6.9356 20.0358 8.7081 20.0358 Z"/>
+    </mask>
+  </defs>
+  <path data-layer="monochrome-0" fill="currentColor" mask="url(#track-menu-duplicate-mask0)" d="M4.6145 16.128 L13.0886 16.128 C14.8442 16.128 15.7304 15.2502 15.7304 13.5115 L15.7304 4.9699 C15.7304 3.2312 14.8442 2.3534 13.0886 2.3534 L4.6145 2.3534 C2.8421 2.3534 1.9643 3.2312 1.9643 4.9699 L1.9643 13.5115 C1.9643 15.2502 2.8421 16.128 4.6145 16.128 Z M4.6314 14.7691 C3.7874 14.7691 3.3232 14.3133 3.3232 13.4355 L3.3232 5.0459 C3.3232 4.1681 3.7874 3.7123 4.6314 3.7123 L13.0633 3.7123 C13.8988 3.7123 14.3715 4.1681 14.3715 5.0459 L14.3715 13.4355 C14.3715 14.3133 13.8988 14.7691 13.0633 14.7691 Z"/>
+  <path data-layer="monochrome-0" fill="currentColor" d="M8.7081 20.0358 L17.1821 20.0358 C18.9377 20.0358 19.8239 19.158 19.8239 17.4193 L19.8239 8.8778 C19.8239 7.1391 18.9377 6.2613 17.1821 6.2613 L8.7081 6.2613 C6.9356 6.2613 6.0578 7.1306 6.0578 8.8778 L6.0578 17.4193 C6.0578 19.158 6.9356 20.0358 8.7081 20.0358 Z M8.725 18.6769 C7.8894 18.6769 7.4167 18.2212 7.4167 17.3434 L7.4167 8.9537 C7.4167 8.0759 7.8894 7.6202 8.725 7.6202 L17.1568 7.6202 C17.9924 7.6202 18.465 8.0759 18.465 8.9537 L18.465 17.3434 C18.465 18.2212 17.9924 18.6769 17.1568 18.6769 Z"/>
+  <path data-layer="monochrome-0" fill="currentColor" d="M13.6541 16.3305 L13.6541 9.9497 C13.6541 9.5192 13.3587 9.2238 12.9367 9.2238 C12.5231 9.2238 12.2446 9.5192 12.2446 9.9497 L12.2446 16.3305 C12.2446 16.7526 12.5231 17.048 12.9367 17.048 C13.3587 17.048 13.6541 16.761 13.6541 16.3305 Z M9.7631 13.8407 L16.144 13.8407 C16.566 13.8407 16.8614 13.5621 16.8614 13.1486 C16.8614 12.7265 16.566 12.4311 16.144 12.4311 L9.7631 12.4311 C9.3242 12.4311 9.0372 12.7265 9.0372 13.1486 C9.0372 13.5621 9.3327 13.8407 9.7631 13.8407 Z"/>
+</svg>
+                        </span>
+                        <span><strong>Duplicate track</strong></span>
+                      </li>
+                      <li>
+                        <span class="feature-list-icon" aria-hidden="true">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22" width="22" height="22">
+  <path data-layer="monochrome-0" fill="currentColor" d="M11.6603 19.0667 C14.9767 19.0667 17.1903 17.893 17.1903 16.1599 C17.1903 14.608 15.8669 14.2614 15.8669 13.3476 C15.8669 12.0872 20.4438 11.8351 20.4438 8.5974 C20.4438 5.3991 17.1431 3.2879 12.2432 3.2879 C5.8072 3.2879 1.4667 6.502 1.4667 11.3152 C1.4667 15.9472 5.5866 19.0667 11.6603 19.0667 Z M11.6603 17.7197 C6.3271 17.7197 2.8137 15.1516 2.8137 11.3152 C2.8137 7.2976 6.5477 4.635 12.2432 4.635 C16.379 4.635 19.0967 6.242 19.0967 8.5974 C19.0967 11.3467 14.4883 10.9765 14.4883 13.3555 C14.4883 14.7026 15.8433 15.128 15.8433 16.0575 C15.8433 17.058 14.1969 17.7197 11.6603 17.7197 Z M11.0143 15.8606 C12.2117 15.8606 13.1964 14.8759 13.1964 13.6706 C13.1964 12.4811 12.2117 11.4964 11.0143 11.4964 C9.8169 11.4964 8.8322 12.4811 8.8322 13.6706 C8.8322 14.8759 9.8169 15.8606 11.0143 15.8606 Z M11.0143 14.9468 C10.3132 14.9468 9.746 14.3796 9.746 13.6706 C9.746 12.8907 10.3447 12.4259 10.9986 12.4181 C11.6682 12.4102 12.2826 12.8671 12.2826 13.6706 C12.2826 14.3796 11.7233 14.9468 11.0143 14.9468 Z"/>
+  <path data-layer="monochrome-0" fill="currentColor" d="M5.4449 12.3944 C6.1696 12.3944 6.7525 11.7957 6.7525 11.071 C6.7525 10.3462 6.1696 9.7633 5.4449 9.7633 C4.728 9.7633 4.1372 10.3462 4.1372 11.071 C4.1372 11.7957 4.728 12.3944 5.4449 12.3944 Z"/>
+  <path data-layer="monochrome-0" fill="currentColor" d="M8.3202 9.8736 C9.234 9.8736 9.9745 9.141 9.9745 8.2114 C9.9745 7.3055 9.2261 6.5808 8.3202 6.5808 C7.3985 6.5808 6.658 7.3055 6.658 8.2114 C6.658 9.141 7.3985 9.8736 8.3202 9.8736 Z"/>
+  <path data-layer="monochrome-0" fill="currentColor" d="M12.3141 8.5974 C13.0546 8.5974 13.6375 8.0066 13.6375 7.2661 C13.6375 6.5335 13.0546 5.9427 12.3141 5.9427 C11.5894 5.9427 10.9828 6.5335 10.9828 7.2661 C10.9828 8.0066 11.5894 8.5974 12.3141 8.5974 Z"/>
+  <path data-layer="monochrome-0" fill="currentColor" d="M15.9142 9.1016 C16.505 9.1016 16.9777 8.6211 16.9777 8.0224 C16.9777 7.4315 16.505 6.951 15.9142 6.951 C15.3155 6.951 14.8271 7.4315 14.8271 8.0224 C14.8271 8.6211 15.3155 9.1016 15.9142 9.1016 Z"/>
+</svg>
+                        </span>
+                        <span><strong>Change color</strong></span>
+                      </li>
+                      <li>
+                        <span class="feature-list-icon" aria-hidden="true">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22" width="22" height="22">
+  <path data-layer="monochrome-0" fill="currentColor" d="M9.4424 18.3253 L9.4424 12.9826 C9.4424 12.6366 9.2483 12.4509 8.9022 12.4509 C8.7418 12.4509 8.5899 12.5015 8.4633 12.6028 L5.2729 15.2446 C5.0112 15.4725 4.9943 15.8186 5.2729 16.0465 L8.4633 18.6967 C8.5899 18.798 8.7418 18.8571 8.9022 18.8571 C9.2483 18.8571 9.4424 18.663 9.4424 18.3253 Z M19.2669 11.0498 C18.8617 11.0498 18.5579 11.3621 18.5579 11.7672 L18.5579 12.5691 C18.5579 14.0124 17.5535 14.9577 16.0258 14.9577 L8.2017 14.9577 C7.8134 14.9577 7.4927 15.2784 7.4927 15.6582 C7.4927 16.0465 7.8134 16.3672 8.2017 16.3672 L15.8908 16.3672 C18.406 16.3672 19.9759 14.9408 19.9759 12.6704 L19.9759 11.7672 C19.9759 11.3621 19.672 11.0498 19.2669 11.0498 Z"/>
+  <path data-layer="monochrome-0" fill="currentColor" d="M12.4978 4.3736 L12.4978 9.7163 C12.4978 10.0539 12.6919 10.248 13.0379 10.248 C13.1983 10.248 13.3502 10.1889 13.4768 10.0876 L16.6673 7.4458 C16.9373 7.2264 16.9542 6.8803 16.6673 6.644 L13.4768 3.9937 C13.3502 3.8925 13.1983 3.8418 13.0379 3.8418 C12.6919 3.8418 12.4978 4.0275 12.4978 4.3736 Z M2.6733 11.6491 C3.0784 11.6491 3.3907 11.3368 3.3907 10.9317 L3.3907 10.1298 C3.3907 8.6865 4.3866 7.7328 5.9143 7.7328 L13.7469 7.7328 C14.1267 7.7328 14.4475 7.4205 14.4475 7.0322 C14.4475 6.6524 14.1267 6.3317 13.7469 6.3317 L6.0494 6.3317 C3.5426 6.3317 1.9643 7.7497 1.9643 10.0285 L1.9643 10.9317 C1.9643 11.3368 2.2766 11.6491 2.6733 11.6491 Z"/>
+</svg>
+                        </span>
+                        <span><strong>Loop track</strong></span>
+                      </li>
+                      <li>
+                        <span class="feature-list-icon" aria-hidden="true">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22" width="22" height="22">
+  <defs>
+    <mask id="track-menu-mute-mask0" maskUnits="userSpaceOnUse" x="0" y="0" width="22" height="22">
+      <rect x="0" y="0" width="22" height="22" fill="white"/>
+      <path fill="black" d="M17.5213 20.04 C18.2212 20.7308 19.3483 20.7308 20.0209 20.0218 C20.6936 19.3401 20.6936 18.2402 20.0118 17.5494 L4.4506 1.9972 C3.7598 1.3064 2.6327 1.3064 1.9419 1.9972 C1.2692 2.6699 1.2692 3.8061 1.9419 4.4878 Z"/>
+    </mask>
+  </defs>
+  <path data-layer="monochrome-0" fill="currentColor" mask="url(#track-menu-mute-mask0)" d="M6.1685 14.0136 L8.7681 14.0136 C8.8499 14.0136 8.9226 14.0409 8.9862 14.0954 L13.0856 17.7676 C13.5219 18.1584 13.8582 18.3402 14.2945 18.3402 C14.8854 18.3402 15.3216 17.913 15.3216 17.3222 L15.3216 3.3788 C15.3216 2.788 14.8854 2.3063 14.2764 2.3063 C13.8401 2.3063 13.5674 2.5063 13.0856 2.9335 L8.9862 6.5693 C8.9226 6.6238 8.8499 6.6511 8.7681 6.6511 L6.1685 6.6511 C4.9323 6.6511 4.3142 7.2783 4.3142 8.5962 L4.3142 12.0775 C4.3142 13.3955 4.9323 14.0136 6.1685 14.0136 Z M6.2321 12.6865 C5.8867 12.6865 5.7322 12.532 5.7322 12.1957 L5.7322 8.4781 C5.7322 8.1327 5.8867 7.9782 6.2321 7.9782 L9.1408 7.9782 C9.3771 7.9782 9.5498 7.9327 9.7589 7.7418 L13.631 4.2242 C13.6765 4.1787 13.731 4.1515 13.7855 4.1515 C13.8491 4.1515 13.9037 4.1969 13.9037 4.2787 L13.9037 16.3587 C13.9037 16.4405 13.8491 16.4951 13.7855 16.4951 C13.7401 16.4951 13.6855 16.4678 13.6401 16.4223 L9.7589 12.9229 C9.5498 12.7411 9.3771 12.6865 9.1408 12.6865 Z"/>
+  <path data-layer="monochrome-0" fill="currentColor" d="M18.2757 19.2946 C18.5484 19.5673 18.9938 19.5673 19.2665 19.2946 C19.5301 19.0129 19.5392 18.5766 19.2665 18.3039 L3.6961 2.7426 C3.4235 2.4699 2.969 2.4699 2.6963 2.7426 C2.4327 3.0062 2.4327 3.4698 2.6963 3.7334 Z"/>
+</svg>
+                        </span>
+                        <span><strong>Mute</strong></span>
+                      </li>
+                      <li>
+                        <span class="feature-list-icon" aria-hidden="true">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22" width="22" height="22">
+  <path data-layer="monochrome-0" fill="currentColor" d="M2.037 11.3198 C2.037 13.9544 2.7985 16.8604 4.0852 19.1186 C4.304 19.495 4.7154 19.6 5.1093 19.3812 C5.4769 19.1799 5.582 18.7685 5.3544 18.3571 C4.1815 16.2214 3.525 13.6743 3.525 11.3198 C3.525 6.4619 6.4923 3.2234 10.9475 3.2234 C15.3939 3.2234 18.3699 6.4619 18.3699 11.3198 C18.3699 13.6743 17.7047 16.2214 16.5318 18.3571 C16.3042 18.7685 16.4093 19.1799 16.7769 19.3812 C17.1708 19.6 17.5909 19.495 17.801 19.1186 C19.0877 16.8604 19.8579 13.9544 19.8579 11.3198 C19.8579 5.5604 16.3042 1.7354 10.9475 1.7354 C5.582 1.7354 2.037 5.5604 2.037 11.3198 Z M4.7767 18.8998 C5.0655 19.9064 5.9233 20.3703 6.9387 20.0814 C7.9452 19.7926 8.4179 18.9173 8.1203 17.9107 L6.8686 13.6393 C6.5798 12.6415 5.722 12.1688 4.7067 12.4577 C3.7001 12.7553 3.2274 13.6218 3.525 14.6371 Z M17.1095 18.8998 L18.3612 14.6371 C18.6588 13.6131 18.1949 12.7553 17.1795 12.4577 C16.1642 12.1688 15.3152 12.6415 15.0176 13.6393 L13.7659 17.9107 C13.4683 18.9261 13.941 19.7926 14.9475 20.0814 C15.9716 20.3703 16.8207 19.9064 17.1095 18.8998 Z"/>
+</svg>
+                        </span>
+                        <span><strong>Solo</strong></span>
+                      </li>
+                      <li>
+                        <span class="feature-list-icon" aria-hidden="true">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22" width="22" height="22">
+  <path data-layer="monochrome-0" fill="currentColor" d="M6.527 20.68 L15.1766 20.68 C16.5662 20.68 17.3035 19.9238 17.3035 18.4302 L17.3035 11.917 C17.3035 10.4328 16.5662 9.6766 15.1766 9.6766 L6.527 9.6766 C5.1373 9.6766 4.4 10.4328 4.4 11.917 L4.4 18.4302 C4.4 19.9238 5.1373 20.68 6.527 20.68 Z M6.5742 19.2526 C6.1677 19.2526 5.9314 18.9973 5.9314 18.5341 L5.9314 11.813 C5.9314 11.3498 6.1677 11.104 6.5742 11.104 L15.1293 11.104 C15.5452 11.104 15.7721 11.3498 15.7721 11.813 L15.7721 18.5341 C15.7721 18.9973 15.5452 19.2526 15.1293 19.2526 Z M6.0543 10.4045 L7.5573 10.4045 L7.5573 7.2188 C7.5573 4.8271 9.0793 3.5699 10.847 3.5699 C12.6148 3.5699 14.1556 4.8271 14.1556 7.2188 L14.1556 10.4045 L15.6492 10.4045 L15.6492 7.4173 C15.6492 3.8629 13.3237 2.1424 10.847 2.1424 C8.3798 2.1424 6.0543 3.8629 6.0543 7.4173 Z"/>
+</svg>
+                        </span>
+                        <span><strong>Lock</strong></span>
+                      </li>
+                      <li>
+                        <span class="feature-list-icon" aria-hidden="true">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22" width="22" height="22">
+  <defs>
+    <mask id="track-menu-merge-mask0" maskUnits="userSpaceOnUse" x="0" y="0" width="22" height="22">
+      <rect x="0" y="0" width="22" height="22" fill="white"/>
+      <path fill="black" d="M4.8268 15.5215 C4.8268 18.1212 6.9609 19.3959 9.2598 18.0782 L14.8887 14.8412 C16.1061 14.1465 16.6862 13.1583 16.6862 11.7117 L16.6862 5.2234 C16.6862 2.5522 14.4948 1.3705 12.2676 2.6524 L5.0488 6.8204 C4.8913 6.9063 4.8268 7.0209 4.8268 7.1713 Z"/>
+      <path fill="black" d="M7.6842 17.1615 C7.6842 19.7826 9.89 21.0001 12.1172 19.7253 L17.7461 16.4883 C18.9635 15.7865 19.5364 14.8054 19.5364 13.3516 L19.5364 6.8705 C19.5364 4.1993 17.3522 3.0176 15.1178 4.2995 L7.8991 8.4675 C7.7487 8.5534 7.6842 8.668 7.6842 8.8184 Z"/>
+    </mask>
+    <mask id="track-menu-merge-mask1" maskUnits="userSpaceOnUse" x="0" y="0" width="22" height="22">
+      <rect x="0" y="0" width="22" height="22" fill="white"/>
+      <path fill="black" d="M7.6842 17.1615 C7.6842 19.7826 9.89 21.0001 12.1172 19.7253 L17.7461 16.4883 C18.9635 15.7865 19.5364 14.8054 19.5364 13.3516 L19.5364 6.8705 C19.5364 4.1993 17.3522 3.0176 15.1178 4.2995 L7.8991 8.4675 C7.7487 8.5534 7.6842 8.668 7.6842 8.8184 Z"/>
+    </mask>
+  </defs>
+  <path data-layer="monochrome-0" fill="currentColor" mask="url(#track-menu-merge-mask0)" d="M3.6667 13.9818 C3.6667 15.2637 4.6764 15.2208 5.2995 14.8555 L11.1361 11.4896 C11.8307 11.0886 11.9167 10.9454 11.9167 10.1361 L11.9167 3.3328 C11.9167 2.0365 10.8926 2.101 10.2838 2.4519 L4.4473 5.8249 C3.7526 6.2188 3.6667 6.3692 3.6667 7.1784 Z"/>
+  <path data-layer="monochrome-0" fill="currentColor" mask="url(#track-menu-merge-mask1)" d="M6.5241 15.629 C6.5241 16.9109 7.5267 16.8679 8.1569 16.5027 L13.9935 13.1368 C14.6881 12.7357 14.7669 12.5925 14.7669 11.7833 L14.7669 4.9727 C14.7669 3.6837 13.75 3.7481 13.1413 4.099 L7.2975 7.4649 C6.61 7.8659 6.5241 8.0163 6.5241 8.8184 Z"/>
+  <path data-layer="monochrome-0" fill="currentColor" d="M9.5104 17.2116 C9.5104 18.3503 10.3411 18.6869 11.2435 18.1641 L16.8652 14.9415 C17.5241 14.5619 17.7604 14.168 17.7604 13.3659 L17.7604 6.7058 C17.7604 5.6029 16.944 5.3523 16.0417 5.8679 L10.4199 9.112 C9.7396 9.5059 9.5104 9.907 9.5104 10.6876 Z M10.7279 16.9825 L10.7279 10.709 C10.7279 10.4369 10.8066 10.2937 11.043 10.1576 L16.4642 6.9708 C16.5286 6.935 16.5859 6.9565 16.5859 7.0424 L16.5859 13.323 C16.5859 13.5593 16.5071 13.7383 16.2708 13.8816 L10.8424 17.0398 C10.778 17.0827 10.7279 17.0541 10.7279 16.9825 Z"/>
+</svg>
+                        </span>
+                        <span><strong>Merge</strong></span>
+                      </li>
+                      <li>
+                        <span class="feature-list-icon" aria-hidden="true">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22" width="22" height="22">
+  <path data-layer="monochrome-0" fill="currentColor" d="M8.3264 17.9594 C8.659 17.9594 8.8778 17.7493 8.8691 17.443 L8.5977 8.0774 C8.589 7.771 8.3701 7.5697 8.055 7.5697 C7.7224 7.5697 7.5036 7.7798 7.5124 8.0861 L7.775 17.443 C7.7837 17.7581 8.0025 17.9594 8.3264 17.9594 Z M10.9172 17.9594 C11.2499 17.9594 11.4862 17.7493 11.4862 17.443 L11.4862 8.0861 C11.4862 7.7798 11.2499 7.5697 10.9172 7.5697 C10.5846 7.5697 10.357 7.7798 10.357 8.0861 L10.357 17.443 C10.357 17.7493 10.5846 17.9594 10.9172 17.9594 Z M13.5168 17.9594 C13.832 17.9594 14.0508 17.7581 14.0595 17.443 L14.3221 8.0861 C14.3309 7.7798 14.112 7.5697 13.7794 7.5697 C13.4643 7.5697 13.2455 7.771 13.2368 8.0861 L12.9742 17.443 C12.9654 17.7493 13.1842 17.9594 13.5168 17.9594 Z M7.0747 5.2852 L8.4664 5.2852 L8.4664 3.4121 C8.4664 2.9132 8.8165 2.5893 9.3417 2.5893 L12.4753 2.5893 C13.0004 2.5893 13.3505 2.9132 13.3505 3.4121 L13.3505 5.2852 L14.7423 5.2852 L14.7423 3.3246 C14.7423 2.0554 13.9195 1.2852 12.5715 1.2852 L9.2454 1.2852 C7.8975 1.2852 7.0747 2.0554 7.0747 3.3246 Z M3.1009 5.9855 L18.7423 5.9855 C19.1012 5.9855 19.39 5.6791 19.39 5.3202 C19.39 4.9614 19.1012 4.6638 18.7423 4.6638 L3.1009 4.6638 C2.7508 4.6638 2.4444 4.9614 2.4444 5.3202 C2.4444 5.6879 2.7508 5.9855 3.1009 5.9855 Z M6.9084 20.7778 L14.9348 20.7778 C16.1865 20.7778 17.0267 19.9638 17.088 18.7121 L17.7007 5.8192 L16.2915 5.8192 L15.7051 18.5633 C15.6876 19.0885 15.3112 19.4561 14.7948 19.4561 L7.031 19.4561 C6.532 19.4561 6.1557 19.0798 6.1294 18.5633 L5.508 5.8192 L4.1338 5.8192 L4.7552 18.7209 C4.8165 19.9726 5.6392 20.7778 6.9084 20.7778 Z"/>
+</svg>
+                        </span>
+                        <span><strong>Delete track</strong></span>
+                      </li>
+                    </ul>
+                  </div>
+                  <div class="feature-visual">
+                    <figure class="iphone-frame">
+                      <div class="iphone-frame__body">
+                        <div class="iphone-frame__screen">
+                          <img
+                            class="theme-shot"
+                            src="./assets/screenshots/iphone/light/track-menu.png"
+                            data-iphone-light-src="./assets/screenshots/iphone/light/track-menu.png"
+                            data-iphone-dark-src="./assets/screenshots/iphone/dark/track-menu.png"
+                            data-ipad-light-src="./assets/screenshots/ipad/light/track-menu.png"
+                            data-ipad-dark-src="./assets/screenshots/ipad/dark/track-menu.png"
+                            alt="Track menu with export, rename, loop, solo, and more"
+                            width="556"
+                            height="1205"
+                          />
+                        </div>
+                      </div>
+                      <span class="iphone-frame__btn iphone-frame__btn--silent" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--vol-up" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--vol-down" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--power" aria-hidden="true"></span>
+                    </figure>
+                    <figure class="ipad-frame">
+                      <div class="ipad-frame__body">
+                        <div class="ipad-frame__camera" aria-hidden="true"></div>
+                        <div class="ipad-frame__screen">
+                          <img
+                            class="theme-shot"
+                            src="./assets/screenshots/ipad/light/track-menu.png"
+                            data-iphone-light-src="./assets/screenshots/iphone/light/track-menu.png"
+                            data-iphone-dark-src="./assets/screenshots/iphone/dark/track-menu.png"
+                            data-ipad-light-src="./assets/screenshots/ipad/light/track-menu.png"
+                            data-ipad-dark-src="./assets/screenshots/ipad/dark/track-menu.png"
+                            alt="Track menu on iPad"
+                            width="1224"
+                            height="855"
+                          />
+                        </div>
+                      </div>
+                      <span class="ipad-frame__btn ipad-frame__btn--vol-up" aria-hidden="true"></span>
+                      <span class="ipad-frame__btn ipad-frame__btn--vol-down" aria-hidden="true"></span>
+                      <span class="ipad-frame__btn ipad-frame__btn--power" aria-hidden="true"></span>
+                    </figure>
+                  </div>
+                </div>
+              </article>
+
+              <article class="feature-slide" data-slide-id="loop" id="loop" aria-hidden="true">
+                <div class="feature-layout">
+                  <div class="feature-copy">
+                    <p class="eyebrow">Loop</p>
+                    <h2>Practice and polish inside a region.</h2>
+                    <p class="feature-intro">
+                      Set a loop on the timeline and repeat a section while you stack, replace, or listen —
+                      perfect for refining a phrase.
+                    </p>
+                    <ul class="feature-list">
+                      <li>Drag loop start and end on the timeline.</li>
+                      <li>Keep cycling a section while you overdub or edit.</li>
+                    </ul>
+                  </div>
+                  <div class="feature-visual">
+                    <figure class="iphone-frame">
+                      <div class="iphone-frame__body">
+                        <div class="iphone-frame__screen">
+                          <img
+                            class="theme-shot"
+                            src="./assets/screenshots/iphone/light/loop.png"
+                            data-iphone-light-src="./assets/screenshots/iphone/light/loop.png"
+                            data-iphone-dark-src="./assets/screenshots/iphone/dark/loop.png"
+                            data-ipad-light-src="./assets/screenshots/ipad/light/loop.png"
+                            data-ipad-dark-src="./assets/screenshots/ipad/dark/loop.png"
+                            alt="Timeline loop region highlighted on the waveform"
+                            width="556"
+                            height="1205"
+                          />
+                        </div>
+                      </div>
+                      <span class="iphone-frame__btn iphone-frame__btn--silent" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--vol-up" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--vol-down" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--power" aria-hidden="true"></span>
+                    </figure>
+                    <figure class="ipad-frame">
+                      <div class="ipad-frame__body">
+                        <div class="ipad-frame__camera" aria-hidden="true"></div>
+                        <div class="ipad-frame__screen">
+                          <img
+                            class="theme-shot"
+                            src="./assets/screenshots/ipad/light/loop.png"
+                            data-iphone-light-src="./assets/screenshots/iphone/light/loop.png"
+                            data-iphone-dark-src="./assets/screenshots/iphone/dark/loop.png"
+                            data-ipad-light-src="./assets/screenshots/ipad/light/loop.png"
+                            data-ipad-dark-src="./assets/screenshots/ipad/dark/loop.png"
+                            alt="Timeline loop region on iPad"
+                            width="1224"
+                            height="855"
+                          />
+                        </div>
+                      </div>
+                      <span class="ipad-frame__btn ipad-frame__btn--vol-up" aria-hidden="true"></span>
+                      <span class="ipad-frame__btn ipad-frame__btn--vol-down" aria-hidden="true"></span>
+                      <span class="ipad-frame__btn ipad-frame__btn--power" aria-hidden="true"></span>
+                    </figure>
+                  </div>
+                </div>
+              </article>
+
+              <article class="feature-slide" data-slide-id="loop-track" id="loop-track" aria-hidden="true">
+                <div class="feature-layout">
+                  <div class="feature-copy">
+                    <p class="eyebrow">Loop track</p>
+                    <h2>Turn a short take into a lasting bed.</h2>
+                    <p class="feature-intro">
+                      Loop an individual track for a set duration so a groove, pad, or ostinato keeps
+                      running under new layers.
+                    </p>
+                    <ul class="feature-list">
+                      <li>Repeat a single layer without re-recording it.</li>
+                      <li>Set how long the track keeps cycling under the mix.</li>
+                    </ul>
+                  </div>
+                  <div class="feature-visual">
+                    <figure class="iphone-frame">
+                      <div class="iphone-frame__body">
+                        <div class="iphone-frame__screen">
+                          <img
+                            class="theme-shot"
+                            src="./assets/screenshots/iphone/light/loop-track.png"
+                            data-iphone-light-src="./assets/screenshots/iphone/light/loop-track.png"
+                            data-iphone-dark-src="./assets/screenshots/iphone/dark/loop-track.png"
+                            data-ipad-light-src="./assets/screenshots/ipad/light/loop-track.png"
+                            data-ipad-dark-src="./assets/screenshots/ipad/dark/loop-track.png"
+                            alt="Looped track with repeat markers on the waveform"
+                            width="556"
+                            height="1205"
+                          />
+                        </div>
+                      </div>
+                      <span class="iphone-frame__btn iphone-frame__btn--silent" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--vol-up" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--vol-down" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--power" aria-hidden="true"></span>
+                    </figure>
+                    <figure class="ipad-frame">
+                      <div class="ipad-frame__body">
+                        <div class="ipad-frame__camera" aria-hidden="true"></div>
+                        <div class="ipad-frame__screen">
+                          <img
+                            class="theme-shot"
+                            src="./assets/screenshots/ipad/light/loop-track.png"
+                            data-iphone-light-src="./assets/screenshots/iphone/light/loop-track.png"
+                            data-iphone-dark-src="./assets/screenshots/iphone/dark/loop-track.png"
+                            data-ipad-light-src="./assets/screenshots/ipad/light/loop-track.png"
+                            data-ipad-dark-src="./assets/screenshots/ipad/dark/loop-track.png"
+                            alt="Looped track with repeat markers on iPad"
+                            width="1224"
+                            height="855"
+                          />
+                        </div>
+                      </div>
+                      <span class="ipad-frame__btn ipad-frame__btn--vol-up" aria-hidden="true"></span>
+                      <span class="ipad-frame__btn ipad-frame__btn--vol-down" aria-hidden="true"></span>
+                      <span class="ipad-frame__btn ipad-frame__btn--power" aria-hidden="true"></span>
+                    </figure>
+                  </div>
+                </div>
+              </article>
+
+              <article class="feature-slide" data-slide-id="metronome" id="metronome" aria-hidden="true">
+                <div class="feature-layout">
+                  <div class="feature-copy">
+                    <p class="eyebrow">Metronome &amp; grid</p>
+                    <h2>Stay locked to the beat.</h2>
+                    <p class="feature-intro">
+                      Set BPM and time signature, hear a click with optional precount, and see grid lines on
+                      the timeline so stacks and edits land in time.
+                    </p>
+                    <ul class="feature-list">
+                      <li>Metronome with BPM, time signature, and precount.</li>
+                      <li>Beat grid lines on the waveform for visual timing.</li>
+                    </ul>
+                  </div>
+                  <div class="feature-visual">
+                    <figure class="iphone-frame">
+                      <div class="iphone-frame__body">
+                        <div class="iphone-frame__screen">
+                          <img
+                            class="theme-shot"
+                            src="./assets/screenshots/iphone/light/metronome.png"
+                            data-iphone-light-src="./assets/screenshots/iphone/light/metronome.png"
+                            data-iphone-dark-src="./assets/screenshots/iphone/dark/metronome.png"
+                            data-ipad-light-src="./assets/screenshots/ipad/light/metronome.png"
+                            data-ipad-dark-src="./assets/screenshots/ipad/dark/metronome.png"
+                            alt="Metronome settings with tempo and time signature"
+                            width="556"
+                            height="1205"
+                          />
+                        </div>
+                      </div>
+                      <span class="iphone-frame__btn iphone-frame__btn--silent" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--vol-up" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--vol-down" aria-hidden="true"></span>
+                      <span class="iphone-frame__btn iphone-frame__btn--power" aria-hidden="true"></span>
+                    </figure>
+                    <figure class="ipad-frame">
+                      <div class="ipad-frame__body">
+                        <div class="ipad-frame__camera" aria-hidden="true"></div>
+                        <div class="ipad-frame__screen">
+                          <img
+                            class="theme-shot"
+                            src="./assets/screenshots/ipad/light/metronome.png"
+                            data-iphone-light-src="./assets/screenshots/iphone/light/metronome.png"
+                            data-iphone-dark-src="./assets/screenshots/iphone/dark/metronome.png"
+                            data-ipad-light-src="./assets/screenshots/ipad/light/metronome.png"
+                            data-ipad-dark-src="./assets/screenshots/ipad/dark/metronome.png"
+                            alt="Metronome settings on iPad"
+                            width="1224"
+                            height="855"
+                          />
+                        </div>
+                      </div>
+                      <span class="ipad-frame__btn ipad-frame__btn--vol-up" aria-hidden="true"></span>
+                      <span class="ipad-frame__btn ipad-frame__btn--vol-down" aria-hidden="true"></span>
+                      <span class="ipad-frame__btn ipad-frame__btn--power" aria-hidden="true"></span>
+                    </figure>
+                  </div>
+                </div>
+              </article>
+            </div>
+
+            <div class="feature-slideshow__controls">
+              <button type="button" class="slideshow-nav" data-slideshow-prev aria-label="Previous feature">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="20" height="20" aria-hidden="true">
+                  <path d="M15.41 7.41 14 6l-6 6 6 6 1.41-1.41L10.83 12z" />
+                </svg>
+              </button>
+              <div class="feature-slideshow__dots" role="tablist" aria-label="Feature slides">
+                <button type="button" class="slideshow-dot is-active" data-slideshow-dot aria-label="Stack" aria-selected="true" tabindex="0"></button>
+                <button type="button" class="slideshow-dot" data-slideshow-dot aria-label="Edit track" aria-selected="false" tabindex="-1"></button>
+                <button type="button" class="slideshow-dot" data-slideshow-dot aria-label="Effects" aria-selected="false" tabindex="-1"></button>
+                <button type="button" class="slideshow-dot" data-slideshow-dot aria-label="Fade" aria-selected="false" tabindex="-1"></button>
+                <button type="button" class="slideshow-dot" data-slideshow-dot aria-label="Track Menu" aria-selected="false" tabindex="-1"></button>
+                <button type="button" class="slideshow-dot" data-slideshow-dot aria-label="Loop" aria-selected="false" tabindex="-1"></button>
+                <button type="button" class="slideshow-dot" data-slideshow-dot aria-label="Loop track" aria-selected="false" tabindex="-1"></button>
+                <button type="button" class="slideshow-dot" data-slideshow-dot aria-label="Metronome and grid" aria-selected="false" tabindex="-1"></button>
+              </div>
+              <button type="button" class="slideshow-nav" data-slideshow-next aria-label="Next feature">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="20" height="20" aria-hidden="true">
+                  <path d="M8.59 16.59 10 18l6-6-6-6-1.41 1.41L13.17 12z" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container footer-inner">
+        <div class="footer-brand">
+          <span class="brand-mark small">
+            <img
+              src="./assets/icon.png"
+              data-light-src="./assets/icon.png"
+              data-dark-src="./assets/icon-dark.png"
+              alt=""
+              class="brand-logo theme-logo"
+              width="26"
+              height="26"
+            />
+          </span>
+          <span class="footer-title">Voice Memos Plus</span>
+        </div>
+        <div class="footer-links">
+          <a href="https://github.com/eduardo-dangelo/voice-memos-plus" target="_blank" rel="noreferrer">GitHub</a>
+          <a href="privacy.html">Privacy</a>
+          <a href="mailto:eduardodonatodangelo@gmail.com">Contact</a>
+        </div>
+        <p class="footer-meta">
+          &copy; <span id="year"></span> Voice Memos Plus
+        </p>
+      </div>
+    </footer>
+
+    <script src="./main.js"></script>
+  </body>
+</html>

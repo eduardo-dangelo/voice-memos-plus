@@ -1,0 +1,13 @@
+When Cursor auto-generates a Git commit message (sparkle button in Source Control), follow these rules:
+
+1. Use Conventional Commits: `<type>: <description>` or `<type>(<scope>): <description>`
+2. Types: feat, fix, docs, style, refactor, perf, test, chore, ci, build
+3. Subject line MUST be 100 characters or fewer (count the entire line)
+4. Lowercase type and description; no period at the end
+5. Single line only — no body or footer
+6. Be specific and concise about what changed
+
+Examples:
+- feat: add waveform trimming UI
+- fix(audio): resolve playback crash on seek
+- chore: update expo dependencies
