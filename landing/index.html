@@ -210,7 +210,7 @@
               <p>Soft fade-ins and clean fade-outs.</p>
             </a>
             <a href="#long-press-track-menu" class="feature-card feature-card-link fade-on-scroll" data-slide-target="long-press-track-menu">
-              <h3>Long press track menu</h3>
+              <h3>Track Menu</h3>
               <p>Hold a track for rename, color, loop, and more.</p>
             </a>
             <a href="#loop" class="feature-card feature-card-link fade-on-scroll" data-slide-target="loop">
@@ -506,8 +506,8 @@
                             data-ipad-light-src="./assets/screenshots/ipad/light/effects.png"
                             data-ipad-dark-src="./assets/screenshots/ipad/dark/effects.png"
                             alt="EQ curve and presets on a track on iPad"
-                            width="1024"
-                            height="715"
+                            width="1224"
+                            height="855"
                           />
                         </div>
                       </div>
@@ -567,8 +567,8 @@
                             data-ipad-light-src="./assets/screenshots/ipad/light/fade.png"
                             data-ipad-dark-src="./assets/screenshots/ipad/dark/fade.png"
                             alt="Fade-in curve on a selected track on iPad"
-                            width="2732"
-                            height="2048"
+                            width="1224"
+                            height="855"
                           />
                         </div>
                       </div>
@@ -583,15 +583,133 @@
               <article class="feature-slide" data-slide-id="long-press-track-menu" id="long-press-track-menu" aria-hidden="true">
                 <div class="feature-layout">
                   <div class="feature-copy">
-                    <p class="eyebrow">Long press track menu</p>
+                    <p class="eyebrow">Track Menu</p>
                     <h2>Hold a track for every option.</h2>
                     <p class="feature-intro">
-                      Long-press a layer to open its menu — rename, change color, loop the track, or delete
-                      without hunting through separate screens.
+                      Long-press any layer to open its menu — rename, export, loop, solo, and more without
+                      leaving the editor.
                     </p>
-                    <ul class="feature-list">
-                      <li>Long-press any track to open its actions.</li>
-                      <li>Rename, recolor, loop, or remove from one place.</li>
+                    <ul class="feature-list feature-list--icons">
+                      <li>
+                        <span class="feature-list-icon" aria-hidden="true">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22" width="22" height="22">
+  <defs>
+    <mask id="track-menu-export-mask0" maskUnits="userSpaceOnUse" x="0" y="0" width="22" height="22">
+      <rect x="0" y="0" width="22" height="22" fill="white"/>
+      <path fill="black" d="M12.818 13.8536 L12.818 3.4471 C12.818 2.2654 11.832 1.2875 10.6422 1.2875 C9.4524 1.2875 8.4663 2.2654 8.4663 3.4471 L8.4663 13.8536 C8.4663 15.0353 9.4524 16.0132 10.6422 16.0132 C11.832 16.0132 12.818 15.0353 12.818 13.8536 Z"/>
+    </mask>
+  </defs>
+  <path data-layer="monochrome-0" fill="currentColor" mask="url(#track-menu-export-mask0)" d="M6.8202 20.862 L14.4642 20.862 C16.6563 20.862 17.8787 19.6477 17.8787 17.4556 L17.8787 11.1807 C17.8787 8.9967 16.6563 7.7743 14.4642 7.7743 L6.8202 7.7743 C4.628 7.7743 3.4138 8.9967 3.4138 11.1807 L3.4138 17.4556 C3.4138 19.6477 4.628 20.862 6.8202 20.862 Z M6.8202 19.5499 C5.4837 19.5499 4.7258 18.8002 4.7258 17.4556 L4.7258 11.1807 C4.7258 9.8442 5.4837 9.0863 6.8202 9.0863 L14.4642 9.0863 C15.8088 9.0863 16.5667 9.8442 16.5667 11.1807 L16.5667 17.4556 C16.5667 18.8002 15.8088 19.5499 14.4642 19.5499 Z"/>
+  <path data-layer="monochrome-0" fill="currentColor" d="M7.8796 6.3645 C8.0344 6.3645 8.2137 6.2993 8.3278 6.1689 L9.5909 4.8243 L10.6422 3.7078 L11.7016 4.8243 L12.9566 6.1689 C13.0706 6.2993 13.2418 6.3645 13.3966 6.3645 C13.7389 6.3645 13.9915 6.1282 13.9915 5.794 C13.9915 5.6148 13.9263 5.4844 13.8041 5.3621 L11.1148 2.7707 C10.9518 2.6077 10.8133 2.5588 10.6422 2.5588 C10.4792 2.5588 10.3407 2.6077 10.1695 2.7707 L7.4884 5.3621 C7.3662 5.4844 7.2928 5.6148 7.2928 5.794 C7.2928 6.1282 7.5373 6.3645 7.8796 6.3645 Z M10.6422 14.4811 C10.9926 14.4811 11.2941 14.1959 11.2941 13.8536 L11.2941 5.5659 L11.1963 3.3656 C11.18 3.0722 10.9437 2.8196 10.6422 2.8196 C10.3488 2.8196 10.1125 3.0722 10.0962 3.3656 L9.9984 5.5659 L9.9984 13.8536 C9.9984 14.1959 10.2918 14.4811 10.6422 14.4811 Z"/>
+</svg>
+                        </span>
+                        <span><strong>Export</strong>: Share a layer as m4a or wav.</span>
+                      </li>
+                      <li>
+                        <span class="feature-list-icon" aria-hidden="true">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22" width="22" height="22">
+  <path data-layer="monochrome-0" fill="currentColor" d="M5.2786 18.5914 L16.4888 7.3915 L14.6906 5.5831 L3.4702 16.783 L2.4941 19.0744 C2.3913 19.321 2.6585 19.6087 2.9051 19.5059 Z M17.393 6.5079 L18.4308 5.4906 C18.9548 4.9666 18.9856 4.4015 18.513 3.9288 L18.1636 3.5795 C17.7012 3.1171 17.1361 3.1582 16.6121 3.6719 L15.5743 4.6995 Z"/>
+</svg>
+                        </span>
+                        <span><strong>Rename</strong>: Give each layer a clear label.</span>
+                      </li>
+                      <li>
+                        <span class="feature-list-icon" aria-hidden="true">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22" width="22" height="22">
+  <defs>
+    <mask id="track-menu-duplicate-mask0" maskUnits="userSpaceOnUse" x="0" y="0" width="22" height="22">
+      <rect x="0" y="0" width="22" height="22" fill="white"/>
+      <path fill="black" d="M8.7081 20.0358 L17.1821 20.0358 C18.9377 20.0358 19.8239 19.158 19.8239 17.4193 L19.8239 8.8778 C19.8239 7.1391 18.9377 6.2613 17.1821 6.2613 L8.7081 6.2613 C6.9356 6.2613 6.0578 7.1306 6.0578 8.8778 L6.0578 17.4193 C6.0578 19.158 6.9356 20.0358 8.7081 20.0358 Z"/>
+    </mask>
+  </defs>
+  <path data-layer="monochrome-0" fill="currentColor" mask="url(#track-menu-duplicate-mask0)" d="M4.6145 16.128 L13.0886 16.128 C14.8442 16.128 15.7304 15.2502 15.7304 13.5115 L15.7304 4.9699 C15.7304 3.2312 14.8442 2.3534 13.0886 2.3534 L4.6145 2.3534 C2.8421 2.3534 1.9643 3.2312 1.9643 4.9699 L1.9643 13.5115 C1.9643 15.2502 2.8421 16.128 4.6145 16.128 Z M4.6314 14.7691 C3.7874 14.7691 3.3232 14.3133 3.3232 13.4355 L3.3232 5.0459 C3.3232 4.1681 3.7874 3.7123 4.6314 3.7123 L13.0633 3.7123 C13.8988 3.7123 14.3715 4.1681 14.3715 5.0459 L14.3715 13.4355 C14.3715 14.3133 13.8988 14.7691 13.0633 14.7691 Z"/>
+  <path data-layer="monochrome-0" fill="currentColor" d="M8.7081 20.0358 L17.1821 20.0358 C18.9377 20.0358 19.8239 19.158 19.8239 17.4193 L19.8239 8.8778 C19.8239 7.1391 18.9377 6.2613 17.1821 6.2613 L8.7081 6.2613 C6.9356 6.2613 6.0578 7.1306 6.0578 8.8778 L6.0578 17.4193 C6.0578 19.158 6.9356 20.0358 8.7081 20.0358 Z M8.725 18.6769 C7.8894 18.6769 7.4167 18.2212 7.4167 17.3434 L7.4167 8.9537 C7.4167 8.0759 7.8894 7.6202 8.725 7.6202 L17.1568 7.6202 C17.9924 7.6202 18.465 8.0759 18.465 8.9537 L18.465 17.3434 C18.465 18.2212 17.9924 18.6769 17.1568 18.6769 Z"/>
+  <path data-layer="monochrome-0" fill="currentColor" d="M13.6541 16.3305 L13.6541 9.9497 C13.6541 9.5192 13.3587 9.2238 12.9367 9.2238 C12.5231 9.2238 12.2446 9.5192 12.2446 9.9497 L12.2446 16.3305 C12.2446 16.7526 12.5231 17.048 12.9367 17.048 C13.3587 17.048 13.6541 16.761 13.6541 16.3305 Z M9.7631 13.8407 L16.144 13.8407 C16.566 13.8407 16.8614 13.5621 16.8614 13.1486 C16.8614 12.7265 16.566 12.4311 16.144 12.4311 L9.7631 12.4311 C9.3242 12.4311 9.0372 12.7265 9.0372 13.1486 C9.0372 13.5621 9.3327 13.8407 9.7631 13.8407 Z"/>
+</svg>
+                        </span>
+                        <span><strong>Duplicate</strong>: Copy a layer in one tap.</span>
+                      </li>
+                      <li>
+                        <span class="feature-list-icon" aria-hidden="true">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22" width="22" height="22">
+  <path data-layer="monochrome-0" fill="currentColor" d="M11.6603 19.0667 C14.9767 19.0667 17.1903 17.893 17.1903 16.1599 C17.1903 14.608 15.8669 14.2614 15.8669 13.3476 C15.8669 12.0872 20.4438 11.8351 20.4438 8.5974 C20.4438 5.3991 17.1431 3.2879 12.2432 3.2879 C5.8072 3.2879 1.4667 6.502 1.4667 11.3152 C1.4667 15.9472 5.5866 19.0667 11.6603 19.0667 Z M11.6603 17.7197 C6.3271 17.7197 2.8137 15.1516 2.8137 11.3152 C2.8137 7.2976 6.5477 4.635 12.2432 4.635 C16.379 4.635 19.0967 6.242 19.0967 8.5974 C19.0967 11.3467 14.4883 10.9765 14.4883 13.3555 C14.4883 14.7026 15.8433 15.128 15.8433 16.0575 C15.8433 17.058 14.1969 17.7197 11.6603 17.7197 Z M11.0143 15.8606 C12.2117 15.8606 13.1964 14.8759 13.1964 13.6706 C13.1964 12.4811 12.2117 11.4964 11.0143 11.4964 C9.8169 11.4964 8.8322 12.4811 8.8322 13.6706 C8.8322 14.8759 9.8169 15.8606 11.0143 15.8606 Z M11.0143 14.9468 C10.3132 14.9468 9.746 14.3796 9.746 13.6706 C9.746 12.8907 10.3447 12.4259 10.9986 12.4181 C11.6682 12.4102 12.2826 12.8671 12.2826 13.6706 C12.2826 14.3796 11.7233 14.9468 11.0143 14.9468 Z"/>
+  <path data-layer="monochrome-0" fill="currentColor" d="M5.4449 12.3944 C6.1696 12.3944 6.7525 11.7957 6.7525 11.071 C6.7525 10.3462 6.1696 9.7633 5.4449 9.7633 C4.728 9.7633 4.1372 10.3462 4.1372 11.071 C4.1372 11.7957 4.728 12.3944 5.4449 12.3944 Z"/>
+  <path data-layer="monochrome-0" fill="currentColor" d="M8.3202 9.8736 C9.234 9.8736 9.9745 9.141 9.9745 8.2114 C9.9745 7.3055 9.2261 6.5808 8.3202 6.5808 C7.3985 6.5808 6.658 7.3055 6.658 8.2114 C6.658 9.141 7.3985 9.8736 8.3202 9.8736 Z"/>
+  <path data-layer="monochrome-0" fill="currentColor" d="M12.3141 8.5974 C13.0546 8.5974 13.6375 8.0066 13.6375 7.2661 C13.6375 6.5335 13.0546 5.9427 12.3141 5.9427 C11.5894 5.9427 10.9828 6.5335 10.9828 7.2661 C10.9828 8.0066 11.5894 8.5974 12.3141 8.5974 Z"/>
+  <path data-layer="monochrome-0" fill="currentColor" d="M15.9142 9.1016 C16.505 9.1016 16.9777 8.6211 16.9777 8.0224 C16.9777 7.4315 16.505 6.951 15.9142 6.951 C15.3155 6.951 14.8271 7.4315 14.8271 8.0224 C14.8271 8.6211 15.3155 9.1016 15.9142 9.1016 Z"/>
+</svg>
+                        </span>
+                        <span><strong>Change color</strong>: Color-code layers on the waveform.</span>
+                      </li>
+                      <li>
+                        <span class="feature-list-icon" aria-hidden="true">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22" width="22" height="22">
+  <path data-layer="monochrome-0" fill="currentColor" d="M9.4424 18.3253 L9.4424 12.9826 C9.4424 12.6366 9.2483 12.4509 8.9022 12.4509 C8.7418 12.4509 8.5899 12.5015 8.4633 12.6028 L5.2729 15.2446 C5.0112 15.4725 4.9943 15.8186 5.2729 16.0465 L8.4633 18.6967 C8.5899 18.798 8.7418 18.8571 8.9022 18.8571 C9.2483 18.8571 9.4424 18.663 9.4424 18.3253 Z M19.2669 11.0498 C18.8617 11.0498 18.5579 11.3621 18.5579 11.7672 L18.5579 12.5691 C18.5579 14.0124 17.5535 14.9577 16.0258 14.9577 L8.2017 14.9577 C7.8134 14.9577 7.4927 15.2784 7.4927 15.6582 C7.4927 16.0465 7.8134 16.3672 8.2017 16.3672 L15.8908 16.3672 C18.406 16.3672 19.9759 14.9408 19.9759 12.6704 L19.9759 11.7672 C19.9759 11.3621 19.672 11.0498 19.2669 11.0498 Z"/>
+  <path data-layer="monochrome-0" fill="currentColor" d="M12.4978 4.3736 L12.4978 9.7163 C12.4978 10.0539 12.6919 10.248 13.0379 10.248 C13.1983 10.248 13.3502 10.1889 13.4768 10.0876 L16.6673 7.4458 C16.9373 7.2264 16.9542 6.8803 16.6673 6.644 L13.4768 3.9937 C13.3502 3.8925 13.1983 3.8418 13.0379 3.8418 C12.6919 3.8418 12.4978 4.0275 12.4978 4.3736 Z M2.6733 11.6491 C3.0784 11.6491 3.3907 11.3368 3.3907 10.9317 L3.3907 10.1298 C3.3907 8.6865 4.3866 7.7328 5.9143 7.7328 L13.7469 7.7328 C14.1267 7.7328 14.4475 7.4205 14.4475 7.0322 C14.4475 6.6524 14.1267 6.3317 13.7469 6.3317 L6.0494 6.3317 C3.5426 6.3317 1.9643 7.7497 1.9643 10.0285 L1.9643 10.9317 C1.9643 11.3368 2.2766 11.6491 2.6733 11.6491 Z"/>
+</svg>
+                        </span>
+                        <span><strong>Loop</strong>: Stretch a short take into a lasting bed.</span>
+                      </li>
+                      <li>
+                        <span class="feature-list-icon" aria-hidden="true">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22" width="22" height="22">
+  <defs>
+    <mask id="track-menu-mute-mask0" maskUnits="userSpaceOnUse" x="0" y="0" width="22" height="22">
+      <rect x="0" y="0" width="22" height="22" fill="white"/>
+      <path fill="black" d="M17.5213 20.04 C18.2212 20.7308 19.3483 20.7308 20.0209 20.0218 C20.6936 19.3401 20.6936 18.2402 20.0118 17.5494 L4.4506 1.9972 C3.7598 1.3064 2.6327 1.3064 1.9419 1.9972 C1.2692 2.6699 1.2692 3.8061 1.9419 4.4878 Z"/>
+    </mask>
+  </defs>
+  <path data-layer="monochrome-0" fill="currentColor" mask="url(#track-menu-mute-mask0)" d="M6.1685 14.0136 L8.7681 14.0136 C8.8499 14.0136 8.9226 14.0409 8.9862 14.0954 L13.0856 17.7676 C13.5219 18.1584 13.8582 18.3402 14.2945 18.3402 C14.8854 18.3402 15.3216 17.913 15.3216 17.3222 L15.3216 3.3788 C15.3216 2.788 14.8854 2.3063 14.2764 2.3063 C13.8401 2.3063 13.5674 2.5063 13.0856 2.9335 L8.9862 6.5693 C8.9226 6.6238 8.8499 6.6511 8.7681 6.6511 L6.1685 6.6511 C4.9323 6.6511 4.3142 7.2783 4.3142 8.5962 L4.3142 12.0775 C4.3142 13.3955 4.9323 14.0136 6.1685 14.0136 Z M6.2321 12.6865 C5.8867 12.6865 5.7322 12.532 5.7322 12.1957 L5.7322 8.4781 C5.7322 8.1327 5.8867 7.9782 6.2321 7.9782 L9.1408 7.9782 C9.3771 7.9782 9.5498 7.9327 9.7589 7.7418 L13.631 4.2242 C13.6765 4.1787 13.731 4.1515 13.7855 4.1515 C13.8491 4.1515 13.9037 4.1969 13.9037 4.2787 L13.9037 16.3587 C13.9037 16.4405 13.8491 16.4951 13.7855 16.4951 C13.7401 16.4951 13.6855 16.4678 13.6401 16.4223 L9.7589 12.9229 C9.5498 12.7411 9.3771 12.6865 9.1408 12.6865 Z"/>
+  <path data-layer="monochrome-0" fill="currentColor" d="M18.2757 19.2946 C18.5484 19.5673 18.9938 19.5673 19.2665 19.2946 C19.5301 19.0129 19.5392 18.5766 19.2665 18.3039 L3.6961 2.7426 C3.4235 2.4699 2.969 2.4699 2.6963 2.7426 C2.4327 3.0062 2.4327 3.4698 2.6963 3.7334 Z"/>
+</svg>
+                        </span>
+                        <span><strong>Mute</strong>: Silence a layer without deleting it.</span>
+                      </li>
+                      <li>
+                        <span class="feature-list-icon" aria-hidden="true">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22" width="22" height="22">
+  <path data-layer="monochrome-0" fill="currentColor" d="M2.037 11.3198 C2.037 13.9544 2.7985 16.8604 4.0852 19.1186 C4.304 19.495 4.7154 19.6 5.1093 19.3812 C5.4769 19.1799 5.582 18.7685 5.3544 18.3571 C4.1815 16.2214 3.525 13.6743 3.525 11.3198 C3.525 6.4619 6.4923 3.2234 10.9475 3.2234 C15.3939 3.2234 18.3699 6.4619 18.3699 11.3198 C18.3699 13.6743 17.7047 16.2214 16.5318 18.3571 C16.3042 18.7685 16.4093 19.1799 16.7769 19.3812 C17.1708 19.6 17.5909 19.495 17.801 19.1186 C19.0877 16.8604 19.8579 13.9544 19.8579 11.3198 C19.8579 5.5604 16.3042 1.7354 10.9475 1.7354 C5.582 1.7354 2.037 5.5604 2.037 11.3198 Z M4.7767 18.8998 C5.0655 19.9064 5.9233 20.3703 6.9387 20.0814 C7.9452 19.7926 8.4179 18.9173 8.1203 17.9107 L6.8686 13.6393 C6.5798 12.6415 5.722 12.1688 4.7067 12.4577 C3.7001 12.7553 3.2274 13.6218 3.525 14.6371 Z M17.1095 18.8998 L18.3612 14.6371 C18.6588 13.6131 18.1949 12.7553 17.1795 12.4577 C16.1642 12.1688 15.3152 12.6415 15.0176 13.6393 L13.7659 17.9107 C13.4683 18.9261 13.941 19.7926 14.9475 20.0814 C15.9716 20.3703 16.8207 19.9064 17.1095 18.8998 Z"/>
+</svg>
+                        </span>
+                        <span><strong>Solo</strong>: Hear one layer in isolation.</span>
+                      </li>
+                      <li>
+                        <span class="feature-list-icon" aria-hidden="true">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22" width="22" height="22">
+  <path data-layer="monochrome-0" fill="currentColor" d="M6.527 20.68 L15.1766 20.68 C16.5662 20.68 17.3035 19.9238 17.3035 18.4302 L17.3035 11.917 C17.3035 10.4328 16.5662 9.6766 15.1766 9.6766 L6.527 9.6766 C5.1373 9.6766 4.4 10.4328 4.4 11.917 L4.4 18.4302 C4.4 19.9238 5.1373 20.68 6.527 20.68 Z M6.5742 19.2526 C6.1677 19.2526 5.9314 18.9973 5.9314 18.5341 L5.9314 11.813 C5.9314 11.3498 6.1677 11.104 6.5742 11.104 L15.1293 11.104 C15.5452 11.104 15.7721 11.3498 15.7721 11.813 L15.7721 18.5341 C15.7721 18.9973 15.5452 19.2526 15.1293 19.2526 Z M6.0543 10.4045 L7.5573 10.4045 L7.5573 7.2188 C7.5573 4.8271 9.0793 3.5699 10.847 3.5699 C12.6148 3.5699 14.1556 4.8271 14.1556 7.2188 L14.1556 10.4045 L15.6492 10.4045 L15.6492 7.4173 C15.6492 3.8629 13.3237 2.1424 10.847 2.1424 C8.3798 2.1424 6.0543 3.8629 6.0543 7.4173 Z"/>
+</svg>
+                        </span>
+                        <span><strong>Lock</strong>: Protect a finished layer from edits.</span>
+                      </li>
+                      <li>
+                        <span class="feature-list-icon" aria-hidden="true">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22" width="22" height="22">
+  <defs>
+    <mask id="track-menu-merge-mask0" maskUnits="userSpaceOnUse" x="0" y="0" width="22" height="22">
+      <rect x="0" y="0" width="22" height="22" fill="white"/>
+      <path fill="black" d="M4.8268 15.5215 C4.8268 18.1212 6.9609 19.3959 9.2598 18.0782 L14.8887 14.8412 C16.1061 14.1465 16.6862 13.1583 16.6862 11.7117 L16.6862 5.2234 C16.6862 2.5522 14.4948 1.3705 12.2676 2.6524 L5.0488 6.8204 C4.8913 6.9063 4.8268 7.0209 4.8268 7.1713 Z"/>
+      <path fill="black" d="M7.6842 17.1615 C7.6842 19.7826 9.89 21.0001 12.1172 19.7253 L17.7461 16.4883 C18.9635 15.7865 19.5364 14.8054 19.5364 13.3516 L19.5364 6.8705 C19.5364 4.1993 17.3522 3.0176 15.1178 4.2995 L7.8991 8.4675 C7.7487 8.5534 7.6842 8.668 7.6842 8.8184 Z"/>
+    </mask>
+    <mask id="track-menu-merge-mask1" maskUnits="userSpaceOnUse" x="0" y="0" width="22" height="22">
+      <rect x="0" y="0" width="22" height="22" fill="white"/>
+      <path fill="black" d="M7.6842 17.1615 C7.6842 19.7826 9.89 21.0001 12.1172 19.7253 L17.7461 16.4883 C18.9635 15.7865 19.5364 14.8054 19.5364 13.3516 L19.5364 6.8705 C19.5364 4.1993 17.3522 3.0176 15.1178 4.2995 L7.8991 8.4675 C7.7487 8.5534 7.6842 8.668 7.6842 8.8184 Z"/>
+    </mask>
+  </defs>
+  <path data-layer="monochrome-0" fill="currentColor" mask="url(#track-menu-merge-mask0)" d="M3.6667 13.9818 C3.6667 15.2637 4.6764 15.2208 5.2995 14.8555 L11.1361 11.4896 C11.8307 11.0886 11.9167 10.9454 11.9167 10.1361 L11.9167 3.3328 C11.9167 2.0365 10.8926 2.101 10.2838 2.4519 L4.4473 5.8249 C3.7526 6.2188 3.6667 6.3692 3.6667 7.1784 Z"/>
+  <path data-layer="monochrome-0" fill="currentColor" mask="url(#track-menu-merge-mask1)" d="M6.5241 15.629 C6.5241 16.9109 7.5267 16.8679 8.1569 16.5027 L13.9935 13.1368 C14.6881 12.7357 14.7669 12.5925 14.7669 11.7833 L14.7669 4.9727 C14.7669 3.6837 13.75 3.7481 13.1413 4.099 L7.2975 7.4649 C6.61 7.8659 6.5241 8.0163 6.5241 8.8184 Z"/>
+  <path data-layer="monochrome-0" fill="currentColor" d="M9.5104 17.2116 C9.5104 18.3503 10.3411 18.6869 11.2435 18.1641 L16.8652 14.9415 C17.5241 14.5619 17.7604 14.168 17.7604 13.3659 L17.7604 6.7058 C17.7604 5.6029 16.944 5.3523 16.0417 5.8679 L10.4199 9.112 C9.7396 9.5059 9.5104 9.907 9.5104 10.6876 Z M10.7279 16.9825 L10.7279 10.709 C10.7279 10.4369 10.8066 10.2937 11.043 10.1576 L16.4642 6.9708 C16.5286 6.935 16.5859 6.9565 16.5859 7.0424 L16.5859 13.323 C16.5859 13.5593 16.5071 13.7383 16.2708 13.8816 L10.8424 17.0398 C10.778 17.0827 10.7279 17.0541 10.7279 16.9825 Z"/>
+</svg>
+                        </span>
+                        <span><strong>Merge</strong>: Combine two layers into one.</span>
+                      </li>
+                      <li>
+                        <span class="feature-list-icon" aria-hidden="true">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22" width="22" height="22">
+  <path data-layer="monochrome-0" fill="currentColor" d="M8.3264 17.9594 C8.659 17.9594 8.8778 17.7493 8.8691 17.443 L8.5977 8.0774 C8.589 7.771 8.3701 7.5697 8.055 7.5697 C7.7224 7.5697 7.5036 7.7798 7.5124 8.0861 L7.775 17.443 C7.7837 17.7581 8.0025 17.9594 8.3264 17.9594 Z M10.9172 17.9594 C11.2499 17.9594 11.4862 17.7493 11.4862 17.443 L11.4862 8.0861 C11.4862 7.7798 11.2499 7.5697 10.9172 7.5697 C10.5846 7.5697 10.357 7.7798 10.357 8.0861 L10.357 17.443 C10.357 17.7493 10.5846 17.9594 10.9172 17.9594 Z M13.5168 17.9594 C13.832 17.9594 14.0508 17.7581 14.0595 17.443 L14.3221 8.0861 C14.3309 7.7798 14.112 7.5697 13.7794 7.5697 C13.4643 7.5697 13.2455 7.771 13.2368 8.0861 L12.9742 17.443 C12.9654 17.7493 13.1842 17.9594 13.5168 17.9594 Z M7.0747 5.2852 L8.4664 5.2852 L8.4664 3.4121 C8.4664 2.9132 8.8165 2.5893 9.3417 2.5893 L12.4753 2.5893 C13.0004 2.5893 13.3505 2.9132 13.3505 3.4121 L13.3505 5.2852 L14.7423 5.2852 L14.7423 3.3246 C14.7423 2.0554 13.9195 1.2852 12.5715 1.2852 L9.2454 1.2852 C7.8975 1.2852 7.0747 2.0554 7.0747 3.3246 Z M3.1009 5.9855 L18.7423 5.9855 C19.1012 5.9855 19.39 5.6791 19.39 5.3202 C19.39 4.9614 19.1012 4.6638 18.7423 4.6638 L3.1009 4.6638 C2.7508 4.6638 2.4444 4.9614 2.4444 5.3202 C2.4444 5.6879 2.7508 5.9855 3.1009 5.9855 Z M6.9084 20.7778 L14.9348 20.7778 C16.1865 20.7778 17.0267 19.9638 17.088 18.7121 L17.7007 5.8192 L16.2915 5.8192 L15.7051 18.5633 C15.6876 19.0885 15.3112 19.4561 14.7948 19.4561 L7.031 19.4561 C6.532 19.4561 6.1557 19.0798 6.1294 18.5633 L5.508 5.8192 L4.1338 5.8192 L4.7552 18.7209 C4.8165 19.9726 5.6392 20.7778 6.9084 20.7778 Z"/>
+</svg>
+                        </span>
+                        <span><strong>Delete</strong>: Remove a layer you no longer need.</span>
+                      </li>
                     </ul>
                   </div>
                   <div class="feature-visual">
@@ -605,7 +723,7 @@
                             data-iphone-dark-src="./assets/screenshots/iphone/dark/track-menu.png"
                             data-ipad-light-src="./assets/screenshots/ipad/light/track-menu.png"
                             data-ipad-dark-src="./assets/screenshots/ipad/dark/track-menu.png"
-                            alt="Long press track menu with rename, color, loop, and more"
+                            alt="Track menu with export, rename, loop, solo, and more"
                             width="556"
                             height="1205"
                           />
@@ -627,9 +745,9 @@
                             data-iphone-dark-src="./assets/screenshots/iphone/dark/track-menu.png"
                             data-ipad-light-src="./assets/screenshots/ipad/light/track-menu.png"
                             data-ipad-dark-src="./assets/screenshots/ipad/dark/track-menu.png"
-                            alt="Long press track menu on iPad"
-                            width="2732"
-                            height="2048"
+                            alt="Track menu on iPad"
+                            width="1224"
+                            height="855"
                           />
                         </div>
                       </div>
@@ -836,7 +954,7 @@
                 <button type="button" class="slideshow-dot" data-slideshow-dot aria-label="Edit track" aria-selected="false" tabindex="-1"></button>
                 <button type="button" class="slideshow-dot" data-slideshow-dot aria-label="Effects" aria-selected="false" tabindex="-1"></button>
                 <button type="button" class="slideshow-dot" data-slideshow-dot aria-label="Fade" aria-selected="false" tabindex="-1"></button>
-                <button type="button" class="slideshow-dot" data-slideshow-dot aria-label="Long press track menu" aria-selected="false" tabindex="-1"></button>
+                <button type="button" class="slideshow-dot" data-slideshow-dot aria-label="Track Menu" aria-selected="false" tabindex="-1"></button>
                 <button type="button" class="slideshow-dot" data-slideshow-dot aria-label="Loop" aria-selected="false" tabindex="-1"></button>
                 <button type="button" class="slideshow-dot" data-slideshow-dot aria-label="Loop track" aria-selected="false" tabindex="-1"></button>
                 <button type="button" class="slideshow-dot" data-slideshow-dot aria-label="Metronome and grid" aria-selected="false" tabindex="-1"></button>
