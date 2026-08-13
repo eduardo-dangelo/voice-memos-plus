@@ -135,30 +135,6 @@
       });
     });
 
-    if ('IntersectionObserver' in window) {
-      const observer = new IntersectionObserver(
-        (entries) => {
-          entries.forEach((entry) => {
-            if (entry.isIntersecting) {
-              entry.target.classList.add('is-visible');
-              observer.unobserve(entry.target);
-            }
-          });
-        },
-        {
-          threshold: 0.2,
-        }
-      );
-
-      document.querySelectorAll('.fade-on-scroll').forEach((el) => {
-        observer.observe(el);
-      });
-    } else {
-      document
-        .querySelectorAll('.fade-on-scroll')
-        .forEach((el) => el.classList.add('is-visible'));
-    }
-
     document.querySelectorAll('[data-theme-toggle]').forEach((btn) => {
       btn.addEventListener('click', () => {
         const current =
