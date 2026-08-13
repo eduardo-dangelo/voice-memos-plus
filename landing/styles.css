@@ -431,7 +431,7 @@ html[data-device='ipad'] .theme-toggle-icon--phone {
 .hero {
   position: relative;
   padding: 72px 0 72px;
-  overflow: hidden;
+  overflow-x: clip;
   isolation: isolate;
 }
 
@@ -607,8 +607,6 @@ html[data-theme='dark'] .button.primary {
   justify-items: center;
   width: 100%;
   max-width: 100%;
-  overflow: hidden;
-  contain: layout paint;
 }
 
 /* —— iPhone Pro hardware frame —— */
