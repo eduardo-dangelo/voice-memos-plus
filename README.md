@@ -2,7 +2,7 @@
 
 <p align="center">
   <img src="landing/assets/screenshots/iphone/light/hero.png" width="220" alt="Voice Memos Plus editor on iPhone" />
-  <img src="landing/assets/screenshots/ipad/light/hero.png" width="480" alt="Voice Memos Plus editor on iPad" />
+  <!-- <img src="landing/assets/screenshots/ipad/light/hero.png" width="480" alt="Voice Memos Plus editor on iPad" /> -->
 </p>
 
 Voice Memos Plus is a multi-track voice recorder that keeps the familiar Voice Memos flow and adds the tools to build richer takes: stack layers, edit waveforms, add effects, loop regions, and keep time with a metronome and grid. Recordings stay on your device.
