@@ -203,6 +203,17 @@
 
     let index = 0;
     let syncingHash = false;
+    let autoTimer = null;
+    let autoPaused = false;
+
+    const intervalSeconds = parseFloat(root.getAttribute('data-slideshow-interval') || '5');
+    const autoIntervalMs =
+      Number.isFinite(intervalSeconds) && intervalSeconds > 0
+        ? intervalSeconds * 1000
+        : 0;
+    const autoEnabled =
+      autoIntervalMs > 0 &&
+      !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
     function slideIndexById(id) {
       return slides.findIndex((slide) => slide.getAttribute('data-slide-id') === id);
@@ -260,16 +271,57 @@
       }
     }
 
-    function go(delta) {
-      setSlide(index + delta, { updateHash: true });
+    function go(delta, options) {
+      setSlide(index + delta, { updateHash: true, ...(options || {}) });
     }
 
-    if (prevBtn) prevBtn.addEventListener('click', () => go(-1));
-    if (nextBtn) nextBtn.addEventListener('click', () => go(1));
+    function stopAuto() {
+      if (autoTimer) {
+        clearInterval(autoTimer);
+        autoTimer = null;
+      }
+    }
+
+    function startAuto() {
+      if (!autoEnabled || autoPaused) return;
+      stopAuto();
+      autoTimer = setInterval(() => {
+        setSlide(index + 1, { updateHash: false });
+      }, autoIntervalMs);
+    }
+
+    function pauseAuto() {
+      autoPaused = true;
+      stopAuto();
+    }
+
+    function resumeAuto() {
+      autoPaused = false;
+      startAuto();
+    }
+
+    function restartAuto() {
+      stopAuto();
+      if (!autoPaused) startAuto();
+    }
+
+    if (prevBtn) {
+      prevBtn.addEventListener('click', () => {
+        go(-1);
+        restartAuto();
+      });
+    }
+    if (nextBtn) {
+      nextBtn.addEventListener('click', () => {
+        go(1);
+        restartAuto();
+      });
+    }
 
     dots.forEach((dot, i) => {
       dot.addEventListener('click', () => {
         setSlide(i, { updateHash: true });
+        restartAuto();
       });
     });
 
@@ -280,6 +332,7 @@
         if (slideIndex < 0) return;
         event.preventDefault();
         setSlide(slideIndex, { updateHash: true, scroll: true });
+        restartAuto();
       });
     });
 
@@ -287,9 +340,26 @@
       if (event.key === 'ArrowLeft') {
         event.preventDefault();
         go(-1);
+        restartAuto();
       } else if (event.key === 'ArrowRight') {
         event.preventDefault();
         go(1);
+        restartAuto();
+      }
+    });
+
+    root.addEventListener('mouseenter', pauseAuto);
+    root.addEventListener('mouseleave', resumeAuto);
+    root.addEventListener('focusin', pauseAuto);
+    root.addEventListener('focusout', (event) => {
+      if (!root.contains(event.relatedTarget)) resumeAuto();
+    });
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        pauseAuto();
+      } else {
+        resumeAuto();
       }
     });
 
@@ -300,6 +370,7 @@
       const slideIndex = slideIndexById(hash);
       if (slideIndex >= 0) {
         setSlide(slideIndex, { updateHash: false });
+        restartAuto();
       }
     }
 
@@ -317,5 +388,7 @@
         if (target) target.scrollIntoView({ behavior: 'auto', block: 'start' });
       });
     }
+
+    startAuto();
   }
 })();
