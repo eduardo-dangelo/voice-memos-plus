@@ -1065,7 +1065,7 @@ html[data-device='ipad'] .iphone-frame {
 
 .feature-card-link:hover,
 .feature-card-link:focus-visible {
-  transform: translateY(-2px);
+  transform: translate3d(var(--dock-x, 0px), -2px, 0);
   box-shadow: var(--shadow-soft);
   border-color: var(--border-strong);
 }
@@ -1078,7 +1078,7 @@ html[data-device='ipad'] .iphone-frame {
 .feature-card-link.is-active {
   border-color: var(--accent-sky);
   box-shadow: var(--shadow-soft);
-  transform: translateY(-2px);
+  transform: translate3d(var(--dock-x, 0px), -2px, 0);
 }
 
 .section-slideshow {
@@ -1314,21 +1314,99 @@ html[data-device='ipad'] .feature-layout {
   text-align: left;
 }
 
-.fade-on-scroll {
-  opacity: 0;
-  transform: translateY(14px);
-  transition: opacity 380ms ease-out, transform 380ms ease-out;
+@property --dock-x {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
 }
 
-.fade-on-scroll.is-visible {
-  opacity: 1;
-  transform: translateY(0);
+.dock-left,
+.dock-right {
+  --dock-x: 0px;
+  --dock-from: 56px;
+  transform: translate3d(var(--dock-x), 0, 0);
+}
+
+@supports (animation-timeline: view()) {
+  @keyframes dock-from-left {
+    from {
+      opacity: 0;
+      --dock-x: calc(var(--dock-from) * -1);
+    }
+    to {
+      opacity: 1;
+      --dock-x: 0px;
+    }
+  }
+
+  @keyframes dock-from-right {
+    from {
+      opacity: 0;
+      --dock-x: var(--dock-from);
+    }
+    to {
+      opacity: 1;
+      --dock-x: 0px;
+    }
+  }
+
+  .dock-left,
+  .dock-right {
+    animation: dock-from-left linear both;
+    animation-timeline: view();
+    animation-range: entry 0% cover 42%;
+  }
+
+  .dock-right {
+    animation-name: dock-from-right;
+  }
+
+  .hero-copy.dock-left,
+  .hero-device.dock-right {
+    animation-range: entry 0% cover 48%;
+  }
+
+  .features-grid > .dock-left {
+    --dock-from: 36px;
+    animation-range: entry 0% cover 40%;
+  }
+
+  .features-grid > .dock-left:nth-child(3n + 2) {
+    animation-range: entry 8% cover 46%;
+  }
+
+  .features-grid > .dock-left:nth-child(3n + 3) {
+    animation-range: entry 16% cover 52%;
+  }
+
+  .feature-copy.dock-left,
+  .feature-visual.dock-right {
+    animation-range: entry 0% cover 40%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dock-left,
+  .dock-right {
+    animation: none;
+    transform: none;
+    opacity: 1;
+  }
 }
 
 @media (max-width: 900px) {
   .hero-content,
   html[data-device='ipad'] .hero-content {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .dock-left,
+  .dock-right {
+    --dock-from: 20px;
+  }
+
+  .features-grid > .dock-left {
+    --dock-from: 16px;
   }
 
   .hero {
