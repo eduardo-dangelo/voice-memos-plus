@@ -1,14 +1,26 @@
 # Voice Memos Plus
 
-An iOS Voice Memos–style app built with Expo SDK 56 and `react-native-audio-api`.
+<p align="center">
+  <img src="landing/assets/screenshots/iphone/light/hero.png" width="220" alt="Voice Memos Plus editor on iPhone" />
+  <img src="landing/assets/screenshots/ipad/light/hero.png" width="480" alt="Voice Memos Plus editor on iPad" />
+</p>
 
-## Features (v1)
+Voice Memos Plus is a multi-track voice recorder that keeps the familiar Voice Memos flow and adds the tools to build richer takes: stack layers, edit waveforms, add effects, loop regions, and keep time with a metronome and grid. Recordings stay on your device.
 
-- Record single-layer voice memos
-- All Recordings list with search, select, and inline playback
-- Full editor with waveform scrubbing, trim handles, and Replace
-- Share, rename, duplicate, and delete recordings
-- Local storage (`manifest.json` + `layer-0.m4a` per memo)
+**[Product site](https://eduardo-dangelo.github.io/voice-memos-plus/)** · **[Privacy](https://eduardo-dangelo.github.io/voice-memos-plus/privacy.html)**
+
+iOS app built with Expo SDK 56 and `react-native-audio-api`.
+
+## Features
+
+- Multi-track stack with overdub and monitor mix
+- Waveform editor: scrub, trim, replace, and fade
+- Per-layer effects (EQ, reverb, delay, and more)
+- Timeline loop and loop-track
+- Metronome, BPM, precount, and beat grid
+- Recordings list with search, select, and inline playback
+- Share, rename, duplicate, and delete
+- Local storage (`manifest.json` + per-layer audio)
 
 ## Requirements
 
@@ -58,9 +70,3 @@ src/components/      UI components
 - [ ] Replace re-records selected region and updates waveform
 - [ ] Share exports a playable M4A
 - [ ] Rename, duplicate, delete, and search work
-
-## Deferred (future iterations)
-
-- Multi-layer recording with monitor mix
-- Per-layer reverb/delay effects
-- Android support
