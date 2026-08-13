@@ -1006,17 +1006,21 @@ html[data-device='ipad'] .iphone-frame {
 .feature-card {
   background: var(--bg-card);
   border-radius: var(--radius-md);
-  padding: 20px 18px 18px;
+  padding: 14px 14px 12px;
   border: 1px solid var(--border-card);
   box-shadow: var(--shadow-card);
   font-size: 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  column-gap: 12px;
+  row-gap: 6px;
   align-items: start;
 }
 
 .feature-card-icon {
+  grid-column: 1;
+  grid-row: 1 / span 2;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1032,25 +1036,29 @@ html[data-device='ipad'] .iphone-frame {
 
 .feature-card-icon svg {
   display: block;
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
 }
 
 .feature-card h3 {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: center;
   font-size: 16px;
   margin: 0;
   color: var(--accent-primary);
 }
 
 .feature-card p {
+  grid-column: 2;
+  grid-row: 2;
   margin: 0;
   color: var(--text-muted);
   line-height: 1.5;
 }
 
 .feature-card-link {
-  display: flex;
-  flex-direction: column;
+  display: grid;
   color: inherit;
   transition: transform 140ms ease-out, box-shadow 140ms ease-out,
     border-color 140ms ease-out;
@@ -1063,12 +1071,6 @@ html[data-device='ipad'] .iphone-frame {
   border-color: var(--border-strong);
 }
 
-.feature-card-link:hover .feature-card-icon,
-.feature-card-link:focus-visible .feature-card-icon {
-  color: var(--accent-sky);
-  border-color: color-mix(in srgb, var(--accent-sky) 40%, var(--border-card));
-}
-
 .feature-card-link:focus-visible {
   outline: 2px solid var(--accent-sky);
   outline-offset: 2px;
@@ -1078,11 +1080,6 @@ html[data-device='ipad'] .iphone-frame {
   border-color: var(--accent-sky);
   box-shadow: var(--shadow-soft);
   transform: translateY(-2px);
-}
-
-.feature-card-link.is-active .feature-card-icon {
-  color: var(--accent-sky);
-  border-color: color-mix(in srgb, var(--accent-sky) 45%, var(--border-card));
 }
 
 .section-slideshow {
@@ -1414,7 +1411,7 @@ html[data-device='ipad'] .feature-layout {
   }
 
   .feature-card {
-    padding: 16px 14px 14px;
+    padding: 12px 12px 10px;
   }
 
   .feature-layout {
