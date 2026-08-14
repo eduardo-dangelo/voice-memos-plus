@@ -1811,6 +1811,7 @@ function WaveformViewComponent({
   const verticalScrollOffsetRef = useRef(0);
   const trimGestureActiveRef = useRef(false);
   const zoomGestureActiveRef = useRef(false);
+  const loopBarGestureRef = useRef<unknown>(undefined);
   const [trimGestureActive, setTrimGestureActive] = useState(false);
   const [zoomGestureActive, setZoomGestureActive] = useState(false);
   const [showZoomControls, setShowZoomControls] = useState(false);
@@ -2908,6 +2909,7 @@ function WaveformViewComponent({
         horizontal
         bounces={false}
         nestedScrollEnabled
+        waitFor={loopBarConfig ? loopBarGestureRef : undefined}
         scrollEnabled={
           !followRecordingScroll &&
           !trimGestureActive &&
@@ -2928,6 +2930,7 @@ function WaveformViewComponent({
               disabled={isRecording}
               editDisabled={isPlaying}
               gridLines={metronomeGridLines}
+              nativeGestureRef={loopBarGestureRef}
               pixelsPerSecond={layoutPixelsPerSecond}
               scrollHelpers={loopScrollHelpers}
               sidePadding={sidePadding}

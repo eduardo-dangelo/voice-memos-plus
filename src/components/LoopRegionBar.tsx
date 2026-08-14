@@ -1,14 +1,10 @@
 import * as Haptics from 'expo-haptics';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  PanResponder,
-  StyleSheet,
-  View,
-  type GestureResponderEvent,
-  type PanResponderGestureState,
-} from 'react-native';
+import { StyleSheet, View } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   Easing,
+  runOnJS,
   useAnimatedStyle,
   useSharedValue,
   withTiming,
@@ -62,6 +58,11 @@ export type LoopOverlayConfig = {
   snapIntervalSec?: number | null;
 };
 
+type LoopPanTranslation = {
+  dx: number;
+  dy: number;
+};
+
 type Props = {
   bandWidth: number;
   sidePadding: number;
@@ -71,6 +72,8 @@ type Props = {
   gridLines?: MetronomeGridLine[];
   disabled?: boolean;
   editDisabled?: boolean;
+  /** Native pan ref so the timeline ScrollView can waitFor this gesture. */
+  nativeGestureRef?: React.MutableRefObject<unknown | undefined>;
 };
 
 function contentXToTime(
@@ -123,6 +126,7 @@ export function LoopRegionBar({
   gridLines,
   disabled = false,
   editDisabled = false,
+  nativeGestureRef,
 }: Props) {
   const colors = useVoiceMemosColors();
   const styles = useMemo(() => createLoopRegionStyles(colors), [colors]);
@@ -341,15 +345,15 @@ export function LoopRegionBar({
     longPressTimerRef.current = setTimeout(fireLongPress, LONG_PRESS_DELAY_MS);
   };
 
-  const cancelLongPressIfMoved = (gesture: PanResponderGestureState) => {
-    if (Math.abs(gesture.dx) + Math.abs(gesture.dy) >= TAP_MOVE_THRESHOLD) {
+  const cancelLongPressIfMoved = (translation: LoopPanTranslation) => {
+    if (Math.abs(translation.dx) + Math.abs(translation.dy) >= TAP_MOVE_THRESHOLD) {
       clearLongPressTimer();
     }
   };
 
-  const getEffectiveDx = (gesture: PanResponderGestureState): number => {
+  const getEffectiveDx = (translation: LoopPanTranslation): number => {
     const helpers = scrollHelpersRef.current;
-    return gesture.dx + (helpers.getScrollX() - scrollXAtGrant.current);
+    return translation.dx + (helpers.getScrollX() - scrollXAtGrant.current);
   };
 
   const applyEdgeAutoScroll = (contentX: number) => {
@@ -409,11 +413,11 @@ export function LoopRegionBar({
     return 'create';
   };
 
-  const ensureDragActive = (gesture: PanResponderGestureState): boolean => {
+  const ensureDragActive = (translation: LoopPanTranslation): boolean => {
     if (dragActiveRef.current) {
       return true;
     }
-    if (Math.abs(gesture.dx) + Math.abs(gesture.dy) < TAP_MOVE_THRESHOLD) {
+    if (Math.abs(translation.dx) + Math.abs(translation.dy) < TAP_MOVE_THRESHOLD) {
       return false;
     }
     dragActiveRef.current = true;
@@ -448,16 +452,16 @@ export function LoopRegionBar({
     noteInteraction();
   };
 
-  const grantRef = useRef((_event: GestureResponderEvent) => {});
-  grantRef.current = (event) => {
+  const grantRef = useRef((_x: number) => {});
+  grantRef.current = (x) => {
     if (disabledRef.current) {
       return;
     }
     beginGesture();
     startLongPressTimer();
     dragActiveRef.current = false;
-    grantX.current = event.nativeEvent.locationX;
-    let mode = hitTest(event.nativeEvent.locationX);
+    grantX.current = x;
+    let mode = hitTest(x);
     if (editBlockedRef.current && (mode === 'left' || mode === 'right')) {
       mode = 'region';
     }
@@ -466,7 +470,7 @@ export function LoopRegionBar({
     startLoopEnd.current = loopEndRef.current;
     if (mode === 'create' && !editBlockedRef.current) {
       const time = contentXToTime(
-        event.nativeEvent.locationX,
+        x,
         sidePaddingRef.current,
         durationRef.current,
         pixelsPerSecondRef.current
@@ -476,13 +480,13 @@ export function LoopRegionBar({
     }
   };
 
-  const moveRef = useRef((_event: GestureResponderEvent, _gesture: PanResponderGestureState) => {});
-  moveRef.current = (_event, gesture) => {
-    cancelLongPressIfMoved(gesture);
+  const moveRef = useRef((_translation: LoopPanTranslation) => {});
+  moveRef.current = (translation) => {
+    cancelLongPressIfMoved(translation);
     if (disabledRef.current || longPressFiredRef.current) {
       return;
     }
-    if (!ensureDragActive(gesture)) {
+    if (!ensureDragActive(translation)) {
       return;
     }
     const mode = gestureModeRef.current;
@@ -493,7 +497,7 @@ export function LoopRegionBar({
     const padding = sidePaddingRef.current;
     const pps = pixelsPerSecondRef.current;
     if (mode === 'create') {
-      const endX = grantX.current + getEffectiveDx(gesture);
+      const endX = grantX.current + getEffectiveDx(translation);
       applyEdgeAutoScroll(endX);
       const endTime = applySnap(
         contentXToTime(endX, padding, durationRef.current, pps)
@@ -507,9 +511,9 @@ export function LoopRegionBar({
       return;
     }
     if (mode === 'left') {
-      const preliminaryDx = getEffectiveDx(gesture);
+      const preliminaryDx = getEffectiveDx(translation);
       applyEdgeAutoScroll(padding + (startLoopStart.current + preliminaryDx / pps) * pps);
-      const effectiveDx = getEffectiveDx(gesture);
+      const effectiveDx = getEffectiveDx(translation);
       const rawStart = Math.max(
         0,
         Math.min(startLoopStart.current + effectiveDx / pps, startLoopEnd.current - MIN_LOOP_DURATION)
@@ -519,9 +523,9 @@ export function LoopRegionBar({
       noteInteraction();
       return;
     }
-    const preliminaryDx = getEffectiveDx(gesture);
+    const preliminaryDx = getEffectiveDx(translation);
     applyEdgeAutoScroll(padding + (startLoopEnd.current + preliminaryDx / pps) * pps);
-    const effectiveDx = getEffectiveDx(gesture);
+    const effectiveDx = getEffectiveDx(translation);
     const rawEnd = Math.min(
       durationRef.current,
       Math.max(startLoopEnd.current + effectiveDx / pps, startLoopStart.current + MIN_LOOP_DURATION)
@@ -534,8 +538,8 @@ export function LoopRegionBar({
     noteInteraction();
   };
 
-  const finishRef = useRef((_event: GestureResponderEvent, _gesture: PanResponderGestureState) => {});
-  finishRef.current = (_event, gesture) => {
+  const finishRef = useRef((_translation: LoopPanTranslation) => {});
+  finishRef.current = (translation) => {
     const longPressed = longPressFiredRef.current;
     const mode = gestureModeRef.current;
     clearLongPressTimer();
@@ -544,7 +548,7 @@ export function LoopRegionBar({
       return;
     }
 
-    const movement = Math.abs(gesture.dx) + Math.abs(gesture.dy);
+    const movement = Math.abs(translation.dx) + Math.abs(translation.dy);
     const isTap = !dragActiveRef.current && movement < TAP_MOVE_THRESHOLD;
 
     if (mode === 'left' || mode === 'right') {
@@ -578,7 +582,7 @@ export function LoopRegionBar({
     const padding = sidePaddingRef.current;
     const dur = durationRef.current;
     const pps = pixelsPerSecondRef.current;
-    const endX = grantX.current + getEffectiveDx(gesture);
+    const endX = grantX.current + getEffectiveDx(translation);
     const endTime = contentXToTime(endX, padding, dur, pps);
     const startTime = createStartTime.current;
     const nextStart = Math.min(startTime, endTime);
@@ -597,19 +601,36 @@ export function LoopRegionBar({
     endGesture();
   };
 
-  const barResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => !disabledRef.current,
-      onStartShouldSetPanResponderCapture: () => !disabledRef.current,
-      onMoveShouldSetPanResponder: () => !disabledRef.current,
-      onMoveShouldSetPanResponderCapture: () => !disabledRef.current,
-      onPanResponderTerminationRequest: () => false,
-      onPanResponderGrant: (event) => grantRef.current(event),
-      onPanResponderMove: (event, gesture) => moveRef.current(event, gesture),
-      onPanResponderRelease: (event, gesture) => finishRef.current(event, gesture),
-      onPanResponderTerminate: (event, gesture) => finishRef.current(event, gesture),
-    })
-  ).current;
+  const handleBegin = (x: number) => {
+    grantRef.current(x);
+  };
+  const handleUpdate = (dx: number, dy: number) => {
+    moveRef.current({ dx, dy });
+  };
+  const handleFinalize = (dx: number, dy: number) => {
+    finishRef.current({ dx, dy });
+  };
+
+  const barPan = useMemo(() => {
+    const pan = Gesture.Pan()
+      .enabled(!disabled)
+      .maxPointers(1)
+      .onBegin((event) => {
+        runOnJS(handleBegin)(event.x);
+      })
+      .onUpdate((event) => {
+        runOnJS(handleUpdate)(event.translationX, event.translationY);
+      })
+      .onFinalize((event) => {
+        runOnJS(handleFinalize)(event.translationX, event.translationY);
+      });
+    if (nativeGestureRef) {
+      pan.withRef(nativeGestureRef as React.MutableRefObject<undefined>);
+    }
+    return pan;
+    // grant/move/finish read latest state from refs
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [disabled, nativeGestureRef]);
 
   const { left: regionLeft, width: regionWidth } = getLoopRegionLayout({
     loopStart: displayStart,
@@ -620,8 +641,8 @@ export function LoopRegionBar({
   const regionFillColor = displayEnabled ? LOOP_ENABLED_FILL : colors.waveformInactive;
 
   return (
+    <GestureDetector gesture={barPan}>
     <Animated.View
-      {...barResponder.panHandlers}
       style={[styles.bar, animatedBarStyle, { width: bandWidth }]}>
       <View pointerEvents="none" style={[styles.rulerLayer, { width: bandWidth }]}>
         {gridLines && gridLines.length > 0 ? (
@@ -648,6 +669,7 @@ export function LoopRegionBar({
         />
       ) : null}
     </Animated.View>
+    </GestureDetector>
   );
 }
 
