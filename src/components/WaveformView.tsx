@@ -59,6 +59,8 @@ import {
   METRONOME_GRID_BUFFER_VIEWPORTS,
   METRONOME_GRID_PLAYBACK_BUFFER_VIEWPORTS,
   MetronomeTrackGrid,
+  resolvePlaybackBarPaintRange,
+  shouldReseedPlaybackViewport,
   type MetronomeGridBuffer,
 } from '@/src/components/MetronomeGridOverlay';
 import {
@@ -1973,6 +1975,7 @@ function WaveformViewComponent({
   const layoutDurationRef = useRef(layoutDuration);
   layoutDurationRef.current = layoutDuration;
   const lastViewportCommitMsRef = useRef(0);
+  const prevPlaybackDurationRef = useRef(0);
 
   const syncViewportBuffersRef = useRef((_scrollX: number, _force = false) => {});
   const autoScrollingRef = useRef(false);
@@ -2093,6 +2096,30 @@ function WaveformViewComponent({
     layoutPixelsPerSecond,
     viewportWidth,
   ]);
+
+  // Seed a bounded window when width/duration catch up. Do not depend on
+  // layoutDuration while recording — headroom steps would remount every bar.
+  const playbackSeedDuration = isRecording ? 0 : duration;
+  useLayoutEffect(() => {
+    if (isRecording) {
+      prevPlaybackDurationRef.current = duration;
+      return;
+    }
+    const previousDuration = prevPlaybackDurationRef.current;
+    prevPlaybackDurationRef.current = duration;
+    if (
+      !shouldReseedPlaybackViewport(
+        viewportTimeBufferRef.current,
+        viewportWidth,
+        layoutPixelsPerSecond,
+        duration,
+        previousDuration
+      )
+    ) {
+      return;
+    }
+    syncMetronomeGridRef.current(scrollOffsetRef.current, true);
+  }, [isRecording, layoutPixelsPerSecond, playbackSeedDuration, viewportWidth]);
 
   useLayoutEffect(() => {
     const wasFollowing = prevFollowRecordingScrollRef.current;
@@ -2859,7 +2886,13 @@ function WaveformViewComponent({
           viewportWidth,
           layoutPixelsPerSecond
         )
-      : viewportTimeBuffer;
+      : resolvePlaybackBarPaintRange(
+          viewportTimeBuffer,
+          scrollX,
+          viewportWidth,
+          layoutPixelsPerSecond,
+          Math.max(duration, layoutDuration)
+        );
 
   return (
     <WaveformThemeContext.Provider value={theme}>

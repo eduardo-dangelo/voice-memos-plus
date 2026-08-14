@@ -24,6 +24,7 @@ export default function MemoEditorScreen() {
 
   return (
     <MemoEditor
+      key={id}
       autoRecord={record === '1'}
       backTitle={typeof backTitle === 'string' ? backTitle : undefined}
       memoId={id}

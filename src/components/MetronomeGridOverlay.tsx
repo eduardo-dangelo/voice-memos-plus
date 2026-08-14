@@ -13,8 +13,12 @@ export {
   getMetronomeGridBufferRange,
   getVisibleTimeRange,
   isMetronomeGridBufferValid,
+  isViewportTimeBufferUninitialized,
   METRONOME_GRID_BUFFER_VIEWPORTS,
   METRONOME_GRID_PLAYBACK_BUFFER_VIEWPORTS,
+  PLACEHOLDER_TIMELINE_DURATION_SEC,
+  resolvePlaybackBarPaintRange,
+  shouldReseedPlaybackViewport,
   type MetronomeGridBuffer,
 } from './metronomeGridViewport';
 

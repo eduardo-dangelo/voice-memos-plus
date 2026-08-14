@@ -419,6 +419,7 @@ export function MemoEditor({
     areMemoEditorEngineSlicesEqual
   );
   const autoRecordStarted = useRef(false);
+  const loadGenerationRef = useRef(0);
   const beginRecordingInFlight = useRef(false);
   const pendingLocationNamingRef = useRef(false);
   const recordingStartTime = useRef(0);
@@ -2163,13 +2164,20 @@ export function MemoEditor({
     liveRecordingSnapshot.current = null;
   }, []);
 
-  const loadMemo = useCallback(async () => {
+  const loadMemo = useCallback(async (generation: number) => {
     if (!id) {
       return;
     }
+    const isStale = () => generation !== loadGenerationRef.current;
     setLoading(true);
     await ensureRecordingBootstrapComplete(engine);
+    if (isStale()) {
+      return;
+    }
     const next = await getMemo(id);
+    if (isStale()) {
+      return;
+    }
     if (!next) {
       clearArmedRecordingUi();
       setMemo(null);
@@ -2180,6 +2188,9 @@ export function MemoEditor({
       return;
     }
     const loaded = hasRecording(next) ? await ensureWaveformPeaks(next) : next;
+    if (isStale()) {
+      return;
+    }
     setMemo(loaded);
     const liveSession = getSession();
     const isLiveRecordingForMemo =
@@ -2218,8 +2229,14 @@ export function MemoEditor({
           layer.duration > 0 && isLayerSelectable(getLayerEffects(layer), anySoloActive)
       );
       setActiveLayerId(defaultLayer?.id ?? null);
+      if (isStale()) {
+        return;
+      }
       if (hasRecording(loaded)) {
         await loadMemoIntoEngine(engine, loaded);
+        if (isStale()) {
+          return;
+        }
       } else {
         engine.unload();
         // unload() resets engine metronome to defaults; restore memo settings so
@@ -2620,8 +2637,10 @@ export function MemoEditor({
   }, [navigation, resetLayoutReady]);
 
   useEffect(() => {
-    void loadMemo();
+    const generation = ++loadGenerationRef.current;
+    void loadMemo(generation);
     return () => {
+      loadGenerationRef.current += 1;
       resetLayoutReady();
       resetPerformanceWarningState();
       engine.pause();

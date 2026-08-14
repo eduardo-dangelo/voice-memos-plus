@@ -34,6 +34,62 @@ export function getVisibleTimeRange(
   return { start, end };
 }
 
+/** Dummy/empty-lane duration used before a real clip length is known. */
+export const PLACEHOLDER_TIMELINE_DURATION_SEC = 0.02;
+
+export function isViewportTimeBufferUninitialized(
+  buffer: MetronomeGridBuffer | null
+): boolean {
+  return buffer == null || buffer.end <= buffer.start;
+}
+
+/**
+ * Playback paint window: keep an already-valid buffer, otherwise seed a bounded
+ * overscan range. Never expands to the full timeline (stack-arm remount freeze).
+ */
+export function resolvePlaybackBarPaintRange(
+  buffer: MetronomeGridBuffer,
+  scrollX: number,
+  viewportWidth: number,
+  pixelsPerSecond: number,
+  duration: number,
+  bufferViewports = METRONOME_GRID_BUFFER_VIEWPORTS
+): MetronomeGridBuffer {
+  if (buffer.end > buffer.start) {
+    return buffer;
+  }
+  if (viewportWidth <= 0 || pixelsPerSecond <= 0 || duration <= 0) {
+    return buffer.start === 0 && buffer.end === 0 ? buffer : { start: 0, end: 0 };
+  }
+  return getMetronomeGridBufferRange(
+    scrollX,
+    viewportWidth,
+    pixelsPerSecond,
+    duration,
+    bufferViewports
+  );
+}
+
+/** True when first layout/duration catch-up must reseed (not every recording tick). */
+export function shouldReseedPlaybackViewport(
+  buffer: MetronomeGridBuffer | null,
+  viewportWidth: number,
+  pixelsPerSecond: number,
+  duration: number,
+  previousDuration: number
+): boolean {
+  if (viewportWidth <= 0 || pixelsPerSecond <= 0 || duration <= 0) {
+    return false;
+  }
+  if (isViewportTimeBufferUninitialized(buffer)) {
+    return true;
+  }
+  return (
+    previousDuration <= PLACEHOLDER_TIMELINE_DURATION_SEC &&
+    duration > PLACEHOLDER_TIMELINE_DURATION_SEC
+  );
+}
+
 export function getMetronomeGridBufferRange(
   scrollX: number,
   viewportWidth: number,

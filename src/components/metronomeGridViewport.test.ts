@@ -7,6 +7,8 @@ import {
   isMetronomeGridBufferValid,
   METRONOME_GRID_BUFFER_VIEWPORTS,
   METRONOME_GRID_PLAYBACK_BUFFER_VIEWPORTS,
+  resolvePlaybackBarPaintRange,
+  shouldReseedPlaybackViewport,
 } from './metronomeGridViewport';
 import { getVisibleMarkerSeconds } from './waveformViewport';
 
@@ -103,4 +105,49 @@ test('getMetronomeGridBufferRange keeps end >= start at timeline end', () => {
   );
   assert.ok(buffer.end >= buffer.start);
   assert.equal(buffer.end, duration);
+});
+
+test('resolvePlaybackBarPaintRange seeds a bounded window from {0,0} when layout is valid', () => {
+  const range = resolvePlaybackBarPaintRange({ start: 0, end: 0 }, 0, VIEWPORT, PPS, 60);
+  assert.ok(range.end > range.start);
+  assert.deepEqual(range, getMetronomeGridBufferRange(0, VIEWPORT, PPS, 60));
+  assert.ok(range.end - range.start < 60);
+});
+
+test('resolvePlaybackBarPaintRange keeps {0,0} when width or duration is invalid', () => {
+  assert.deepEqual(resolvePlaybackBarPaintRange({ start: 0, end: 0 }, 0, 0, PPS, 60), {
+    start: 0,
+    end: 0,
+  });
+  assert.deepEqual(resolvePlaybackBarPaintRange({ start: 0, end: 0 }, 0, VIEWPORT, PPS, 0), {
+    start: 0,
+    end: 0,
+  });
+});
+
+test('resolvePlaybackBarPaintRange keeps an already-valid buffer', () => {
+  const existing = { start: 1, end: 8 };
+  assert.equal(resolvePlaybackBarPaintRange(existing, 0, VIEWPORT, PPS, 60), existing);
+});
+
+test('shouldReseedPlaybackViewport is true for an uninitialized buffer once layout is valid', () => {
+  assert.equal(shouldReseedPlaybackViewport({ start: 0, end: 0 }, VIEWPORT, PPS, 45, 0), true);
+  assert.equal(shouldReseedPlaybackViewport(null, VIEWPORT, PPS, 45, 0), true);
+});
+
+test('shouldReseedPlaybackViewport is true when duration catches up from a placeholder', () => {
+  assert.equal(
+    shouldReseedPlaybackViewport({ start: 0, end: 0.01 }, VIEWPORT, PPS, 45, 0.01),
+    true
+  );
+});
+
+test('shouldReseedPlaybackViewport is false when width is 0 or duration is 0', () => {
+  assert.equal(shouldReseedPlaybackViewport({ start: 0, end: 0 }, 0, PPS, 45, 0), false);
+  assert.equal(shouldReseedPlaybackViewport({ start: 0, end: 0 }, VIEWPORT, PPS, 0, 0), false);
+});
+
+test('shouldReseedPlaybackViewport is false for a valid buffer and stable duration', () => {
+  const buffer = getMetronomeGridBufferRange(0, VIEWPORT, PPS, 45);
+  assert.equal(shouldReseedPlaybackViewport(buffer, VIEWPORT, PPS, 45, 45), false);
 });
