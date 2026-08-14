@@ -1880,6 +1880,7 @@ function WaveformViewComponent({
       : LOOP_ROW_HEIGHT
     : 0;
   const loopExpandExtraSV = useSharedValue(0);
+  const waveformAreaHeightSV = useSharedValue(1);
   const lastDoubleTapAtRef = useRef(0);
   const frozenZoomRef = useRef<FrozenTimelineZoom | null>(null);
   const prevFollowRecordingScrollRef = useRef(false);
@@ -1934,6 +1935,7 @@ function WaveformViewComponent({
     1,
     viewportHeight > 0 ? viewportHeight - MARKER_ROW_HEIGHT - loopRowHeight : 1
   );
+  waveformAreaHeightSV.value = waveformAreaHeight;
   const playheadHeight = waveformAreaHeight + loopRowHeight;
   const baseTrackHeight = waveformAreaHeight / Math.max(1, tracks.length);
   const trackHeight = baseTrackHeight * layoutTrackZoom;
@@ -2627,7 +2629,7 @@ function WaveformViewComponent({
   }, [loopExpandExtraSV, loopOverlay]);
 
   const animatedTracksViewportStyle = useAnimatedStyle(() => ({
-    height: Math.max(1, waveformAreaHeight - loopExpandExtraSV.value),
+    height: Math.max(1, waveformAreaHeightSV.value - loopExpandExtraSV.value),
   }));
 
   const overlayLoopStart = loopPreview?.start ?? loopOverlay?.loopStart ?? 0;
