@@ -59,6 +59,29 @@ public class ProjectDocumentPickerModule: Module {
 
       currentVc.present(picker, animated: true)
     }.runOnQueue(.main)
+
+    AsyncFunction("copyIncomingProjectAsync") { (uri: String) -> String in
+      let source = projectFileURL(from: uri)
+      let accessed = source.startAccessingSecurityScopedResource()
+      defer {
+        if accessed {
+          source.stopAccessingSecurityScopedResource()
+        }
+      }
+
+      let cached = try copyProjectToCaches(source)
+      return cached.absoluteString
+    }
+
+    AsyncFunction("stampProjectTypeAsync") { (uri: String) in
+      let source = projectFileURL(from: uri)
+      // URLResourceValues.typeIdentifier/contentType are get-only. Best-effort stamp
+      // via NSURL; iOS may still derive the type from the .vmp extension.
+      try? (source as NSURL).setResourceValue(
+        projectUtiIdentifier,
+        forKey: .typeIdentifierKey
+      )
+    }
   }
 }
 
@@ -79,7 +102,7 @@ private final class PickerSession: NSObject, UIDocumentPickerDelegate, UIAdaptiv
     }
 
     do {
-      let cached = try Self.copyToCaches(url)
+      let cached = try copyProjectToCaches(url)
       finish([
         "canceled": false,
         "uri": cached.absoluteString,
@@ -119,19 +142,26 @@ private final class PickerSession: NSObject, UIDocumentPickerDelegate, UIAdaptiv
     promise.reject(code, message)
     onFinished()
   }
+}
 
-  private static func copyToCaches(_ source: URL) throws -> URL {
-    let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
-      ?? URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-    let directory = caches.appendingPathComponent("ProjectDocumentPicker", isDirectory: true)
-    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-
-    let uniqueName = "\(UUID().uuidString)-\(source.lastPathComponent)"
-    let destination = directory.appendingPathComponent(uniqueName)
-    if FileManager.default.fileExists(atPath: destination.path) {
-      try FileManager.default.removeItem(at: destination)
-    }
-    try FileManager.default.copyItem(at: source, to: destination)
-    return destination
+private func projectFileURL(from uri: String) -> URL {
+  if let url = URL(string: uri), url.isFileURL {
+    return url
   }
+  return URL(fileURLWithPath: uri)
+}
+
+private func copyProjectToCaches(_ source: URL) throws -> URL {
+  let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+    ?? URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+  let directory = caches.appendingPathComponent("ProjectDocumentPicker", isDirectory: true)
+  try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+  let uniqueName = "\(UUID().uuidString)-\(source.lastPathComponent)"
+  let destination = directory.appendingPathComponent(uniqueName)
+  if FileManager.default.fileExists(atPath: destination.path) {
+    try FileManager.default.removeItem(at: destination)
+  }
+  try FileManager.default.copyItem(at: source, to: destination)
+  return destination
 }

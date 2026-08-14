@@ -26,6 +26,8 @@
           "_metro._tcp"
         ],
         "ITSAppUsesNonExemptEncryption": false,
+        "LSSupportsOpeningDocumentsInPlace": true,
+        "UISupportsDocumentBrowser": true,
         "NSSupportsLiveActivities": true,
         "NSSupportsLiveActivitiesFrequentUpdates": true,
         "UISupportedInterfaceOrientations": [
@@ -42,13 +44,16 @@
             "UTTypeIdentifier": "com.eduardodangelo.voicememosplus.project",
             "UTTypeDescription": "Voice Memos Plus Project",
             "UTTypeConformsTo": [
-              "public.data"
+              "public.data",
+              "public.content"
             ],
             "UTTypeTagSpecification": {
               "public.filename-extension": [
                 "vmp"
               ],
-              "public.mime-type": "application/vnd.voice-memos-plus.project"
+              "public.mime-type": [
+                "application/vnd.voice-memos-plus.project"
+              ]
             }
           }
         ],
@@ -57,6 +62,9 @@
             "CFBundleTypeName": "Voice Memos Plus Project",
             "CFBundleTypeRole": "Editor",
             "LSHandlerRank": "Owner",
+            "CFBundleTypeExtensions": [
+              "vmp"
+            ],
             "LSItemContentTypes": [
               "com.eduardodangelo.voicememosplus.project"
             ]

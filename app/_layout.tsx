@@ -110,6 +110,13 @@ function RootNavigator() {
           }}
         />
         <Stack.Screen name="memo/[id]" options={memoScreenOptions} />
+        <Stack.Screen
+          name="import-project"
+          options={{
+            headerShown: false,
+            animation: 'none',
+          }}
+        />
       </Stack>
     </>
   );

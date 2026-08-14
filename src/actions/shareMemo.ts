@@ -1,7 +1,9 @@
 import * as Sharing from 'expo-sharing';
+import { stampProjectTypeAsync } from 'project-document-picker';
 import { ActionSheetIOS, Alert } from 'react-native';
 import { shareFilesAsync } from 'share-files';
 
+import { PROJECT_MIME_TYPE, PROJECT_UTI } from '@/src/storage/memoPackage';
 import {
   exportMemoToFile,
   type ExportFormat,
@@ -21,17 +23,23 @@ const PROJECT_FORMAT_LABEL = 'Project (.vmp)';
 
 function getShareMimeType(format: ExportFormat): string {
   if (format === 'vmp') {
-    // Share as zip so Files/AirDrop type the package as an archive the picker can match.
-    return 'application/zip';
+    return PROJECT_MIME_TYPE;
   }
   return format === 'm4a' ? 'audio/mp4' : 'audio/wav';
 }
 
 function getShareUti(format: ExportFormat): string {
   if (format === 'vmp') {
-    return 'public.zip-archive';
+    return PROJECT_UTI;
   }
   return format === 'm4a' ? 'public.mpeg-4-audio' : 'com.microsoft.waveform-audio';
+}
+
+async function stampProjectFileIfNeeded(uri: string, format: ExportFormat): Promise<void> {
+  if (format !== 'vmp') {
+    return;
+  }
+  await stampProjectTypeAsync(uri);
 }
 
 function resolveFormatSelection(label: string): ExportFormat | null {
@@ -86,6 +94,8 @@ async function exportAndShare(
       throw new Error('Export file was not created.');
     }
 
+    await stampProjectFileIfNeeded(file.uri, format);
+
     if (!(await Sharing.isAvailableAsync())) {
       throw new Error('Sharing is not available on this device.');
     }
@@ -118,6 +128,7 @@ async function exportAndShareMany(
       if (!file.exists) {
         throw new Error(`Export file was not created for “${memo.title}”.`);
       }
+      await stampProjectFileIfNeeded(file.uri, format);
       uris.push(file.uri);
     }
 

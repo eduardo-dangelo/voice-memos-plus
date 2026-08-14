@@ -1,4 +1,4 @@
-import { pickProjectAsync } from 'project-document-picker';
+import { copyIncomingProjectAsync, pickProjectAsync } from 'project-document-picker';
 import { Alert } from 'react-native';
 
 import {
@@ -59,6 +59,20 @@ async function importFromUri(
       // Best-effort cleanup of the shell memo.
     }
     throw error;
+  }
+}
+
+/** Import a Voice Memos Plus project from a file URI (Files / Mail / AirDrop). */
+export async function importMemoFromUri(
+  uri: string,
+  options?: ImportMemoOptions
+): Promise<Memo> {
+  const cachedUri = await copyIncomingProjectAsync(uri);
+  options?.onImportStarted?.();
+  try {
+    return await importFromUri(cachedUri, options);
+  } finally {
+    options?.onImportFinished?.();
   }
 }
 
