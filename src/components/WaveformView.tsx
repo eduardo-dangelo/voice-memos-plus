@@ -2994,7 +2994,17 @@ function WaveformViewComponent({
                 />
                 {loopOverlay ? (
                   <LoopColumnOverlay
-                    height={tracksContentHeight}
+                    height={
+                      tracksContentHeight > waveformAreaHeight
+                        ? tracksContentHeight
+                        : Math.max(
+                            1,
+                            waveformAreaHeight -
+                              (loopRowExpanded
+                                ? LOOP_ROW_HEIGHT_EXPANDED - LOOP_ROW_HEIGHT
+                                : 0)
+                          )
+                    }
                     loopEnabled={overlayLoopEnabled}
                     loopEnd={overlayLoopEnd}
                     loopStart={overlayLoopStart}

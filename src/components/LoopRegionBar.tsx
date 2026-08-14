@@ -21,15 +21,18 @@ import { MIN_LOOP_DURATION } from '@/src/storage/types';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
 export const LOOP_ROW_HEIGHT = 16;
-export const LOOP_ROW_HEIGHT_EXPANDED = 36;
+export const LOOP_ROW_HEIGHT_EXPANDED = 28;
 export const LOOP_EXPAND_DURATION_MS = 200;
 export const LOOP_EXPAND_EASING = Easing.bezier(0.33, 0, 0.2, 1);
-const LOOP_HANDLE_TOUCH = 20;
-const LOOP_HANDLE_TOUCH_EXPANDED = 36;
+const LOOP_HANDLE_OUTSIDE = 8;
+const LOOP_HANDLE_INSIDE = 16;
+const LOOP_HANDLE_INSIDE_EXPANDED = 20;
 export const LOOP_ENABLED_FILL = '#FFCC00';
 const TAP_MOVE_THRESHOLD = 6;
 const LONG_PRESS_DELAY_MS = 400;
 const EXPAND_IDLE_MS = 3000;
+
+type GestureMode = 'none' | 'create' | 'left' | 'right' | 'region';
 
 export type LoopScrollHelpers = {
   viewportWidth: number;
@@ -153,7 +156,9 @@ export function LoopRegionBar({
   holdExpandedRef.current = holdExpanded;
 
   const rowHeight = expanded ? LOOP_ROW_HEIGHT_EXPANDED : LOOP_ROW_HEIGHT;
-  const handleTouch = expanded ? LOOP_HANDLE_TOUCH_EXPANDED : LOOP_HANDLE_TOUCH;
+  const handleInside = expanded ? LOOP_HANDLE_INSIDE_EXPANDED : LOOP_HANDLE_INSIDE;
+  const handleInsideRef = useRef(handleInside);
+  handleInsideRef.current = handleInside;
   const heightSV = useSharedValue(LOOP_ROW_HEIGHT);
 
   useEffect(() => {
@@ -243,7 +248,6 @@ export function LoopRegionBar({
   useEffect(() => () => clearLongPressTimer(), []);
 
   const [preview, setPreview] = useState<{ start: number; end: number } | null>(null);
-  const [isCreating, setIsCreating] = useState(false);
   const previewRef = useRef<{ start: number; end: number } | null>(null);
   const onPreviewChangeRef = useRef(onPreviewChange);
   onPreviewChangeRef.current = onPreviewChange;
@@ -295,6 +299,8 @@ export function LoopRegionBar({
   const startLoopStart = useRef(0);
   const startLoopEnd = useRef(0);
   const grantX = useRef(0);
+  const gestureModeRef = useRef<GestureMode>('none');
+  const dragActiveRef = useRef(false);
 
   const applySnap = (time: number): number => {
     const interval = snapIntervalRef.current;
@@ -313,7 +319,8 @@ export function LoopRegionBar({
   const endGesture = () => {
     clearLongPressTimer();
     scrollHelpersRef.current.onGestureActive(false);
-    setIsCreating(false);
+    gestureModeRef.current = 'none';
+    dragActiveRef.current = false;
     updatePreview(null, loopEnabledRef.current);
   };
 
@@ -368,136 +375,150 @@ export function LoopRegionBar({
     onChangeRef.current(clampedStart, clampedEnd, enabled);
   };
 
-  const createGrantRef = useRef((_event: GestureResponderEvent) => {});
-  createGrantRef.current = (event) => {
+  const hitTest = (x: number): GestureMode => {
+    if (!hasRegionRef.current) {
+      return 'create';
+    }
+    const layout = getLoopRegionLayout({
+      loopStart: loopStartRef.current,
+      loopEnd: loopEndRef.current,
+      sidePadding: sidePaddingRef.current,
+      pixelsPerSecond: pixelsPerSecondRef.current,
+    });
+    if (!layout.hasRegion) {
+      return 'create';
+    }
+    const regionRight = layout.left + layout.width;
+    const inside = handleInsideRef.current;
+    const onLeft =
+      x >= layout.left - LOOP_HANDLE_OUTSIDE && x <= layout.left + inside;
+    const onRight =
+      x >= regionRight - inside && x <= regionRight + LOOP_HANDLE_OUTSIDE;
+    if (onLeft && onRight) {
+      return Math.abs(x - layout.left) <= Math.abs(x - regionRight) ? 'left' : 'right';
+    }
+    if (onLeft) {
+      return 'left';
+    }
+    if (onRight) {
+      return 'right';
+    }
+    if (x >= layout.left && x <= regionRight) {
+      return 'region';
+    }
+    return 'create';
+  };
+
+  const ensureDragActive = (gesture: PanResponderGestureState): boolean => {
+    if (dragActiveRef.current) {
+      return true;
+    }
+    if (Math.abs(gesture.dx) + Math.abs(gesture.dy) < TAP_MOVE_THRESHOLD) {
+      return false;
+    }
+    dragActiveRef.current = true;
+    expandBar();
+    return true;
+  };
+
+  const commitEdgePreview = () => {
+    const current = previewRef.current;
+    if (!current) {
+      return;
+    }
+    expandBar();
+    commitLoop(current.start, current.end, loopEnabledRef.current);
+  };
+
+  const handleEmptyTap = () => {
+    toggleExpandedFromEmptyTap();
+  };
+
+  const handleRegionTap = () => {
+    if (!hasRegionRef.current) {
+      return;
+    }
+    const wasEnabled = loopEnabledRef.current;
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    onChangeRef.current(loopStartRef.current, loopEndRef.current, !wasEnabled);
+    if (expandedRef.current && wasEnabled) {
+      collapseBar();
+      return;
+    }
+    noteInteraction();
+  };
+
+  const grantRef = useRef((_event: GestureResponderEvent) => {});
+  grantRef.current = (event) => {
     if (disabledRef.current) {
       return;
     }
     beginGesture();
     startLongPressTimer();
+    dragActiveRef.current = false;
     grantX.current = event.nativeEvent.locationX;
-    if (editBlockedRef.current) {
-      return;
+    let mode = hitTest(event.nativeEvent.locationX);
+    if (editBlockedRef.current && (mode === 'left' || mode === 'right')) {
+      mode = 'region';
     }
-    const time = contentXToTime(
-      event.nativeEvent.locationX,
-      sidePaddingRef.current,
-      durationRef.current,
-      pixelsPerSecondRef.current
-    );
-    createStartTime.current = time;
-    setIsCreating(true);
-    updatePreview({ start: time, end: time });
+    gestureModeRef.current = mode;
+    startLoopStart.current = loopStartRef.current;
+    startLoopEnd.current = loopEndRef.current;
+    if (mode === 'create' && !editBlockedRef.current) {
+      const time = contentXToTime(
+        event.nativeEvent.locationX,
+        sidePaddingRef.current,
+        durationRef.current,
+        pixelsPerSecondRef.current
+      );
+      createStartTime.current = time;
+      updatePreview({ start: time, end: time });
+    }
   };
 
-  const createMoveRef = useRef((_event: GestureResponderEvent, gesture: PanResponderGestureState) => {});
-  createMoveRef.current = (_event, gesture) => {
+  const moveRef = useRef((_event: GestureResponderEvent, _gesture: PanResponderGestureState) => {});
+  moveRef.current = (_event, gesture) => {
     cancelLongPressIfMoved(gesture);
-    if (disabledRef.current || editBlockedRef.current || longPressFiredRef.current) {
+    if (disabledRef.current || longPressFiredRef.current) {
       return;
     }
-    const padding = sidePaddingRef.current;
-    const dur = durationRef.current;
-    const pps = pixelsPerSecondRef.current;
-    const endX = grantX.current + getEffectiveDx(gesture);
-    applyEdgeAutoScroll(endX);
-    const endTime = applySnap(contentXToTime(endX, padding, dur, pps));
-    const startTime = applySnap(createStartTime.current);
-    updatePreview({
-      start: Math.min(startTime, endTime),
-      end: Math.max(startTime, endTime),
-    });
-    noteInteraction();
-  };
-
-  const createReleaseRef = useRef((_event: GestureResponderEvent, gesture: PanResponderGestureState) => {});
-  createReleaseRef.current = (_event, gesture) => {
-    const longPressed = longPressFiredRef.current;
-    clearLongPressTimer();
-    if (disabledRef.current) {
-      endGesture();
+    if (!ensureDragActive(gesture)) {
       return;
     }
-    if (longPressed) {
-      endGesture();
-      return;
-    }
-
-    const movement = Math.abs(gesture.dx) + Math.abs(gesture.dy);
-    const isTap = movement < TAP_MOVE_THRESHOLD;
-
-    if (editBlockedRef.current) {
-      if (isTap) {
-        toggleExpandedFromEmptyTap();
-      }
-      endGesture();
-      return;
-    }
-
-    const padding = sidePaddingRef.current;
-    const dur = durationRef.current;
-    const pps = pixelsPerSecondRef.current;
-    const endX = grantX.current + getEffectiveDx(gesture);
-    const endTime = contentXToTime(endX, padding, dur, pps);
-    const startTime = createStartTime.current;
-    const nextStart = Math.min(startTime, endTime);
-    const nextEnd = Math.max(startTime, endTime);
-
-    if (isTap && nextEnd <= nextStart + MIN_LOOP_DURATION) {
-      toggleExpandedFromEmptyTap();
-      endGesture();
-      return;
-    }
-
-    if (movement >= TAP_MOVE_THRESHOLD || nextEnd > nextStart + MIN_LOOP_DURATION) {
-      expandBar();
-      commitLoop(nextStart, nextEnd, true);
-    }
-    endGesture();
-  };
-
-  const leftMoveRef = useRef((_event: GestureResponderEvent, gesture: PanResponderGestureState) => {});
-  leftMoveRef.current = (_event, gesture) => {
-    cancelLongPressIfMoved(gesture);
-    if (longPressFiredRef.current) {
+    const mode = gestureModeRef.current;
+    if (editBlockedRef.current || mode === 'region' || mode === 'none') {
+      noteInteraction();
       return;
     }
     const padding = sidePaddingRef.current;
     const pps = pixelsPerSecondRef.current;
-    const preliminaryDx = getEffectiveDx(gesture);
-    applyEdgeAutoScroll(padding + (startLoopStart.current + preliminaryDx / pps) * pps);
-    const effectiveDx = getEffectiveDx(gesture);
-    const rawStart = Math.max(
-      0,
-      Math.min(startLoopStart.current + effectiveDx / pps, startLoopEnd.current - MIN_LOOP_DURATION)
-    );
-    const nextStart = Math.min(applySnap(rawStart), startLoopEnd.current - MIN_LOOP_DURATION);
-    updatePreview({ start: Math.max(0, nextStart), end: startLoopEnd.current });
-    noteInteraction();
-  };
-
-  const leftReleaseRef = useRef(() => {});
-  leftReleaseRef.current = () => {
-    const longPressed = longPressFiredRef.current;
-    clearLongPressTimer();
-    if (!longPressed) {
-      const current = previewRef.current;
-      if (current) {
-        expandBar();
-        commitLoop(current.start, current.end, loopEnabledRef.current);
-      }
-    }
-    endGesture();
-  };
-
-  const rightMoveRef = useRef((_event: GestureResponderEvent, gesture: PanResponderGestureState) => {});
-  rightMoveRef.current = (_event, gesture) => {
-    cancelLongPressIfMoved(gesture);
-    if (longPressFiredRef.current) {
+    if (mode === 'create') {
+      const endX = grantX.current + getEffectiveDx(gesture);
+      applyEdgeAutoScroll(endX);
+      const endTime = applySnap(
+        contentXToTime(endX, padding, durationRef.current, pps)
+      );
+      const startTime = applySnap(createStartTime.current);
+      updatePreview({
+        start: Math.min(startTime, endTime),
+        end: Math.max(startTime, endTime),
+      });
+      noteInteraction();
       return;
     }
-    const padding = sidePaddingRef.current;
-    const pps = pixelsPerSecondRef.current;
+    if (mode === 'left') {
+      const preliminaryDx = getEffectiveDx(gesture);
+      applyEdgeAutoScroll(padding + (startLoopStart.current + preliminaryDx / pps) * pps);
+      const effectiveDx = getEffectiveDx(gesture);
+      const rawStart = Math.max(
+        0,
+        Math.min(startLoopStart.current + effectiveDx / pps, startLoopEnd.current - MIN_LOOP_DURATION)
+      );
+      const nextStart = Math.min(applySnap(rawStart), startLoopEnd.current - MIN_LOOP_DURATION);
+      updatePreview({ start: Math.max(0, nextStart), end: startLoopEnd.current });
+      noteInteraction();
+      return;
+    }
     const preliminaryDx = getEffectiveDx(gesture);
     applyEdgeAutoScroll(padding + (startLoopEnd.current + preliminaryDx / pps) * pps);
     const effectiveDx = getEffectiveDx(gesture);
@@ -513,117 +534,80 @@ export function LoopRegionBar({
     noteInteraction();
   };
 
-  const rightReleaseRef = useRef(() => {});
-  rightReleaseRef.current = () => {
+  const finishRef = useRef((_event: GestureResponderEvent, _gesture: PanResponderGestureState) => {});
+  finishRef.current = (_event, gesture) => {
     const longPressed = longPressFiredRef.current;
+    const mode = gestureModeRef.current;
     clearLongPressTimer();
-    if (!longPressed) {
-      const current = previewRef.current;
-      if (current) {
-        expandBar();
-        commitLoop(current.start, current.end, loopEnabledRef.current);
-      }
-    }
-    endGesture();
-  };
-
-  const toggleGrantRef = useRef(() => {});
-  toggleGrantRef.current = () => {
-    if (disabled) {
-      return;
-    }
-    beginGesture();
-    startLongPressTimer();
-  };
-
-  const toggleReleaseRef = useRef((_event: GestureResponderEvent, gesture: PanResponderGestureState) => {});
-  toggleReleaseRef.current = (_event, gesture) => {
-    const longPressed = longPressFiredRef.current;
-    clearLongPressTimer();
-    if (disabled) {
+    if (disabledRef.current || longPressed || mode === 'none') {
       endGesture();
       return;
     }
+
     const movement = Math.abs(gesture.dx) + Math.abs(gesture.dy);
-    if (!longPressed && movement < TAP_MOVE_THRESHOLD && hasRegionRef.current) {
-      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      noteInteraction();
-      onChangeRef.current(loopStartRef.current, loopEndRef.current, !loopEnabledRef.current);
+    const isTap = !dragActiveRef.current && movement < TAP_MOVE_THRESHOLD;
+
+    if (mode === 'left' || mode === 'right') {
+      if (!isTap) {
+        commitEdgePreview();
+      } else if (!expandedRef.current) {
+        expandBar();
+      } else {
+        noteInteraction();
+      }
+      endGesture();
+      return;
+    }
+
+    if (mode === 'region') {
+      if (isTap) {
+        handleRegionTap();
+      }
+      endGesture();
+      return;
+    }
+
+    if (editBlockedRef.current) {
+      if (isTap) {
+        handleEmptyTap();
+      }
+      endGesture();
+      return;
+    }
+
+    const padding = sidePaddingRef.current;
+    const dur = durationRef.current;
+    const pps = pixelsPerSecondRef.current;
+    const endX = grantX.current + getEffectiveDx(gesture);
+    const endTime = contentXToTime(endX, padding, dur, pps);
+    const startTime = createStartTime.current;
+    const nextStart = Math.min(startTime, endTime);
+    const nextEnd = Math.max(startTime, endTime);
+
+    if (isTap && nextEnd <= nextStart + MIN_LOOP_DURATION) {
+      handleEmptyTap();
+      endGesture();
+      return;
+    }
+
+    if (dragActiveRef.current || nextEnd > nextStart + MIN_LOOP_DURATION) {
+      expandBar();
+      commitLoop(nextStart, nextEnd, true);
     }
     endGesture();
   };
 
-  const editPanCapture = {
-    onStartShouldSetPanResponder: () => !editBlockedRef.current,
-    onStartShouldSetPanResponderCapture: () => !editBlockedRef.current,
-    onMoveShouldSetPanResponder: () => !editBlockedRef.current,
-    onMoveShouldSetPanResponderCapture: () => !editBlockedRef.current,
-    onPanResponderTerminationRequest: () => false,
-  };
-
-  const createPanCapture = {
-    onStartShouldSetPanResponder: () => !disabledRef.current,
-    onStartShouldSetPanResponderCapture: () => !disabledRef.current,
-    onMoveShouldSetPanResponder: () => !disabledRef.current,
-    onMoveShouldSetPanResponderCapture: () => !disabledRef.current,
-    onPanResponderTerminationRequest: () => false,
-  };
-
-  const togglePanCapture = {
-    onStartShouldSetPanResponder: () => !disabledRef.current,
-    onStartShouldSetPanResponderCapture: () => !disabledRef.current,
-    onMoveShouldSetPanResponder: () => !disabledRef.current,
-    onMoveShouldSetPanResponderCapture: () => !disabledRef.current,
-    onPanResponderTerminationRequest: () => false,
-  };
-
-  const createResponder = useRef(
+  const barResponder = useRef(
     PanResponder.create({
-      ...createPanCapture,
-      onPanResponderGrant: (event) => createGrantRef.current(event),
-      onPanResponderMove: (event, gesture) => createMoveRef.current(event, gesture),
-      onPanResponderRelease: (event, gesture) => createReleaseRef.current(event, gesture),
-      onPanResponderTerminate: () => endGesture(),
-    })
-  ).current;
-
-  const leftResponder = useRef(
-    PanResponder.create({
-      ...editPanCapture,
-      onPanResponderGrant: () => {
-        beginGesture();
-        startLongPressTimer();
-        startLoopStart.current = loopStartRef.current;
-        startLoopEnd.current = loopEndRef.current;
-      },
-      onPanResponderMove: (event, gesture) => leftMoveRef.current(event, gesture),
-      onPanResponderRelease: () => leftReleaseRef.current(),
-      onPanResponderTerminate: () => endGesture(),
-    })
-  ).current;
-
-  const rightResponder = useRef(
-    PanResponder.create({
-      ...editPanCapture,
-      onPanResponderGrant: () => {
-        beginGesture();
-        startLongPressTimer();
-        startLoopStart.current = loopStartRef.current;
-        startLoopEnd.current = loopEndRef.current;
-      },
-      onPanResponderMove: (event, gesture) => rightMoveRef.current(event, gesture),
-      onPanResponderRelease: () => rightReleaseRef.current(),
-      onPanResponderTerminate: () => endGesture(),
-    })
-  ).current;
-
-  const toggleResponder = useRef(
-    PanResponder.create({
-      ...togglePanCapture,
-      onPanResponderGrant: () => toggleGrantRef.current(),
-      onPanResponderMove: (_event, gesture) => cancelLongPressIfMoved(gesture),
-      onPanResponderRelease: (event, gesture) => toggleReleaseRef.current(event, gesture),
-      onPanResponderTerminate: () => endGesture(),
+      onStartShouldSetPanResponder: () => !disabledRef.current,
+      onStartShouldSetPanResponderCapture: () => !disabledRef.current,
+      onMoveShouldSetPanResponder: () => !disabledRef.current,
+      onMoveShouldSetPanResponderCapture: () => !disabledRef.current,
+      onPanResponderTerminationRequest: () => false,
+      onPanResponderGrant: (event) => grantRef.current(event),
+      onPanResponderMove: (event, gesture) => moveRef.current(event, gesture),
+      onPanResponderRelease: (event, gesture) => finishRef.current(event, gesture),
+      onPanResponderTerminate: (event, gesture) => finishRef.current(event, gesture),
     })
   ).current;
 
@@ -633,11 +617,12 @@ export function LoopRegionBar({
     sidePadding,
     pixelsPerSecond,
   });
-  const regionRight = regionLeft + regionWidth;
   const regionFillColor = displayEnabled ? LOOP_ENABLED_FILL : colors.waveformInactive;
 
   return (
-    <Animated.View style={[styles.bar, animatedBarStyle, { width: bandWidth }]}>
+    <Animated.View
+      {...barResponder.panHandlers}
+      style={[styles.bar, animatedBarStyle, { width: bandWidth }]}>
       <View pointerEvents="none" style={[styles.rulerLayer, { width: bandWidth }]}>
         {gridLines && gridLines.length > 0 ? (
           <MetronomeRulerTicks
@@ -650,59 +635,18 @@ export function LoopRegionBar({
       </View>
 
       {displayHasRegion ? (
-        <>
-          <View
-            pointerEvents="none"
-            style={[
-              styles.regionFill,
-              {
-                left: regionLeft,
-                width: regionWidth,
-                backgroundColor: regionFillColor,
-              },
-            ]}
-          />
-          {!isCreating ? (
-            <>
-              <View
-                {...toggleResponder.panHandlers}
-                style={[
-                  styles.regionTapTarget,
-                  {
-                    left: regionLeft,
-                    width: regionWidth,
-                  },
-                ]}
-              />
-              <View
-                {...leftResponder.panHandlers}
-                style={[
-                  styles.edgeHandle,
-                  {
-                    left: regionLeft - handleTouch / 2,
-                    width: handleTouch,
-                  },
-                ]}
-              />
-              <View
-                {...rightResponder.panHandlers}
-                style={[
-                  styles.edgeHandle,
-                  {
-                    left: regionRight - handleTouch / 2,
-                    width: handleTouch,
-                  },
-                ]}
-              />
-            </>
-          ) : null}
-        </>
+        <View
+          pointerEvents="none"
+          style={[
+            styles.regionFill,
+            {
+              left: regionLeft,
+              width: regionWidth,
+              backgroundColor: regionFillColor,
+            },
+          ]}
+        />
       ) : null}
-
-      <View
-        {...createResponder.panHandlers}
-        style={[styles.createLayer, { width: bandWidth, zIndex: isCreating ? 6 : 1 }]}
-      />
     </Animated.View>
   );
 }
@@ -723,30 +667,11 @@ function createLoopRegionStyles(colors: ReturnType<typeof useVoiceMemosColors>) 
       left: 0,
       zIndex: 2,
     },
-    createLayer: {
-      position: 'absolute',
-      top: 0,
-      bottom: 0,
-      left: 0,
-      zIndex: 1,
-    },
     regionFill: {
       position: 'absolute',
       top: 0,
       bottom: 0,
       zIndex: 3,
-    },
-    regionTapTarget: {
-      position: 'absolute',
-      top: 0,
-      bottom: 0,
-      zIndex: 4,
-    },
-    edgeHandle: {
-      position: 'absolute',
-      top: 0,
-      bottom: 0,
-      zIndex: 5,
     },
   });
 }
