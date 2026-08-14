@@ -98,6 +98,7 @@ const TRIM_EDGE_SCROLL_MAX_SPEED = 12;
 const TRIM_HANDLE_COLOR = '#FFCC00';
 const TRIM_TAP_MOVE_THRESHOLD = 6;
 const TRIM_EXPAND_IDLE_MS = 3000;
+const TRIM_DRAG_HANDLE_OPACITY = 0.4;
 const MOVE_BORDER_WIDTH = 2;
 const MIN_PINCH_SPAN = 10;
 const TRACK_ZOOM_SCROLL_THRESHOLD = 1.01;
@@ -485,6 +486,7 @@ function TrackTrimOverlay({
 
   const sideBorderSV = useSharedValue(TRIM_SIDE_BORDER);
   const handleTouchSV = useSharedValue(TRIM_HANDLE_TOUCH);
+  const selectionOpacitySV = useSharedValue(1);
   const trimLeftSV = useSharedValue(trimLeft);
   const trimRightSV = useSharedValue(trimRight);
   const trackHeightSV = useSharedValue(trackHeight);
@@ -560,6 +562,7 @@ function TrackTrimOverlay({
   const animatedSelectionStyle = useAnimatedStyle(() => ({
     borderLeftWidth: sideBorderSV.value,
     borderRightWidth: sideBorderSV.value,
+    opacity: selectionOpacitySV.value,
   }));
 
   const animatedLeftHandleStyle = useAnimatedStyle(() => ({
@@ -587,6 +590,7 @@ function TrackTrimOverlay({
   endTrimGestureRef.current = (_event, gesture) => {
     const movement = Math.abs(gesture.dx) + Math.abs(gesture.dy);
     const isTap = !dragActiveRef.current && movement < TRIM_TAP_MOVE_THRESHOLD;
+    selectionOpacitySV.value = withTiming(1, { duration: 120 });
     trimScrollHelpersRef.current.onTrimGestureActive(false);
     if (isTap) {
       toggleExpandedFromTap();
@@ -613,6 +617,7 @@ function TrackTrimOverlay({
       return false;
     }
     dragActiveRef.current = true;
+    selectionOpacitySV.value = withTiming(TRIM_DRAG_HANDLE_OPACITY, { duration: 80 });
     expandHandles();
     return true;
   };

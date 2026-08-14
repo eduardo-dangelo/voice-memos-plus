@@ -416,7 +416,7 @@ export function TrackFadeOverlay({
   const crossfadeWidth = crossfade
     ? Math.max(0, (crossfade.overlapEnd - crossfade.overlapStart) * pixelsPerSecond)
     : 0;
-  const showCrossfadeZone = isCrossfadeLane && crossfadeWidth > 4;
+  const showCrossfadeZone = editable && isCrossfadeLane && crossfadeWidth > 4;
   const showCrossfadeHandle =
     editable && showCrossfadeZone && onCrossfadeChange != null;
 

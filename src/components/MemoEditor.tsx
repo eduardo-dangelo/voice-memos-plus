@@ -366,10 +366,36 @@ function trackFadeFields(effects: LayerEffects) {
   };
 }
 
-const EDIT_DRAFT_IDLE_AUTOSAVE_MS = 3000;
-
 function cloneLayers(layers: Layer[]): Layer[] {
   return JSON.parse(JSON.stringify(layers)) as Layer[];
+}
+
+function isEditDraftDirty(snapshot: EditDraftSnapshot, current: Memo): boolean {
+  if (snapshot.duration !== current.duration || snapshot.trimEnd !== current.trimEnd) {
+    return true;
+  }
+  if (snapshot.layers.length !== current.layers.length) {
+    return true;
+  }
+  const prevById = new Map(snapshot.layers.map((layer) => [layer.id, layer]));
+  for (const layer of current.layers) {
+    const prev = prevById.get(layer.id);
+    if (!prev) {
+      return true;
+    }
+    if (prev.startTime !== layer.startTime || prev.loopUntil !== layer.loopUntil) {
+      return true;
+    }
+    const prevEffects = getLayerEffects(prev);
+    const nextEffects = getLayerEffects(layer);
+    if (
+      prevEffects.trimIn !== nextEffects.trimIn ||
+      prevEffects.trimOut !== nextEffects.trimOut
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function suppressTrackSelection(tracks: TrackData[], isRecording: boolean): TrackData[] {
@@ -465,6 +491,7 @@ export function MemoEditor({
   const [activeLayerId, setActiveLayerId] = useState<string | null>(null);
   const [activeEditor, setActiveEditor] = useState<EditorTool | null>(null);
   const [savingTrim, setSavingTrim] = useState(false);
+  const savingTrimRef = useRef(false);
   const [colorPickerLayerId, setColorPickerLayerId] = useState<string | null>(null);
   const [trackMenuLayerId, setTrackMenuLayerId] = useState<string | null>(null);
   const [trackMenuFormatPicker, setTrackMenuFormatPicker] = useState(false);
@@ -511,9 +538,10 @@ export function MemoEditor({
   const monitorMixRef = useRef(false);
   const editDraftRef = useRef<EditDraftSnapshot | null>(null);
   const draftGenerationRef = useRef(0);
-  const editDraftIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const editGestureActiveRef = useRef(false);
-  const confirmEditDraftRef = useRef<() => Promise<void>>(async () => {});
+  const confirmEditDraftRef = useRef<(keepTool?: boolean) => Promise<void>>(
+    async () => {}
+  );
   const precountCancelledRef = useRef(false);
   const precountDismissResolveRef = useRef<(() => void) | null>(null);
   stackModeRef.current = stackMode;
@@ -721,53 +749,28 @@ export function MemoEditor({
     pendingStartTimePersist.current = null;
   }, []);
 
-  const clearEditDraftIdleTimer = useCallback(() => {
-    if (editDraftIdleTimerRef.current) {
-      clearTimeout(editDraftIdleTimerRef.current);
-      editDraftIdleTimerRef.current = null;
-    }
-  }, []);
-
-  const scheduleEditDraftIdleAutosave = useCallback(() => {
-    clearEditDraftIdleTimer();
-    if (!editDraftRef.current || editGestureActiveRef.current) {
+  const beginEditDraft = useCallback((tool: 'trim' | 'move') => {
+    const current = memoRef.current;
+    if (!current) {
       return;
     }
-    editDraftIdleTimerRef.current = setTimeout(() => {
-      editDraftIdleTimerRef.current = null;
-      if (!editDraftRef.current || editGestureActiveRef.current) {
+    if (activeLayerIdRef.current) {
+      const layer = current.layers.find((entry) => entry.id === activeLayerIdRef.current);
+      if (layer && isLayerLocked(getLayerEffects(layer))) {
         return;
       }
-      void confirmEditDraftRef.current();
-    }, EDIT_DRAFT_IDLE_AUTOSAVE_MS);
-  }, [clearEditDraftIdleTimer]);
-
-  const beginEditDraft = useCallback(
-    (tool: 'trim' | 'move') => {
-      const current = memoRef.current;
-      if (!current) {
-        return;
-      }
-      if (activeLayerId) {
-        const layer = current.layers.find((entry) => entry.id === activeLayerId);
-        if (layer && isLayerLocked(getLayerEffects(layer))) {
-          return;
-        }
-      }
-      draftGenerationRef.current += 1;
-      editDraftRef.current = {
-        tool,
-        layers: cloneLayers(current.layers),
-        duration: current.duration,
-        trimEnd: current.trimEnd,
-        generation: draftGenerationRef.current,
-      };
-      editGestureActiveRef.current = false;
-      setActiveEditor(tool);
-      scheduleEditDraftIdleAutosave();
-    },
-    [activeLayerId, scheduleEditDraftIdleAutosave]
-  );
+    }
+    draftGenerationRef.current += 1;
+    editDraftRef.current = {
+      tool,
+      layers: cloneLayers(current.layers),
+      duration: current.duration,
+      trimEnd: current.trimEnd,
+      generation: draftGenerationRef.current,
+    };
+    editGestureActiveRef.current = false;
+    setActiveEditor(tool);
+  }, []);
 
   const cancelEditDraft = useCallback(async (): Promise<void> => {
     const snapshot = editDraftRef.current;
@@ -776,7 +779,6 @@ export function MemoEditor({
     }
 
     draftGenerationRef.current += 1;
-    clearEditDraftIdleTimer();
     clearDraftPersistTimers();
     editDraftRef.current = null;
     editGestureActiveRef.current = false;
@@ -800,71 +802,99 @@ export function MemoEditor({
       getMemoTimelineDuration(restored)
     );
     await loadMemoIntoEngine(engine, restored, seekTime);
-  }, [clearDraftPersistTimers, clearEditDraftIdleTimer, engine]);
+  }, [clearDraftPersistTimers, engine]);
 
-  const confirmEditDraft = useCallback(async (): Promise<void> => {
-    const snapshot = editDraftRef.current;
-    const current = memoRef.current;
-    if (!snapshot || !current) {
-      draftGenerationRef.current += 1;
-      clearEditDraftIdleTimer();
-      editDraftRef.current = null;
-      editGestureActiveRef.current = false;
-      setActiveEditor(null);
-      return;
-    }
-
-    draftGenerationRef.current += 1;
-    clearEditDraftIdleTimer();
-    clearDraftPersistTimers();
-    editDraftRef.current = null;
-    editGestureActiveRef.current = false;
-    setSavingTrim(true);
-
-    try {
-      if (snapshot.tool === 'trim' && activeLayerId) {
-        const layer = current.layers.find((entry) => entry.id === activeLayerId);
-        if (layer) {
-          const effects = getLayerEffects(layer);
-          await updateLayerEffects(
-            current.id,
-            activeLayerId,
-            layerEffectsPersistPayload(effects)
-          );
-          await updateLayerLoopUntil(current.id, activeLayerId, layer.loopUntil ?? null);
+  const confirmEditDraft = useCallback(
+    async (keepTool = false): Promise<void> => {
+      if (savingTrimRef.current) {
+        return;
+      }
+      const snapshot = editDraftRef.current;
+      const current = memoRef.current;
+      if (!snapshot || !current) {
+        draftGenerationRef.current += 1;
+        editDraftRef.current = null;
+        editGestureActiveRef.current = false;
+        if (!keepTool) {
+          setActiveEditor(null);
         }
+        return;
       }
 
-      const startTimes = Object.fromEntries(
-        current.layers.map((layer) => [layer.id, layer.startTime])
-      );
-      const updated = await updateLayerStartTimes(current.id, startTimes);
-      memoRef.current = updated;
-      setMemo(updated);
-      setActiveEditor(null);
-    } catch (error) {
-      Alert.alert(
-        snapshot.tool === 'trim' ? 'Could not apply trim' : 'Could not apply move',
-        error instanceof Error ? error.message : 'Unknown error'
-      );
-    } finally {
-      setSavingTrim(false);
-    }
-  }, [activeLayerId, clearDraftPersistTimers, clearEditDraftIdleTimer]);
+      if (!isEditDraftDirty(snapshot, current)) {
+        if (!keepTool) {
+          draftGenerationRef.current += 1;
+          editDraftRef.current = null;
+          editGestureActiveRef.current = false;
+          setActiveEditor(null);
+        }
+        return;
+      }
+
+      const persistLayerId = activeLayerIdRef.current;
+      draftGenerationRef.current += 1;
+      clearDraftPersistTimers();
+      editGestureActiveRef.current = false;
+      savingTrimRef.current = true;
+      setSavingTrim(true);
+
+      try {
+        if (snapshot.tool === 'trim' && persistLayerId) {
+          const layer = current.layers.find((entry) => entry.id === persistLayerId);
+          if (layer) {
+            const effects = getLayerEffects(layer);
+            await updateLayerEffects(
+              current.id,
+              persistLayerId,
+              layerEffectsPersistPayload(effects)
+            );
+            await updateLayerLoopUntil(current.id, persistLayerId, layer.loopUntil ?? null);
+          }
+        }
+
+        const startTimes = Object.fromEntries(
+          current.layers.map((layer) => [layer.id, layer.startTime])
+        );
+        const updated = await updateLayerStartTimes(current.id, startTimes);
+        memoRef.current = updated;
+        setMemo(updated);
+        if (keepTool) {
+          beginEditDraft(snapshot.tool);
+        } else {
+          editDraftRef.current = null;
+          setActiveEditor(null);
+        }
+      } catch (error) {
+        Alert.alert(
+          snapshot.tool === 'trim' ? 'Could not apply trim' : 'Could not apply move',
+          error instanceof Error ? error.message : 'Unknown error'
+        );
+        editDraftRef.current = {
+          ...snapshot,
+          generation: draftGenerationRef.current,
+        };
+        if (keepTool) {
+          setActiveEditor(snapshot.tool);
+        } else {
+          await cancelEditDraft();
+        }
+      } finally {
+        savingTrimRef.current = false;
+        setSavingTrim(false);
+      }
+    },
+    [beginEditDraft, cancelEditDraft, clearDraftPersistTimers]
+  );
 
   confirmEditDraftRef.current = confirmEditDraft;
 
-  const handleEditGestureActive = useCallback(
-    (active: boolean) => {
-      editGestureActiveRef.current = active;
-      if (active) {
-        clearEditDraftIdleTimer();
-        return;
-      }
-      scheduleEditDraftIdleAutosave();
-    },
-    [clearEditDraftIdleTimer, scheduleEditDraftIdleAutosave]
-  );
+  const handleEditGestureActive = useCallback((active: boolean) => {
+    editGestureActiveRef.current = active;
+    if (active) {
+      return;
+    }
+    void confirmEditDraftRef.current(true);
+  }, []);
 
   const handleEditorToolChange = useCallback(
     (tool: EditorTool | null) => {
@@ -882,7 +912,7 @@ export function MemoEditor({
 
       const draft = editDraftRef.current;
       if (draft && tool !== draft.tool) {
-        void cancelEditDraft().then(() => {
+        void confirmEditDraft(false).then(() => {
           if (tool === 'trim' || tool === 'move') {
             beginEditDraft(tool);
           } else {
@@ -899,29 +929,14 @@ export function MemoEditor({
 
       setActiveEditor(tool);
     },
-    [activeLayerEffects, beginEditDraft, cancelEditDraft, savingTrim]
+    [activeLayerEffects, beginEditDraft, confirmEditDraft, savingTrim]
   );
-
-  const handleConfirmDraft = useCallback(() => {
-    if (savingTrim) {
-      return;
-    }
-    void confirmEditDraft();
-  }, [confirmEditDraft, savingTrim]);
-
-  const handleCancelDraft = useCallback(() => {
-    if (savingTrim) {
-      return;
-    }
-    void cancelEditDraft();
-  }, [cancelEditDraft, savingTrim]);
 
   const handleTrimChange = useCallback(
     (trimIn: number, trimOut: number) => {
       handleEffectsChange({ trimIn, trimOut });
-      scheduleEditDraftIdleAutosave();
     },
-    [handleEffectsChange, scheduleEditDraftIdleAutosave]
+    [handleEffectsChange]
   );
 
   const applyFadeUpdates = useCallback(
@@ -1211,7 +1226,6 @@ export function MemoEditor({
       engine.updateTimelineDuration(timeline, nextTrimEnd);
 
       if (isDraftMove) {
-        scheduleEditDraftIdleAutosave();
         return;
       }
 
@@ -1228,7 +1242,7 @@ export function MemoEditor({
         void updateLayerStartTimes(memoId!, { [activeLayerId]: nextStartTime! });
       }, 300);
     },
-    [activeLayerId, engine, isDraftGenerationCurrent, scheduleEditDraftIdleAutosave]
+    [activeLayerId, engine, isDraftGenerationCurrent]
   );
 
   const handleLoopChange = useCallback(
@@ -1548,16 +1562,21 @@ export function MemoEditor({
       }
 
       void (async () => {
-        await cancelEditDraft();
+        const keepTrimMove =
+          editDraftRef.current?.tool === 'trim' ||
+          editDraftRef.current?.tool === 'move';
+        await confirmEditDraft(keepTrimMove);
         flushEffectsPersist();
         flushStartTimePersist();
         setActiveLayerId(trackId);
-        setActiveEditor(null);
+        if (!keepTrimMove) {
+          setActiveEditor(null);
+        }
       })();
     },
     [
       activeLayerId,
-      cancelEditDraft,
+      confirmEditDraft,
       flushEffectsPersist,
       flushStartTimePersist,
       memo,
@@ -1571,7 +1590,7 @@ export function MemoEditor({
     }
 
     void (async () => {
-      await cancelEditDraft();
+      await confirmEditDraft(false);
       flushEffectsPersist();
       flushStartTimePersist();
       setActiveLayerId(null);
@@ -1579,7 +1598,7 @@ export function MemoEditor({
     })();
   }, [
     activeLayerId,
-    cancelEditDraft,
+    confirmEditDraft,
     flushEffectsPersist,
     flushStartTimePersist,
     savingTrim,
@@ -1597,7 +1616,7 @@ export function MemoEditor({
       }
 
       try {
-        await cancelEditDraft();
+        await confirmEditDraft(false);
         flushEffectsPersist();
         flushStartTimePersist();
         const current = memoRef.current;
@@ -1620,7 +1639,7 @@ export function MemoEditor({
         );
       }
     },
-    [cancelEditDraft, engine, flushEffectsPersist, flushStartTimePersist, memo]
+    [confirmEditDraft, engine, flushEffectsPersist, flushStartTimePersist, memo]
   );
 
   const handleDuplicateTrack = useCallback(
@@ -1638,7 +1657,7 @@ export function MemoEditor({
       }
 
       try {
-        await cancelEditDraft();
+        await confirmEditDraft(false);
         flushEffectsPersist();
         flushStartTimePersist();
         const current = memoRef.current;
@@ -1663,7 +1682,7 @@ export function MemoEditor({
         );
       }
     },
-    [cancelEditDraft, engine, flushEffectsPersist, flushStartTimePersist, memo]
+    [confirmEditDraft, engine, flushEffectsPersist, flushStartTimePersist, memo]
   );
 
   const performMergeLayers = useCallback(
@@ -1683,7 +1702,7 @@ export function MemoEditor({
       }
 
       try {
-        await cancelEditDraft();
+        await confirmEditDraft(false);
         flushEffectsPersist();
         flushStartTimePersist();
         const latest = memoRef.current;
@@ -1717,7 +1736,7 @@ export function MemoEditor({
       }
     },
     [
-      cancelEditDraft,
+      confirmEditDraft,
       engine,
       engineState.isPlaying,
       engineState.isRecording,
@@ -1894,11 +1913,16 @@ export function MemoEditor({
 
       if (canSelect) {
         void (async () => {
-          await cancelEditDraft();
+          const keepTrimMove =
+            editDraftRef.current?.tool === 'trim' ||
+            editDraftRef.current?.tool === 'move';
+          await confirmEditDraft(keepTrimMove);
           flushEffectsPersist();
           flushStartTimePersist();
           setActiveLayerId(layerId);
-          setActiveEditor(null);
+          if (!keepTrimMove) {
+            setActiveEditor(null);
+          }
           setTrackMenuRename(null);
           setTrackMenuFormatPicker(false);
           setTrackMenuMergePicker(false);
@@ -1918,7 +1942,7 @@ export function MemoEditor({
     },
     [
       activeLayerId,
-      cancelEditDraft,
+      confirmEditDraft,
       flushEffectsPersist,
       flushStartTimePersist,
       getTrackMenuActions,
@@ -2375,7 +2399,7 @@ export function MemoEditor({
       const bpm = getMemoMetronomeSettings(refreshed).bpm;
       let nextBeatDeadlineMs: number | undefined;
       try {
-        await cancelEditDraft();
+        await confirmEditDraft(false);
         setActiveEditor(null);
 
         recordingStartTime.current = 0;
@@ -2439,7 +2463,7 @@ export function MemoEditor({
       }
     })();
   }, [
-    cancelEditDraft,
+    confirmEditDraft,
     clearArmedRecordingUi,
     clearPrecountOverlay,
     engine,
@@ -2644,7 +2668,6 @@ export function MemoEditor({
       resetLayoutReady();
       resetPerformanceWarningState();
       engine.pause();
-      clearEditDraftIdleTimer();
       if (persistEffectsTimeout.current) {
         clearTimeout(persistEffectsTimeout.current);
       }
@@ -2663,7 +2686,6 @@ export function MemoEditor({
       }
     };
   }, [
-    clearEditDraftIdleTimer,
     engine,
     flushMetronomePersist,
     flushTrackLoopPersist,
@@ -2679,8 +2701,8 @@ export function MemoEditor({
     if (!recordingSaved) {
       return;
     }
-    engine.pause();
-    await cancelEditDraft();
+      engine.pause();
+    await confirmEditDraft(false);
     flushEffectsPersist();
     flushStartTimePersist();
     flushTrackLoopPersist();
@@ -2699,7 +2721,7 @@ export function MemoEditor({
     }
     onDismiss();
   }, [
-    cancelEditDraft,
+    confirmEditDraft,
     engine,
     flushEffectsPersist,
     flushMetronomePersist,
@@ -2719,7 +2741,7 @@ export function MemoEditor({
       return false;
     }
     engine.pause();
-    await cancelEditDraft();
+    await confirmEditDraft(false);
     flushEffectsPersist();
     flushStartTimePersist();
     flushTrackLoopPersist();
@@ -2734,7 +2756,7 @@ export function MemoEditor({
     }
     return true;
   }, [
-    cancelEditDraft,
+    confirmEditDraft,
     engine,
     flushEffectsPersist,
     flushMetronomePersist,
@@ -3057,9 +3079,9 @@ export function MemoEditor({
       const useMonitorMix = needsMonitorMix(memo, mode);
       monitorMixRef.current = useMonitorMix;
 
-      // Cancel trim/move drafts before arming so loadMemoIntoEngine cannot race
+      // Persist trim/move drafts before arming so loadMemoIntoEngine cannot race
       // prepare/finalize/commit (stack monitor-mix warmup hang).
-      await cancelEditDraft();
+      await confirmEditDraft(false);
       setActiveEditor(null);
 
       engine.pause();
@@ -3266,10 +3288,10 @@ export function MemoEditor({
       return;
     }
     void (async () => {
-      await cancelEditDraft();
+      await confirmEditDraft(false);
       setActiveEditor(null);
     })();
-  }, [cancelEditDraft, pendingRecordingLayout]);
+  }, [confirmEditDraft, pendingRecordingLayout]);
 
   useEffect(() => {
     if (isRecording) {
@@ -3412,7 +3434,7 @@ export function MemoEditor({
           color: resolveTrackColor(layer.color),
         };
         const isTrimEditing =
-          activeEditor === 'trim' && !savingTrim && layer.id === activeLayerId;
+          activeEditor === 'trim' && layer.id === activeLayerId;
         const isMoveEditing = activeEditor === 'move' && layer.id === activeLayerId;
 
         if (isTrimEditing) {
@@ -3496,7 +3518,7 @@ export function MemoEditor({
           ...trackMeta,
         };
       });
-  }, [activeEditor, activeLayerId, memo, savingTrim]);
+  }, [activeEditor, activeLayerId, memo]);
 
   const inactivePlayableTracks = useMemo(
     () => playableTrackRows.map((track) => ({ ...track, isActive: false })),
@@ -3683,7 +3705,6 @@ export function MemoEditor({
   const trimOverlay = useMemo(() => {
     if (
       activeEditor !== 'trim' ||
-      savingTrim ||
       !activeLayer ||
       !activeLayerEffects ||
       isLayerLocked(activeLayerEffects)
@@ -3702,7 +3723,6 @@ export function MemoEditor({
     activeLayer,
     activeLayerEffects,
     handleTrimChange,
-    savingTrim,
     timelineSnapIntervalSec,
   ]);
 
@@ -3965,8 +3985,6 @@ export function MemoEditor({
                 effects={activeLayerEffects}
                 layerDuration={activeLayer?.duration ?? 0}
                 visible={showTrackEditor}
-                onCancelDraft={handleCancelDraft}
-                onConfirmDraft={handleConfirmDraft}
                 onEffectsChange={handleEffectsChange}
                 onToolChange={handleEditorToolChange}
               />
