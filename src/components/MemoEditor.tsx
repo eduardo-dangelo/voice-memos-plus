@@ -69,6 +69,7 @@ import { NamePromptDialog } from '@/src/components/NamePromptDialog';
 import { PlaybackControls } from '@/src/components/PlaybackControls';
 import { PrecountButton } from '@/src/components/PrecountButton';
 import { PrecountOverlay } from '@/src/components/PrecountOverlay';
+import { TimeSeekDialog } from '@/src/components/TimeSeekDialog';
 import { TrackEditorShell } from '@/src/components/track-editor/TrackEditorShell';
 import type { FadeRegionState } from '@/src/components/track-editor/TrackFadeOverlay';
 import type { EditorTool } from '@/src/components/track-editor/types';
@@ -295,12 +296,16 @@ function MemoEditorTimeLabel({
   memoId,
   pendingRecordingLayout,
   recordingStartTimeRef,
+  disabled,
   style,
+  onPress,
 }: {
   memoId: string | undefined;
   pendingRecordingLayout: boolean;
   recordingStartTimeRef: MutableRefObject<number>;
+  disabled: boolean;
   style: StyleProp<TextStyle>;
+  onPress: (currentLabel: string) => void;
 }) {
   const label = useAudioEngineSelector((state) => {
     if (pendingRecordingLayout) {
@@ -315,7 +320,18 @@ function MemoEditorTimeLabel({
     return formatDurationWithTenths(isActive ? state.currentTime : 0);
   });
 
-  return <Text style={style}>{label}</Text>;
+  return (
+    <Pressable
+      accessibilityHint="Enter time"
+      accessibilityLabel={label}
+      accessibilityRole="button"
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      onPress={() => onPress(label)}
+      style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+      <Text style={style}>{label}</Text>
+    </Pressable>
+  );
 }
 
 function deactivateLoopForMemo(
@@ -505,6 +521,8 @@ export function MemoEditor({
     label: string;
   } | null>(null);
   const [recordingRenameVisible, setRecordingRenameVisible] = useState(false);
+  const [timeSeekVisible, setTimeSeekVisible] = useState(false);
+  const [timeSeekInitial, setTimeSeekInitial] = useState('00:00.00');
   const [metronomeSettingsVisible, setMetronomeSettingsVisible] = useState(false);
   const [headphonesConnected, setHeadphonesConnected] = useState(false);
   const [headphonesWarningMode, setHeadphonesWarningMode] = useState<
@@ -4002,10 +4020,15 @@ export function MemoEditor({
                   />
                 </View>
                 <MemoEditorTimeLabel
+                  disabled={isRecording}
                   memoId={memo?.id}
                   pendingRecordingLayout={pendingRecordingLayout}
                   recordingStartTimeRef={recordingStartTime}
                   style={styles.largeTime}
+                  onPress={(currentLabel) => {
+                    setTimeSeekInitial(currentLabel);
+                    setTimeSeekVisible(true);
+                  }}
                 />
                 <View style={styles.timeDisplaySideEnd}>
                   <PrecountButton
@@ -4149,6 +4172,16 @@ export function MemoEditor({
           }
         }}
       />
+      <TimeSeekDialog
+        includeHours={duration >= 3600}
+        initialValue={timeSeekInitial}
+        visible={timeSeekVisible}
+        onCancel={() => setTimeSeekVisible(false)}
+        onSeek={(seconds) => {
+          setTimeSeekVisible(false);
+          handleWaveformSeek(seconds);
+        }}
+      />
       <Modal animationType="fade" transparent visible={isExporting}>
         <View style={styles.exportOverlay}>
           <View style={styles.exportCard}>
@@ -4267,7 +4300,6 @@ function useMemoEditorStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           alignItems: 'flex-end',
         },
         largeTime: {
-          flex: 1,
           fontSize: 36,
           fontWeight: '300',
           color: colors.text,
