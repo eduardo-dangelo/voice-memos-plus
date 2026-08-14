@@ -44,6 +44,23 @@ export const TIME_SIGNATURE_PRESETS: TimeSignaturePreset[] = [
   '5/4',
 ];
 
+export type GridBasis = 'metronome' | 'time';
+
+export type MetronomeGridSubdivision = '1/4' | '1/8' | '1/16' | '1/32';
+
+export type TimeGridSubdivision = '1s' | '0.5s' | '0.25s';
+
+export const GRID_BASIS_PRESETS: GridBasis[] = ['metronome', 'time'];
+
+export const METRONOME_GRID_SUBDIVISIONS: MetronomeGridSubdivision[] = [
+  '1/4',
+  '1/8',
+  '1/16',
+  '1/32',
+];
+
+export const TIME_GRID_SUBDIVISIONS: TimeGridSubdivision[] = ['1s', '0.5s', '0.25s'];
+
 export type MetronomeSettings = {
   enabled: boolean;
   bpm: number;
@@ -51,6 +68,9 @@ export type MetronomeSettings = {
   accentEnabled: boolean;
   showGrid: boolean;
   volume: number;
+  gridBasis: GridBasis;
+  metronomeGridSubdivision: MetronomeGridSubdivision;
+  timeGridSubdivision: TimeGridSubdivision;
 };
 
 /** Button cycle: metronome (clicks+grid) → grid only → off. */
@@ -74,10 +94,25 @@ export const DEFAULT_METRONOME_SETTINGS: MetronomeSettings = {
   accentEnabled: true,
   showGrid: false,
   volume: 70,
+  gridBasis: 'metronome',
+  metronomeGridSubdivision: '1/4',
+  timeGridSubdivision: '1s',
 };
 
 function isTimeSignaturePreset(value: string): value is TimeSignaturePreset {
   return (TIME_SIGNATURE_PRESETS as string[]).includes(value);
+}
+
+function isGridBasis(value: string): value is GridBasis {
+  return (GRID_BASIS_PRESETS as string[]).includes(value);
+}
+
+function isMetronomeGridSubdivision(value: string): value is MetronomeGridSubdivision {
+  return (METRONOME_GRID_SUBDIVISIONS as string[]).includes(value);
+}
+
+function isTimeGridSubdivision(value: string): value is TimeGridSubdivision {
+  return (TIME_GRID_SUBDIVISIONS as string[]).includes(value);
 }
 
 export function normalizeMetronomeSettings(
@@ -88,6 +123,19 @@ export function normalizeMetronomeSettings(
     metronome?.timeSignature && isTimeSignaturePreset(metronome.timeSignature)
       ? metronome.timeSignature
       : defaults.timeSignature;
+  const gridBasis =
+    metronome?.gridBasis && isGridBasis(metronome.gridBasis)
+      ? metronome.gridBasis
+      : defaults.gridBasis;
+  const metronomeGridSubdivision =
+    metronome?.metronomeGridSubdivision &&
+    isMetronomeGridSubdivision(metronome.metronomeGridSubdivision)
+      ? metronome.metronomeGridSubdivision
+      : defaults.metronomeGridSubdivision;
+  const timeGridSubdivision =
+    metronome?.timeGridSubdivision && isTimeGridSubdivision(metronome.timeGridSubdivision)
+      ? metronome.timeGridSubdivision
+      : defaults.timeGridSubdivision;
 
   return {
     enabled: metronome?.enabled ?? defaults.enabled,
@@ -96,6 +144,9 @@ export function normalizeMetronomeSettings(
     accentEnabled: metronome?.accentEnabled ?? defaults.accentEnabled,
     showGrid: metronome?.showGrid ?? defaults.showGrid,
     volume: Math.max(0, Math.min(100, metronome?.volume ?? defaults.volume)),
+    gridBasis,
+    metronomeGridSubdivision,
+    timeGridSubdivision,
   };
 }
 

@@ -3,7 +3,16 @@ import { useMemo } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useColorScheme } from '@/components/useColorScheme';
-import type { MetronomeSettings, TimeSignaturePreset } from '@/src/storage/types';
+import {
+  GRID_BASIS_PRESETS,
+  METRONOME_GRID_SUBDIVISIONS,
+  TIME_GRID_SUBDIVISIONS,
+  type GridBasis,
+  type MetronomeGridSubdivision,
+  type MetronomeSettings,
+  type TimeGridSubdivision,
+  type TimeSignaturePreset,
+} from '@/src/storage/types';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
 import { EditorSlider } from './track-editor/primitives/EditorSlider';
@@ -28,6 +37,17 @@ const ACCENT_OPTIONS: { id: 'on' | 'off'; label: string }[] = [
   { id: 'on', label: 'On' },
   { id: 'off', label: 'Off' },
 ];
+
+const GRID_BASIS_OPTIONS: { id: GridBasis; label: string }[] = GRID_BASIS_PRESETS.map((id) => ({
+  id,
+  label: id === 'metronome' ? 'Metronome' : 'Time',
+}));
+
+const METRONOME_SUBDIVISION_OPTIONS: { id: MetronomeGridSubdivision; label: string }[] =
+  METRONOME_GRID_SUBDIVISIONS.map((id) => ({ id, label: id }));
+
+const TIME_SUBDIVISION_OPTIONS: { id: TimeGridSubdivision; label: string }[] =
+  TIME_GRID_SUBDIVISIONS.map((id) => ({ id, label: id }));
 
 const useGlass = isGlassEffectAPIAvailable();
 
@@ -88,6 +108,44 @@ export function MetronomeSettingsSheet({ visible, settings, onChange, onClose }:
             />
           </View>
           <Text style={styles.sliderValue}>{Math.round(settings.volume)}%</Text>
+        </View>
+      </View>
+
+      <Text style={[styles.title, styles.gridTitle]}>Grid</Text>
+
+      <View style={styles.pillRow}>
+        <Text style={styles.pillRowLabel}>Based on</Text>
+        <View style={styles.pillRowPills}>
+          <PresetPills
+            align="end"
+            compact
+            options={GRID_BASIS_OPTIONS}
+            selectedId={settings.gridBasis}
+            onSelect={(gridBasis) => onChange({ gridBasis })}
+          />
+        </View>
+      </View>
+
+      <View style={styles.pillRow}>
+        <Text style={styles.pillRowLabel}>Subdivision</Text>
+        <View style={styles.pillRowPills}>
+          {settings.gridBasis === 'time' ? (
+            <PresetPills
+              align="end"
+              compact
+              options={TIME_SUBDIVISION_OPTIONS}
+              selectedId={settings.timeGridSubdivision}
+              onSelect={(timeGridSubdivision) => onChange({ timeGridSubdivision })}
+            />
+          ) : (
+            <PresetPills
+              align="end"
+              compact
+              options={METRONOME_SUBDIVISION_OPTIONS}
+              selectedId={settings.metronomeGridSubdivision}
+              onSelect={(metronomeGridSubdivision) => onChange({ metronomeGridSubdivision })}
+            />
+          )}
         </View>
       </View>
     </>
@@ -169,6 +227,9 @@ function useStyles(
           color: colors.text,
           textAlign: 'center',
         },
+        gridTitle: {
+          marginBottom: 8,
+        },
         section: {
           gap: 8,
         },
@@ -196,6 +257,20 @@ function useStyles(
           color: colors.secondaryText,
           textAlign: 'right',
           fontVariant: ['tabular-nums'],
+        },
+        pillRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 8,
+        },
+        pillRowLabel: {
+          width: 78,
+          fontSize: 13,
+          color: colors.secondaryText,
+        },
+        pillRowPills: {
+          flex: 1,
+          minWidth: 0,
         },
       }),
     [cardSurface, colorScheme, colors]

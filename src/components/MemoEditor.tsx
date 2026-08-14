@@ -42,7 +42,7 @@ import {
   getMergePartnerLayers,
   getPlayableLayersInTimelineOrder,
 } from '@/src/audio/mergeLayersLogic';
-import { getClickIntervalSec, getQuarterIntervalSec } from '@/src/audio/metronome';
+import { getGridSnapIntervalSec, getQuarterIntervalSec } from '@/src/audio/metronome';
 import {
   maybeShowPerformanceWarning,
   resetPerformanceWarningState,
@@ -3713,12 +3713,10 @@ export function MemoEditor({
   }, [memo, memoLockPickerMode]);
   const showEditorContent = Boolean(memo && !loading);
 
-  const timelineSnapIntervalSec = useMemo(() => {
-    if (!metronomeSettings.showGrid) {
-      return null;
-    }
-    return getClickIntervalSec(metronomeSettings);
-  }, [metronomeSettings]);
+  const timelineSnapIntervalSec = useMemo(
+    () => getGridSnapIntervalSec(metronomeSettings),
+    [metronomeSettings]
+  );
 
   const trimOverlay = useMemo(() => {
     if (

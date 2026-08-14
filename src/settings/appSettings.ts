@@ -4,6 +4,7 @@ import {
   DEFAULT_PRECOUNT_MODE,
   normalizeMetronomeSettings,
   normalizePrecountMode,
+  type MetronomeSettings,
   type PrecountMode,
 } from '@/src/storage/types';
 
@@ -14,6 +15,9 @@ export type RecordingDefaults = {
   metronomeEnabled: boolean;
   metronomeShowGrid: boolean;
   bpm: number;
+  gridBasis: MetronomeSettings['gridBasis'];
+  metronomeGridSubdivision: MetronomeSettings['metronomeGridSubdivision'];
+  timeGridSubdivision: MetronomeSettings['timeGridSubdivision'];
 };
 
 export type AppSettings = {
@@ -29,6 +33,9 @@ const DEFAULT_RECORDING_DEFAULTS: RecordingDefaults = {
   metronomeEnabled: DEFAULT_METRONOME_SETTINGS.enabled,
   metronomeShowGrid: DEFAULT_METRONOME_SETTINGS.showGrid,
   bpm: DEFAULT_METRONOME_SETTINGS.bpm,
+  gridBasis: DEFAULT_METRONOME_SETTINGS.gridBasis,
+  metronomeGridSubdivision: DEFAULT_METRONOME_SETTINGS.metronomeGridSubdivision,
+  timeGridSubdivision: DEFAULT_METRONOME_SETTINGS.timeGridSubdivision,
 };
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -51,6 +58,9 @@ function normalizeRecordingDefaults(value: unknown): RecordingDefaults {
     showGrid:
       typeof parsed.metronomeShowGrid === 'boolean' ? parsed.metronomeShowGrid : undefined,
     bpm: typeof parsed.bpm === 'number' ? parsed.bpm : undefined,
+    gridBasis: parsed.gridBasis,
+    metronomeGridSubdivision: parsed.metronomeGridSubdivision,
+    timeGridSubdivision: parsed.timeGridSubdivision,
   });
   return {
     precount:
@@ -60,6 +70,9 @@ function normalizeRecordingDefaults(value: unknown): RecordingDefaults {
     metronomeEnabled: metronome.enabled,
     metronomeShowGrid: metronome.showGrid,
     bpm: metronome.bpm,
+    gridBasis: metronome.gridBasis,
+    metronomeGridSubdivision: metronome.metronomeGridSubdivision,
+    timeGridSubdivision: metronome.timeGridSubdivision,
   };
 }
 

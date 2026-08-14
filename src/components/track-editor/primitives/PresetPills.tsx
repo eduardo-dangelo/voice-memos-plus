@@ -8,17 +8,29 @@ type Props<T extends string> = {
   options: { id: T; label: string }[];
   selectedId: T;
   onSelect: (id: T) => void;
+  align?: 'start' | 'end';
+  compact?: boolean;
 };
 
-export function PresetPills<T extends string>({ options, selectedId, onSelect }: Props<T>) {
+export function PresetPills<T extends string>({
+  options,
+  selectedId,
+  onSelect,
+  align = 'start',
+  compact = false,
+}: Props<T>) {
   const colors = useVoiceMemosColors();
   const styles = useStyles(colors);
 
   return (
     <ScrollView
       horizontal
-      style={styles.scroll}
-      contentContainerStyle={styles.row}
+      style={[styles.scroll, align === 'end' && styles.scrollEnd]}
+      contentContainerStyle={[
+        styles.row,
+        compact && styles.rowCompact,
+        align === 'end' && styles.rowEnd,
+      ]}
       showsHorizontalScrollIndicator={false}>
       {options.map((option) => {
         const selected = option.id === selectedId;
@@ -26,8 +38,19 @@ export function PresetPills<T extends string>({ options, selectedId, onSelect }:
           <Pressable
             key={option.id}
             onPress={() => onSelect(option.id)}
-            style={[styles.pill, selected && styles.pillSelected]}>
-            <Text style={[styles.label, selected && styles.labelSelected]}>{option.label}</Text>
+            style={[
+              styles.pill,
+              compact && styles.pillCompact,
+              selected && styles.pillSelected,
+            ]}>
+            <Text
+              style={[
+                styles.label,
+                compact && styles.labelCompact,
+                selected && styles.labelSelected,
+              ]}>
+              {option.label}
+            </Text>
           </Pressable>
         );
       })}
@@ -41,13 +64,25 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
       StyleSheet.create({
         scroll: {
           flexGrow: 0,
-          flexShrink: 0,
+          flexShrink: 1,
+        },
+        scrollEnd: {
+          width: '100%',
         },
         row: {
           flexDirection: 'row',
           alignItems: 'center',
           gap: 8,
           paddingHorizontal: 6,
+        },
+        rowEnd: {
+          flexGrow: 1,
+          justifyContent: 'flex-end',
+          paddingHorizontal: 0,
+        },
+        rowCompact: {
+          gap: 4,
+          paddingHorizontal: 0,
         },
         pill: {
           alignItems: 'center',
@@ -56,6 +91,11 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           paddingVertical: 8,
           borderRadius: 10,
           backgroundColor: colors.waveformBandBackground,
+        },
+        pillCompact: {
+          paddingHorizontal: 8,
+          paddingVertical: 6,
+          borderRadius: 8,
         },
         pillSelected: {
           backgroundColor: colors.accent,
@@ -69,6 +109,10 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
         },
         labelSelected: {
           color: colors.pillTextSelected,
+        },
+        labelCompact: {
+          fontSize: 12,
+          lineHeight: 15,
         },
       }),
     [colors]

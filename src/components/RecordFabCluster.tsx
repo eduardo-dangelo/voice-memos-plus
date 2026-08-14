@@ -43,6 +43,9 @@ function metronomeFromDefaults(): MetronomeSettings {
     enabled: defaults.metronomeEnabled,
     bpm: defaults.bpm,
     showGrid: defaults.metronomeShowGrid,
+    gridBasis: defaults.gridBasis,
+    metronomeGridSubdivision: defaults.metronomeGridSubdivision,
+    timeGridSubdivision: defaults.timeGridSubdivision,
   };
 }
 
@@ -52,6 +55,9 @@ function persistSettings(precount: PrecountMode, metronome: MetronomeSettings) {
     metronomeEnabled: metronome.enabled,
     metronomeShowGrid: metronome.showGrid,
     bpm: metronome.bpm,
+    gridBasis: metronome.gridBasis,
+    metronomeGridSubdivision: metronome.metronomeGridSubdivision,
+    timeGridSubdivision: metronome.timeGridSubdivision,
   });
 }
 

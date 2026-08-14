@@ -4,6 +4,8 @@ import { describe, it } from 'node:test';
 import {
   ACCENT_AMPLITUDE,
   getClickIntervalSec,
+  getGridSnapIntervalSec,
+  getMinPixelsPerSecondForGrid,
   getMetronomeBeatTimes,
   getMetronomeGridLineKind,
   getMetronomeGridLinesInRange,
@@ -212,6 +214,108 @@ describe('getMetronomeGridLinesInRange', () => {
     const lines = getMetronomeGridLinesInRange(settings, 0, 120, 400);
     assert.ok(lines.length <= METRONOME_GRID_MAX_LINES);
   });
+
+  it('uses 1/4 metronome spacing matching the click grid at 120 4/4', () => {
+    const settings = makeSettings({
+      bpm: 120,
+      timeSignature: '4/4',
+      metronomeGridSubdivision: '1/4',
+    });
+    const lines = getMetronomeGridLinesInRange(settings, 0, 2, 48);
+    assert.deepEqual(
+      lines.map((line) => line.time),
+      [0, 0.5, 1, 1.5]
+    );
+  });
+
+  it('subdivides metronome 1/8 lines at 120 4/4', () => {
+    const settings = makeSettings({
+      bpm: 120,
+      timeSignature: '4/4',
+      metronomeGridSubdivision: '1/8',
+    });
+    const lines = getMetronomeGridLinesInRange(settings, 0, 1, 48);
+    assert.deepEqual(
+      lines.map((line) => ({ time: line.time, kind: line.kind })),
+      [
+        { time: 0, kind: 'bar' },
+        { time: 0.25, kind: 'beat' },
+        { time: 0.5, kind: 'beat' },
+        { time: 0.75, kind: 'beat' },
+      ]
+    );
+  });
+
+  it('draws a 0.25s time grid with 1s bars', () => {
+    const settings = makeSettings({
+      gridBasis: 'time',
+      timeGridSubdivision: '0.25s',
+    });
+    const lines = getMetronomeGridLinesInRange(settings, 0, 1.25, 48);
+    assert.deepEqual(
+      lines.map((line) => ({ time: line.time, kind: line.kind })),
+      [
+        { time: 0, kind: 'bar' },
+        { time: 0.25, kind: 'beat' },
+        { time: 0.5, kind: 'secondary' },
+        { time: 0.75, kind: 'beat' },
+        { time: 1, kind: 'bar' },
+      ]
+    );
+  });
+});
+
+describe('getGridSnapIntervalSec', () => {
+  it('returns null when the grid is hidden', () => {
+    assert.equal(getGridSnapIntervalSec(makeSettings({ showGrid: false })), null);
+  });
+
+  it('snaps to metronome 1/32 subdivision', () => {
+    assert.equal(
+      getGridSnapIntervalSec(
+        makeSettings({ bpm: 120, timeSignature: '4/4', metronomeGridSubdivision: '1/32' })
+      ),
+      0.0625
+    );
+  });
+
+  it('snaps to the time subdivision', () => {
+    assert.equal(
+      getGridSnapIntervalSec(
+        makeSettings({ gridBasis: 'time', timeGridSubdivision: '0.25s' })
+      ),
+      0.25
+    );
+  });
+});
+
+describe('getMinPixelsPerSecondForGrid', () => {
+  it('needs 160 pps (~3.3×) for 1/16 at 120 4/4', () => {
+    assert.equal(
+      getMinPixelsPerSecondForGrid(
+        makeSettings({ bpm: 120, timeSignature: '4/4', metronomeGridSubdivision: '1/16' })
+      ),
+      160
+    );
+  });
+
+  it('needs 320 pps (~6.7×) for 1/32 at 120 4/4', () => {
+    assert.equal(
+      getMinPixelsPerSecondForGrid(
+        makeSettings({ bpm: 120, timeSignature: '4/4', metronomeGridSubdivision: '1/32' })
+      ),
+      320
+    );
+  });
+
+  it('needs 40 pps for 1/4 at 120 4/4, below 1× default', () => {
+    assert.equal(
+      getMinPixelsPerSecondForGrid(
+        makeSettings({ bpm: 120, timeSignature: '4/4', metronomeGridSubdivision: '1/4' })
+      ),
+      40
+    );
+  });
 });
 
 describe('normalizeMetronomeSettings', () => {
@@ -247,6 +351,40 @@ describe('normalizeMetronomeSettings', () => {
         .timeSignature,
       '4/4'
     );
+    assert.equal(
+      normalizeMetronomeSettings({ subdivision: '1/8' } as Parameters<typeof normalizeMetronomeSettings>[0])
+        .metronomeGridSubdivision,
+      '1/4'
+    );
+  });
+
+  it('defaults grid basis and subdivisions', () => {
+    const settings = normalizeMetronomeSettings({});
+    assert.equal(settings.gridBasis, 'metronome');
+    assert.equal(settings.metronomeGridSubdivision, '1/4');
+    assert.equal(settings.timeGridSubdivision, '1s');
+  });
+
+  it('preserves valid grid settings', () => {
+    const settings = normalizeMetronomeSettings({
+      gridBasis: 'time',
+      metronomeGridSubdivision: '1/32',
+      timeGridSubdivision: '0.25s',
+    });
+    assert.equal(settings.gridBasis, 'time');
+    assert.equal(settings.metronomeGridSubdivision, '1/32');
+    assert.equal(settings.timeGridSubdivision, '0.25s');
+  });
+
+  it('falls back for invalid grid fields', () => {
+    const settings = normalizeMetronomeSettings({
+      gridBasis: 'bars' as MetronomeSettings['gridBasis'],
+      metronomeGridSubdivision: '1/64' as MetronomeSettings['metronomeGridSubdivision'],
+      timeGridSubdivision: '0.1s' as MetronomeSettings['timeGridSubdivision'],
+    });
+    assert.equal(settings.gridBasis, 'metronome');
+    assert.equal(settings.metronomeGridSubdivision, '1/4');
+    assert.equal(settings.timeGridSubdivision, '1s');
   });
 });
 

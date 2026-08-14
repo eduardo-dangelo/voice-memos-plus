@@ -253,6 +253,9 @@ export function RecordingsList({
         metronomeEnabled: settings.metronome.enabled,
         metronomeShowGrid: settings.metronome.showGrid,
         bpm: settings.metronome.bpm,
+        gridBasis: settings.metronome.gridBasis,
+        metronomeGridSubdivision: settings.metronome.metronomeGridSubdivision,
+        timeGridSubdivision: settings.metronome.timeGridSubdivision,
       });
       const memo = await createMemo({
         ...(folderId ? { folderId } : {}),

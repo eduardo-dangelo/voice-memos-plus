@@ -21,7 +21,7 @@ import { colorWithAlpha, type VoiceMemosColorScheme } from '@/constants/VoiceMem
 import { fadeEnvelopeGain } from '@/src/audio/fadeCurve';
 import { clampTrimValues, dbToLinear } from '@/src/audio/layerEffects';
 import { snapTimeToGrid } from '@/src/audio/loopSnap';
-import type { MetronomeGridLine } from '@/src/audio/metronome';
+import { getMinPixelsPerSecondForGrid, type MetronomeGridLine } from '@/src/audio/metronome';
 import {
   applyPinchDeltaToPixelsPerSecond,
   applyPinchDeltaToTrackZoom,
@@ -2101,8 +2101,29 @@ function WaveformViewComponent({
     metronome?.timeSignature,
     metronome?.accentEnabled,
     metronome?.showGrid,
+    metronome?.gridBasis,
+    metronome?.metronomeGridSubdivision,
+    metronome?.timeGridSubdivision,
     layoutPixelsPerSecond,
     viewportWidth,
+  ]);
+
+  useEffect(() => {
+    if (!metronome?.showGrid || zoomGestureActiveRef.current) {
+      return;
+    }
+    const needed = getMinPixelsPerSecondForGrid(metronome);
+    if (needed <= 0 || pixelsPerSecondRef.current >= needed) {
+      return;
+    }
+    setPixelsPerSecond(clampTimelinePixelsPerSecond(needed, zoomBoundsRef.current));
+  }, [
+    metronome?.showGrid,
+    metronome?.bpm,
+    metronome?.timeSignature,
+    metronome?.gridBasis,
+    metronome?.metronomeGridSubdivision,
+    metronome?.timeGridSubdivision,
   ]);
 
   // Seed a bounded window when width/duration catch up. Do not depend on
@@ -3119,7 +3140,10 @@ function areWaveformViewPropsEqual(prev: Props, next: Props): boolean {
       prevMetronome.bpm !== nextMetronome.bpm ||
       prevMetronome.timeSignature !== nextMetronome.timeSignature ||
       prevMetronome.accentEnabled !== nextMetronome.accentEnabled ||
-      prevMetronome.showGrid !== nextMetronome.showGrid
+      prevMetronome.showGrid !== nextMetronome.showGrid ||
+      prevMetronome.gridBasis !== nextMetronome.gridBasis ||
+      prevMetronome.metronomeGridSubdivision !== nextMetronome.metronomeGridSubdivision ||
+      prevMetronome.timeGridSubdivision !== nextMetronome.timeGridSubdivision
     ) {
       return false;
     }

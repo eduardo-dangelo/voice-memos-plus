@@ -13,6 +13,7 @@ import {
   TIMELINE_MIN_PIXELS_PER_SECOND,
   TIMELINE_DEFAULT_PIXELS_PER_SECOND,
   TIMELINE_MAX_PIXELS_PER_SECOND,
+  TIMELINE_VISIBLE_SECONDS_AT_MAX_ZOOM,
 } from './timelineZoom';
 
 test('getTimelineZoomBounds fits full recording at min zoom', () => {
@@ -80,11 +81,17 @@ test('getTimelineZoomBounds keeps min <= default on normal viewports', () => {
 });
 
 test('getTimelineZoomBounds clamps default to max on tiny viewports', () => {
-  // max = min(384, 100/4) = 25 < DEFAULT — default must not exceed max.
-  const bounds = getTimelineZoomBounds(100, 5, 1);
-  assert.equal(bounds.pixelsPerSecondMax, 25);
-  assert.equal(bounds.pixelsPerSecondDefault, 25);
+  // max = min(384, 48/1.2) = 40 < DEFAULT — default must not exceed max.
+  const bounds = getTimelineZoomBounds(48, 5, 1);
+  const expectedMax = 48 / TIMELINE_VISIBLE_SECONDS_AT_MAX_ZOOM;
+  assert.equal(bounds.pixelsPerSecondMax, expectedMax);
+  assert.equal(bounds.pixelsPerSecondDefault, expectedMax);
   assert.ok(bounds.pixelsPerSecondDefault <= bounds.pixelsPerSecondMax);
+});
+
+test('getTimelineZoomBounds lets a phone viewport reach 1/32 grid zoom', () => {
+  const bounds = getTimelineZoomBounds(393, 20, 1);
+  assert.ok(bounds.pixelsPerSecondMax >= 320);
 });
 
 test('clampTimelinePixelsPerSecond respects bounds', () => {

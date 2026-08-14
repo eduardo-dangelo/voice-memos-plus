@@ -1,7 +1,7 @@
 export const TIMELINE_DEFAULT_PIXELS_PER_SECOND = 48;
 export const TIMELINE_MIN_PIXELS_PER_SECOND = 8;
 export const TIMELINE_MAX_PIXELS_PER_SECOND = 384;
-export const TIMELINE_VISIBLE_SECONDS_AT_MAX_ZOOM = 4;
+export const TIMELINE_VISIBLE_SECONDS_AT_MAX_ZOOM = 1.2;
 
 export type TimelineZoomBounds = {
   pixelsPerSecondMin: number;

@@ -1,6 +1,11 @@
 import type { AudioBuffer, AudioBufferSourceNode, AudioContext, GainNode } from 'react-native-audio-api';
 
-import type { MetronomeSettings, TimeSignaturePreset } from '@/src/storage/types';
+import type {
+  MetronomeGridSubdivision,
+  MetronomeSettings,
+  TimeGridSubdivision,
+  TimeSignaturePreset,
+} from '@/src/storage/types';
 
 /** Short enough to stay clicky; long enough for a clean attack/release. */
 export const CLICK_DURATION_SEC = 0.022;
@@ -119,6 +124,49 @@ export function getClickIntervalSec(settings: MetronomeSettings): number {
   return config.beatUnit === 'eighth' ? quarterInterval / 2 : quarterInterval;
 }
 
+const METRONOME_GRID_SUBDIVISION_DIVISOR: Record<MetronomeGridSubdivision, number> = {
+  '1/4': 1,
+  '1/8': 2,
+  '1/16': 4,
+  '1/32': 8,
+};
+
+const TIME_GRID_INTERVAL_SEC: Record<TimeGridSubdivision, number> = {
+  '1s': 1,
+  '0.5s': 0.5,
+  '0.25s': 0.25,
+};
+
+const TIME_GRID_LOD_LADDER_SEC = [0.25, 0.5, 1] as const;
+
+/** Finest visual/snap interval for the current grid basis and subdivision. */
+export function getGridFinestIntervalSec(settings: MetronomeSettings): number {
+  if (settings.gridBasis === 'time') {
+    return TIME_GRID_INTERVAL_SEC[settings.timeGridSubdivision];
+  }
+  return (
+    getClickIntervalSec(settings) /
+    METRONOME_GRID_SUBDIVISION_DIVISOR[settings.metronomeGridSubdivision]
+  );
+}
+
+/** Snap step when the grid is visible; null when the overlay is off. */
+export function getGridSnapIntervalSec(settings: MetronomeSettings): number | null {
+  if (!settings.showGrid) {
+    return null;
+  }
+  return getGridFinestIntervalSec(settings);
+}
+
+/** Minimum pixels/second so the finest grid step meets METRONOME_GRID_AUTO_ZOOM_SPACING_PX. */
+export function getMinPixelsPerSecondForGrid(settings: MetronomeSettings): number {
+  const interval = getGridFinestIntervalSec(settings);
+  if (interval <= 0) {
+    return 0;
+  }
+  return METRONOME_GRID_AUTO_ZOOM_SPACING_PX / interval;
+}
+
 export function getQuarterIntervalSec(bpm: number): number {
   return 60 / bpm;
 }
@@ -159,6 +207,9 @@ export type MetronomeGridLine = {
 
 /** Minimum pixel spacing between adjacent grid lines before LOD thins further. */
 export const METRONOME_GRID_MIN_SPACING_PX = 10;
+
+/** Target spacing for auto-zoom (~3.3× at 1/16, ~6.7× at 1/32 vs 1× = 48 pps). */
+export const METRONOME_GRID_AUTO_ZOOM_SPACING_PX = METRONOME_GRID_MIN_SPACING_PX * 2;
 
 /** Hard cap on lines returned for a single buffer window. */
 export const METRONOME_GRID_MAX_LINES = 80;
@@ -206,6 +257,43 @@ export function getMetronomeGridLineKind(
   return 'beat';
 }
 
+function pickStepWithMinSpacing(candidates: number[], pixelsPerSecond: number): number {
+  const minSpacing = METRONOME_GRID_MIN_SPACING_PX;
+  for (const step of candidates) {
+    if (step * pixelsPerSecond >= minSpacing) {
+      return step;
+    }
+  }
+  const coarsest = candidates[candidates.length - 1]!;
+  let n = 2;
+  while (coarsest * n * pixelsPerSecond < minSpacing && n < 64) {
+    n *= 2;
+  }
+  return coarsest * n;
+}
+
+function getTimeGridStepSec(settings: MetronomeSettings, pixelsPerSecond: number): number {
+  const finest = getGridFinestIntervalSec(settings);
+  const ladder = TIME_GRID_LOD_LADDER_SEC.filter((step) => step + TIME_EPSILON >= finest);
+  return pickStepWithMinSpacing([...ladder], pixelsPerSecond);
+}
+
+function getMetronomeBasisGridStepSec(
+  settings: MetronomeSettings,
+  pixelsPerSecond: number
+): number {
+  const beatInterval = getClickIntervalSec(settings);
+  const config = getTimeSignatureConfig(settings.timeSignature);
+  const barInterval = beatInterval * config.clicksPerBar;
+  const finest = getGridFinestIntervalSec(settings);
+  const candidates: number[] = [];
+  if (finest + TIME_EPSILON < beatInterval) {
+    candidates.push(finest);
+  }
+  candidates.push(beatInterval, barInterval);
+  return pickStepWithMinSpacing(candidates, pixelsPerSecond);
+}
+
 /**
  * Zoom-aware step between grid lines (seconds). Ignores `enabled` so the visual
  * grid follows tempo config even when metronome clicks are off; visibility is
@@ -215,27 +303,38 @@ export function getMetronomeGridStepSec(
   settings: MetronomeSettings,
   pixelsPerSecond: number
 ): number {
-  const beatInterval = getClickIntervalSec(settings);
-  const config = getTimeSignatureConfig(settings.timeSignature);
-  const barInterval = beatInterval * config.clicksPerBar;
-  const minSpacing = METRONOME_GRID_MIN_SPACING_PX;
-
-  if (beatInterval * pixelsPerSecond >= minSpacing) {
-    return beatInterval;
+  if (settings.gridBasis === 'time') {
+    return getTimeGridStepSec(settings, pixelsPerSecond);
   }
-  if (barInterval * pixelsPerSecond >= minSpacing) {
-    return barInterval;
-  }
-
-  let n = 2;
-  while (barInterval * n * pixelsPerSecond < minSpacing && n < 64) {
-    n *= 2;
-  }
-  return barInterval * n;
+  return getMetronomeBasisGridStepSec(settings, pixelsPerSecond);
 }
 
 function classifyGridLine(beatTime: number, settings: MetronomeSettings): MetronomeGridLine {
   return { time: beatTime, kind: getMetronomeGridLineKind(beatTime, settings) };
+}
+
+function classifyMetronomeLineAtTime(
+  beatTime: number,
+  settings: MetronomeSettings
+): MetronomeGridLine {
+  const beatInterval = getClickIntervalSec(settings);
+  const nearestClick = Math.round(beatTime / beatInterval) * beatInterval;
+  if (Math.abs(beatTime - nearestClick) < TIME_EPSILON) {
+    return classifyGridLine(nearestClick, settings);
+  }
+  return { time: beatTime, kind: 'beat' };
+}
+
+export function getTimeGridLineKind(time: number): MetronomeGridLineKind {
+  const nearestSecond = Math.round(time);
+  if (Math.abs(time - nearestSecond) < TIME_EPSILON) {
+    return 'bar';
+  }
+  const nearestHalf = Math.round(time / 0.5) * 0.5;
+  if (Math.abs(time - nearestHalf) < TIME_EPSILON) {
+    return 'secondary';
+  }
+  return 'beat';
 }
 
 /**
@@ -253,41 +352,45 @@ export function getMetronomeGridLinesInRange(
     return [];
   }
 
-  const beatInterval = getClickIntervalSec(settings);
   const stepSec = getMetronomeGridStepSec(settings, pixelsPerSecond);
   const times = collectBeatTimesInRange(startAt, endAt, stepSec);
 
   let lines: MetronomeGridLine[];
 
-  if (Math.abs(stepSec - beatInterval) < TIME_EPSILON) {
-    lines = times.map((time) => classifyGridLine(time, settings));
+  if (settings.gridBasis === 'time') {
+    lines = times.map((time) => ({ time, kind: getTimeGridLineKind(time) }));
   } else {
-    // Stepped by bar (or N bars): keep accent hierarchy when accent is on.
-    lines = times.map((time) => {
-      if (!settings.accentEnabled) {
-        return { time, kind: 'beat' as const };
-      }
-      return { time, kind: 'bar' as const };
-    });
-
-    // When LOD is exactly one bar and accent is on, include 6/8 secondary if spacing allows.
-    const config = getTimeSignatureConfig(settings.timeSignature);
-    const barInterval = beatInterval * config.clicksPerBar;
-    if (
-      settings.accentEnabled &&
-      config.secondaryAccentAt !== undefined &&
-      Math.abs(stepSec - barInterval) < TIME_EPSILON &&
-      beatInterval * pixelsPerSecond >= METRONOME_GRID_MIN_SPACING_PX / 2
-    ) {
-      const withSecondary: MetronomeGridLine[] = [];
-      for (const line of lines) {
-        withSecondary.push(line);
-        const secondaryTime = line.time + beatInterval * config.secondaryAccentAt;
-        if (secondaryTime < endAt - TIME_EPSILON && secondaryTime >= startAt - TIME_EPSILON) {
-          withSecondary.push({ time: secondaryTime, kind: 'secondary' });
+    const beatInterval = getClickIntervalSec(settings);
+    if (stepSec <= beatInterval + TIME_EPSILON) {
+      lines = times.map((time) => classifyMetronomeLineAtTime(time, settings));
+    } else {
+      // Stepped by bar (or N bars): keep accent hierarchy when accent is on.
+      lines = times.map((time) => {
+        if (!settings.accentEnabled) {
+          return { time, kind: 'beat' as const };
         }
+        return { time, kind: 'bar' as const };
+      });
+
+      // When LOD is exactly one bar and accent is on, include 6/8 secondary if spacing allows.
+      const config = getTimeSignatureConfig(settings.timeSignature);
+      const barInterval = beatInterval * config.clicksPerBar;
+      if (
+        settings.accentEnabled &&
+        config.secondaryAccentAt !== undefined &&
+        Math.abs(stepSec - barInterval) < TIME_EPSILON &&
+        beatInterval * pixelsPerSecond >= METRONOME_GRID_MIN_SPACING_PX / 2
+      ) {
+        const withSecondary: MetronomeGridLine[] = [];
+        for (const line of lines) {
+          withSecondary.push(line);
+          const secondaryTime = line.time + beatInterval * config.secondaryAccentAt;
+          if (secondaryTime < endAt - TIME_EPSILON && secondaryTime >= startAt - TIME_EPSILON) {
+            withSecondary.push({ time: secondaryTime, kind: 'secondary' });
+          }
+        }
+        lines = withSecondary;
       }
-      lines = withSecondary;
     }
   }
 
