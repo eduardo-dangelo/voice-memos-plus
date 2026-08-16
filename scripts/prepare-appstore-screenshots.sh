@@ -13,6 +13,19 @@ IPAD_H=2064
 SCENES=(hero edit effects track-menu loop)
 NAMES=(01-hero 02-edit 03-effects 04-track-menu 05-loop)
 
+flatten_png() {
+  local src="$1"
+  local out="$2"
+  local jpg
+  jpg="$(mktemp -t appstore-screenshot.XXXXXX).jpg"
+  mkdir -p "$(dirname "$out")"
+  # App Store Connect rejects PNGs with an alpha channel. JPEG has no alpha;
+  # re-encoding through it yields an opaque PNG.
+  sips -s format jpeg -s formatOptions 100 "$src" --out "$jpg" >/dev/null
+  sips -s format png "$jpg" --out "$out" >/dev/null
+  rm -f "$jpg" "${jpg%.jpg}"
+}
+
 cover_resize() {
   local src="$1"
   local out="$2"
@@ -38,8 +51,21 @@ cover_resize() {
   local tmp
   tmp="$(mktemp -t appstore-screenshot.XXXXXX).png"
   sips --resampleHeightWidth "$nh" "$nw" "$src" --out "$tmp" >/dev/null
-  mkdir -p "$(dirname "$out")"
-  sips --cropToHeightWidth "$th" "$tw" "$tmp" --out "$out" >/dev/null
+  sips --cropToHeightWidth "$th" "$tw" "$tmp" --out "$tmp" >/dev/null
+  flatten_png "$tmp" "$out"
+  rm -f "$tmp" "${tmp%.png}"
+}
+
+stretch_resize() {
+  local src="$1"
+  local out="$2"
+  local tw="$3"
+  local th="$4"
+
+  local tmp
+  tmp="$(mktemp -t appstore-screenshot.XXXXXX).png"
+  sips --resampleHeightWidth "$th" "$tw" "$src" --out "$tmp" >/dev/null
+  flatten_png "$tmp" "$out"
   rm -f "$tmp" "${tmp%.png}"
 }
 
@@ -65,7 +91,7 @@ for theme in light dark; do
       "$OUT_ROOT/iphone-6.5/$theme/${name}.png" \
       "$IPHONE_W" "$IPHONE_H"
 
-    cover_resize \
+    stretch_resize \
       "$(ipad_source "$theme" "$scene")" \
       "$OUT_ROOT/ipad-13/$theme/${name}.png" \
       "$IPAD_W" "$IPAD_H"
