@@ -11,6 +11,7 @@ import {
   getMetronomeGridLinesInRange,
   getMetronomeGridStepSec,
   getQuarterIntervalSec,
+  getTimeGridAlignedMarkerTimes,
   isPrimaryAccentBeat,
   isSecondaryAccentBeat,
   METRONOME_GRID_MAX_LINES,
@@ -286,6 +287,12 @@ describe('getGridSnapIntervalSec', () => {
       ),
       0.25
     );
+    assert.equal(
+      getGridSnapIntervalSec(
+        makeSettings({ gridBasis: 'time', timeGridSubdivision: '0.125s' })
+      ),
+      0.125
+    );
   });
 });
 
@@ -376,6 +383,14 @@ describe('normalizeMetronomeSettings', () => {
     assert.equal(settings.timeGridSubdivision, '0.25s');
   });
 
+  it('preserves 0.125s time grid subdivision', () => {
+    const settings = normalizeMetronomeSettings({
+      gridBasis: 'time',
+      timeGridSubdivision: '0.125s',
+    });
+    assert.equal(settings.timeGridSubdivision, '0.125s');
+  });
+
   it('falls back for invalid grid fields', () => {
     const settings = normalizeMetronomeSettings({
       gridBasis: 'bars' as MetronomeSettings['gridBasis'],
@@ -437,5 +452,49 @@ describe('metronome mode cycle', () => {
       ),
       { enabled: false, showGrid: true }
     );
+  });
+});
+
+describe('getTimeGridAlignedMarkerTimes', () => {
+  const timeSettings = makeSettings({
+    gridBasis: 'time',
+    timeGridSubdivision: '1s',
+    showGrid: true,
+  });
+
+  it('aligns tick times to whole-second grid lines', () => {
+    const { tickTimes } = getTimeGridAlignedMarkerTimes(timeSettings, 0, 4, 60, 48, 48);
+    assert.deepEqual(tickTimes, [0, 1, 2, 3, 4]);
+  });
+
+  it('places labels only on grid-aligned whole seconds at low zoom', () => {
+    const settings = makeSettings({
+      gridBasis: 'time',
+      timeGridSubdivision: '1s',
+      showGrid: true,
+    });
+    const pps = 8;
+    const gridStep = getMetronomeGridStepSec(settings, pps);
+    assert.ok(gridStep >= 2, `expected coarse grid step at low zoom, got ${gridStep}`);
+
+    const { tickTimes, labelTimes } = getTimeGridAlignedMarkerTimes(
+      settings,
+      0,
+      20,
+      60,
+      pps,
+      48
+    );
+
+    for (const label of labelTimes) {
+      assert.ok(tickTimes.includes(label), `label ${label} should have a tick`);
+      assert.ok(label % gridStep === 0 || Math.abs((label % gridStep)) < 0.001);
+    }
+    assert.ok(!labelTimes.includes(5), '5s should not be labeled when grid steps every 4s');
+  });
+
+  it('uses denser labels when zoomed in', () => {
+    const { labelTimes } = getTimeGridAlignedMarkerTimes(timeSettings, 0, 10, 60, 48, 48);
+    assert.deepEqual(labelTimes, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   });
 });

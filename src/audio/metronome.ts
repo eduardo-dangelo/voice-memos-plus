@@ -135,9 +135,10 @@ const TIME_GRID_INTERVAL_SEC: Record<TimeGridSubdivision, number> = {
   '1s': 1,
   '0.5s': 0.5,
   '0.25s': 0.25,
+  '0.125s': 0.125,
 };
 
-const TIME_GRID_LOD_LADDER_SEC = [0.25, 0.5, 1] as const;
+const TIME_GRID_LOD_LADDER_SEC = [0.125, 0.25, 0.5, 1] as const;
 
 /** Finest visual/snap interval for the current grid basis and subdivision. */
 export function getGridFinestIntervalSec(settings: MetronomeSettings): number {
@@ -307,6 +308,77 @@ export function getMetronomeGridStepSec(
     return getTimeGridStepSec(settings, pixelsPerSecond);
   }
   return getMetronomeBasisGridStepSec(settings, pixelsPerSecond);
+}
+
+function getWholeSecondGridMultiple(gridStep: number): number {
+  if (gridStep <= 0) {
+    return 1;
+  }
+  if (Math.abs(gridStep - Math.round(gridStep)) < TIME_EPSILON && gridStep >= 1) {
+    return gridStep;
+  }
+  const factor = Math.ceil((1 - TIME_EPSILON) / gridStep);
+  return factor * gridStep;
+}
+
+function isWholeSecond(time: number): boolean {
+  return Math.abs(time - Math.round(time)) < TIME_EPSILON;
+}
+
+function isAlignedToStep(time: number, step: number): boolean {
+  if (step <= 0) {
+    return false;
+  }
+  const quotient = time / step;
+  return Math.abs(quotient - Math.round(quotient)) < TIME_EPSILON;
+}
+
+/**
+ * Timeline marker ticks/labels aligned to the time-based metronome grid.
+ * Uses the same step math as getMetronomeGridLinesInRange so labels sit on grid lines.
+ */
+export function getTimeGridAlignedMarkerTimes(
+  settings: MetronomeSettings,
+  bufferStartSec: number,
+  bufferEndSec: number,
+  layoutDuration: number,
+  pixelsPerSecond: number,
+  minLabelSpacingPx: number
+): { tickTimes: number[]; labelTimes: number[] } {
+  if (layoutDuration <= 0 || bufferEndSec < bufferStartSec || pixelsPerSecond <= 0) {
+    return { tickTimes: [], labelTimes: [] };
+  }
+
+  const gridStep = getMetronomeGridStepSec(settings, pixelsPerSecond);
+  const inclusiveEnd = Math.min(layoutDuration, Math.ceil(bufferEndSec));
+  const allTimes = collectBeatTimesInRange(
+    bufferStartSec,
+    inclusiveEnd + gridStep,
+    gridStep
+  );
+  const tickTimes = allTimes.filter(
+    (time) => isWholeSecond(time) && time <= inclusiveEnd + TIME_EPSILON
+  );
+
+  if (tickTimes.length === 0) {
+    return { tickTimes: [], labelTimes: [] };
+  }
+
+  const baseLabelStep = getWholeSecondGridMultiple(gridStep);
+  let labelStep = baseLabelStep;
+  for (const multiplier of [1, 5, 10, 30]) {
+    const candidate = baseLabelStep * multiplier;
+    if (candidate * pixelsPerSecond >= minLabelSpacingPx) {
+      labelStep = candidate;
+      break;
+    }
+  }
+  while (labelStep * pixelsPerSecond < minLabelSpacingPx && labelStep <= layoutDuration) {
+    labelStep += baseLabelStep;
+  }
+
+  const labelTimes = tickTimes.filter((time) => isAlignedToStep(time, labelStep));
+  return { tickTimes, labelTimes };
 }
 
 function classifyGridLine(beatTime: number, settings: MetronomeSettings): MetronomeGridLine {

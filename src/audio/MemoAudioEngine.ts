@@ -302,6 +302,16 @@ export class MemoAudioEngine {
   private playbackInterrupted = false;
   /** Ignore routeChange until this timestamp (self-caused CategoryChange). */
   private ignoreRouteChangeUntil = 0;
+  private previewContext: AudioContext | null = null;
+  private previewGain: GainNode | null = null;
+  private previewSources: AudioBufferSourceNode[] = [];
+  private previewActive = false;
+  private previewSettings: MetronomeSettings = DEFAULT_METRONOME_SETTINGS;
+  private previewScheduledUntil = 0;
+  private previewTimelineOrigin = 0;
+  private previewAudioOrigin = 0;
+  private previewStartMs = 0;
+  private previewExtendTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
     AudioManager.addSystemEventListener('routeChange', () => {
@@ -2551,6 +2561,7 @@ export class MemoAudioEngine {
     monitorStartTime?: number;
     silentLayerId?: string;
   }): Promise<void> {
+    this.stopMetronomePreview();
     if (this.state.isRecording) {
       return;
     }
@@ -3191,6 +3202,7 @@ export class MemoAudioEngine {
   }
 
   async play(options?: { loopRestart?: boolean }): Promise<void> {
+    this.stopMetronomePreview();
     // Only coalesce onto a still-valid in-flight play. pause()/seek bump playRequestId
     // without clearing playInFlight; coalescing onto that cancelled promise would no-op.
     if (
@@ -3457,6 +3469,123 @@ export class MemoAudioEngine {
 
   skip(seconds: number): void {
     this.seek(this.state.currentTime + seconds);
+  }
+
+  isMetronomePreviewActive(): boolean {
+    return this.previewActive;
+  }
+
+  async startMetronomePreview(settings: MetronomeSettings): Promise<void> {
+    if (this.state.isRecording) {
+      return;
+    }
+
+    if (this.previewActive) {
+      await this.resyncMetronomePreview(settings);
+      return;
+    }
+
+    this.previewActive = true;
+    this.previewSettings = settings;
+
+    if (!this.previewContext) {
+      this.previewContext = await this.createAudioContextAtRate(
+        this.getPlaybackContextSampleRate()
+      );
+      this.previewGain = this.previewContext.createGain();
+      this.previewGain.connect(this.previewContext.destination);
+    }
+
+    if (this.previewContext.state === 'suspended') {
+      await this.previewContext.resume();
+    }
+
+    this.previewGain!.gain.value = settings.volume / 100;
+    this.previewStartMs = Date.now();
+    this.previewTimelineOrigin = 0;
+    this.previewScheduledUntil = 0;
+    this.previewAudioOrigin = this.previewContext.currentTime + 0.05;
+
+    this.extendMetronomePreviewSchedule();
+
+    this.previewExtendTimer = setInterval(() => {
+      if (this.previewActive) {
+        this.extendMetronomePreviewSchedule();
+      }
+    }, 2000);
+  }
+
+  stopMetronomePreview(): void {
+    if (!this.previewActive) {
+      return;
+    }
+    this.previewActive = false;
+    if (this.previewExtendTimer) {
+      clearInterval(this.previewExtendTimer);
+      this.previewExtendTimer = null;
+    }
+    this.stopPreviewSources();
+  }
+
+  private stopPreviewSources(): void {
+    for (const source of this.previewSources) {
+      this.stopSource(source);
+    }
+    this.previewSources = [];
+  }
+
+  private async resyncMetronomePreview(settings: MetronomeSettings): Promise<void> {
+    if (!this.previewActive || !this.previewContext) {
+      return;
+    }
+    this.stopPreviewSources();
+    this.previewSettings = settings;
+    if (this.previewGain) {
+      this.previewGain.gain.value = settings.volume / 100;
+    }
+    const elapsed = (Date.now() - this.previewStartMs) / 1000;
+    this.previewTimelineOrigin = elapsed;
+    this.previewScheduledUntil = elapsed;
+    this.previewAudioOrigin = this.previewContext.currentTime + 0.05;
+    this.extendMetronomePreviewSchedule();
+  }
+
+  private extendMetronomePreviewSchedule(): void {
+    if (!this.previewActive || !this.previewContext || !this.previewGain) {
+      return;
+    }
+
+    const timelineNow = (Date.now() - this.previewStartMs) / 1000;
+    const scheduleFrom = this.previewScheduledUntil;
+    const scheduleTo = Math.max(scheduleFrom, timelineNow) + METRONOME_SCHEDULE_CHUNK_SEC;
+    if (scheduleTo <= scheduleFrom + 0.001) {
+      return;
+    }
+
+    const settings = {
+      ...normalizeMetronomeSettings(this.previewSettings),
+      enabled: true,
+    };
+    const startWhen =
+      this.previewAudioOrigin + (scheduleFrom - this.previewTimelineOrigin);
+    const sources = scheduleMetronomeClicks(
+      this.previewContext,
+      this.previewGain,
+      settings,
+      scheduleFrom,
+      scheduleTo,
+      startWhen
+    );
+    this.previewSources.push(...sources);
+    for (const source of sources) {
+      source.onEnded = () => {
+        const index = this.previewSources.indexOf(source);
+        if (index >= 0) {
+          this.previewSources.splice(index, 1);
+        }
+      };
+    }
+    this.previewScheduledUntil = scheduleTo;
   }
 }
 

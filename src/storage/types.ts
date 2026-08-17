@@ -48,7 +48,7 @@ export type GridBasis = 'metronome' | 'time';
 
 export type MetronomeGridSubdivision = '1/4' | '1/8' | '1/16' | '1/32';
 
-export type TimeGridSubdivision = '1s' | '0.5s' | '0.25s';
+export type TimeGridSubdivision = '1s' | '0.5s' | '0.25s' | '0.125s';
 
 export const GRID_BASIS_PRESETS: GridBasis[] = ['metronome', 'time'];
 
@@ -59,7 +59,12 @@ export const METRONOME_GRID_SUBDIVISIONS: MetronomeGridSubdivision[] = [
   '1/32',
 ];
 
-export const TIME_GRID_SUBDIVISIONS: TimeGridSubdivision[] = ['1s', '0.5s', '0.25s'];
+export const TIME_GRID_SUBDIVISIONS: TimeGridSubdivision[] = [
+  '1s',
+  '0.5s',
+  '0.25s',
+  '0.125s',
+];
 
 export type MetronomeSettings = {
   enabled: boolean;

@@ -21,7 +21,7 @@ import { colorWithAlpha, type VoiceMemosColorScheme } from '@/constants/VoiceMem
 import { fadeEnvelopeGain } from '@/src/audio/fadeCurve';
 import { clampTrimValues, dbToLinear } from '@/src/audio/layerEffects';
 import { snapTimeToGrid } from '@/src/audio/loopSnap';
-import { getMinPixelsPerSecondForGrid, type MetronomeGridLine } from '@/src/audio/metronome';
+import { getMinPixelsPerSecondForGrid, getTimeGridAlignedMarkerTimes, type MetronomeGridLine } from '@/src/audio/metronome';
 import {
   applyPinchDeltaToPixelsPerSecond,
   applyPinchDeltaToTrackZoom,
@@ -1959,16 +1959,40 @@ function WaveformViewComponent({
   });
   const viewportTimeBufferRef = useRef<MetronomeGridBuffer | null>(null);
 
-  const visibleMarkerSeconds = useMemo(
-    () =>
-      getVisibleMarkerSeconds(
+  const timelineMarkers = useMemo(() => {
+    if (metronome?.showGrid && metronome.gridBasis === 'time') {
+      const { tickTimes, labelTimes } = getTimeGridAlignedMarkerTimes(
+        metronome,
         viewportTimeBuffer.start,
         viewportTimeBuffer.end,
         layoutDuration,
-        markerInterval
-      ),
-    [layoutDuration, markerInterval, viewportTimeBuffer.end, viewportTimeBuffer.start]
-  );
+        layoutPixelsPerSecond,
+        MIN_LABEL_SPACING
+      );
+      return {
+        tickTimes,
+        labelTimes: new Set(labelTimes),
+      };
+    }
+
+    const seconds = getVisibleMarkerSeconds(
+      viewportTimeBuffer.start,
+      viewportTimeBuffer.end,
+      layoutDuration,
+      markerInterval
+    );
+    return {
+      tickTimes: seconds,
+      labelTimes: new Set(seconds.filter((second) => second % markerInterval === 0)),
+    };
+  }, [
+    layoutDuration,
+    layoutPixelsPerSecond,
+    markerInterval,
+    metronome,
+    viewportTimeBuffer.end,
+    viewportTimeBuffer.start,
+  ]);
 
   const [metronomeGridLines, setMetronomeGridLines] = useState<MetronomeGridLine[]>([]);
   const metronomeGridBufferRef = useRef<MetronomeGridBuffer | null>(null);
@@ -3047,14 +3071,14 @@ function WaveformViewComponent({
           <View
             pointerEvents="none"
             style={[styles.markerBand, { width: bandWidth }]}>
-            {visibleMarkerSeconds.map((second) => {
-              const x = sidePadding + second * layoutPixelsPerSecond;
-              const showLabel = second % markerInterval === 0;
+            {timelineMarkers.tickTimes.map((time) => {
+              const x = sidePadding + time * layoutPixelsPerSecond;
+              const showLabel = timelineMarkers.labelTimes.has(time);
               return (
-                <View key={second} style={[styles.marker, { left: x }]}>
+                <View key={time} style={[styles.marker, { left: x - 0.5 }]}>
                   <View style={styles.markerTick} />
                   {showLabel ? (
-                    <Text style={styles.markerLabel}>{formatMarkerTime(second)}</Text>
+                    <Text style={styles.markerLabel}>{formatMarkerTime(time)}</Text>
                   ) : null}
                 </View>
               );
