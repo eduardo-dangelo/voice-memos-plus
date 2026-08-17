@@ -21,7 +21,7 @@ import { colorWithAlpha, type VoiceMemosColorScheme } from '@/constants/VoiceMem
 import { fadeEnvelopeGain } from '@/src/audio/fadeCurve';
 import { clampTrimValues, dbToLinear } from '@/src/audio/layerEffects';
 import { snapTimeToGrid } from '@/src/audio/loopSnap';
-import { getMinPixelsPerSecondForGrid, getTimeGridAlignedMarkerTimes, type MetronomeGridLine } from '@/src/audio/metronome';
+import { getMinPixelsPerSecondForGrid, getTimeGridAlignedMarkerTimes, pickGridSubdivisionForPixelsPerSecond, type MetronomeGridLine } from '@/src/audio/metronome';
 import {
   applyPinchDeltaToPixelsPerSecond,
   applyPinchDeltaToTrackZoom,
@@ -29,6 +29,9 @@ import {
   clampTimelineTrackZoom,
   getTimelineZoomBounds,
   getTimelineZoomDisplayMultipliers,
+  getTimelineZoomMultiplierBounds,
+  isTimelineZoomAtDefault,
+  pixelsPerSecondFromZoomMultiplier,
   TIMELINE_DEFAULT_PIXELS_PER_SECOND,
 } from '@/src/audio/timelineZoom';
 import {
@@ -40,6 +43,7 @@ import {
   WAVEFORM_BAR_WIDTH,
   WAVEFORM_PIXELS_PER_SECOND,
 } from '@/src/audio/waveform';
+import { FloatingHeaderButton } from '@/src/components/FloatingHeaderButton';
 import { LoopColumnOverlay } from '@/src/components/LoopColumnOverlay';
 import { TRACK_ROW_ENTER, TRACK_ROW_EXIT } from '@/src/components/listTransitions';
 import {
@@ -68,6 +72,7 @@ import {
   type FadeOverlayConfig,
   type FadeRegionState,
 } from '@/src/components/track-editor/TrackFadeOverlay';
+import { TimelineZoomDialog } from '@/src/components/TimelineZoomDialog';
 import {
   getVisibleBarIndexRange,
   getVisibleMarkerSeconds,
@@ -312,6 +317,8 @@ type Props = {
   onEditGestureActive?: (active: boolean) => void;
   /** Zoom readout visibility + multipliers for the memo header chip. */
   onZoomControlsChange?: (state: TimelineZoomControlsState) => void;
+  /** Persist grid subdivision picked from horizontal zoom (when show grid is on). */
+  onMetronomeGridSubdivisionSync?: (partial: Partial<MetronomeSettings>) => void;
   trimOverlay?: TrimOverlayConfig;
   moveOverlay?: MoveOverlayConfig;
   fadeOverlay?: FadeOverlayConfig;
@@ -1798,6 +1805,7 @@ function WaveformViewComponent({
   onWidthChange,
   onEditGestureActive,
   onZoomControlsChange,
+  onMetronomeGridSubdivisionSync,
   trimOverlay,
   moveOverlay,
   fadeOverlay,
@@ -1820,6 +1828,7 @@ function WaveformViewComponent({
   const [trimGestureActive, setTrimGestureActive] = useState(false);
   const [zoomGestureActive, setZoomGestureActive] = useState(false);
   const [showZoomControls, setShowZoomControls] = useState(false);
+  const [zoomDialogVisible, setZoomDialogVisible] = useState(false);
   /** Skip enter on first paint so opening a memo does not fade every row. */
   const [trackTransitionsReady, setTrackTransitionsReady] = useState(false);
   useEffect(() => {
@@ -1942,6 +1951,10 @@ function WaveformViewComponent({
     viewportHeight > 0 ? viewportHeight - MARKER_ROW_HEIGHT - loopRowHeight : 1
   );
   waveformAreaHeightSV.value = waveformAreaHeight;
+  const waveformAreaHeightRef = useRef(waveformAreaHeight);
+  waveformAreaHeightRef.current = waveformAreaHeight;
+  const tracksLengthRef = useRef(tracks.length);
+  tracksLengthRef.current = tracks.length;
   const playheadHeight = waveformAreaHeight + loopRowHeight;
   const baseTrackHeight = waveformAreaHeight / Math.max(1, tracks.length);
   const trackHeight = baseTrackHeight * layoutTrackZoom;
@@ -1998,6 +2011,10 @@ function WaveformViewComponent({
   const metronomeGridBufferRef = useRef<MetronomeGridBuffer | null>(null);
   const metronomeRef = useRef(metronome);
   metronomeRef.current = metronome;
+  const subdivisionSyncFromZoomRef = useRef(false);
+  const zoomSyncFromSubdivisionRef = useRef(false);
+  const onMetronomeGridSubdivisionSyncRef = useRef(onMetronomeGridSubdivisionSync);
+  onMetronomeGridSubdivisionSyncRef.current = onMetronomeGridSubdivisionSync;
   const layoutPixelsPerSecondRef = useRef(layoutPixelsPerSecond);
   layoutPixelsPerSecondRef.current = layoutPixelsPerSecond;
   const viewportWidthRef = useRef(viewportWidth);
@@ -2133,14 +2150,22 @@ function WaveformViewComponent({
   ]);
 
   useEffect(() => {
-    if (!metronome?.showGrid || zoomGestureActiveRef.current) {
+    if (
+      !metronome?.showGrid ||
+      zoomGestureActiveRef.current ||
+      subdivisionSyncFromZoomRef.current
+    ) {
       return;
     }
     const needed = getMinPixelsPerSecondForGrid(metronome);
     if (needed <= 0 || pixelsPerSecondRef.current >= needed) {
       return;
     }
+    zoomSyncFromSubdivisionRef.current = true;
     setPixelsPerSecond(clampTimelinePixelsPerSecond(needed, zoomBoundsRef.current));
+    queueMicrotask(() => {
+      zoomSyncFromSubdivisionRef.current = false;
+    });
   }, [
     metronome?.showGrid,
     metronome?.bpm,
@@ -2311,6 +2336,46 @@ function WaveformViewComponent({
     scheduleZoomCommitRef.current();
   }, [tracks.length, viewportWidth, waveformAreaHeight]);
 
+  const syncSubdivisionFromZoomRef = useRef((_pps: number) => {});
+  syncSubdivisionFromZoomRef.current = (pps: number) => {
+    if (zoomSyncFromSubdivisionRef.current) {
+      return;
+    }
+    const settings = metronomeRef.current;
+    if (!settings?.showGrid) {
+      return;
+    }
+    const onSync = onMetronomeGridSubdivisionSyncRef.current;
+    if (!onSync) {
+      return;
+    }
+
+    const bounds = zoomBoundsRef.current;
+    const picked = pickGridSubdivisionForPixelsPerSecond(
+      settings,
+      pps,
+      bounds.pixelsPerSecondDefault,
+      bounds.pixelsPerSecondMax
+    );
+    const currentSub =
+      settings.gridBasis === 'time'
+        ? settings.timeGridSubdivision
+        : settings.metronomeGridSubdivision;
+    const pickedSub =
+      settings.gridBasis === 'time'
+        ? picked.timeGridSubdivision
+        : picked.metronomeGridSubdivision;
+    if (currentSub === pickedSub) {
+      return;
+    }
+
+    subdivisionSyncFromZoomRef.current = true;
+    onSync(picked);
+    queueMicrotask(() => {
+      subdivisionSyncFromZoomRef.current = false;
+    });
+  };
+
   const commitPendingZoom = useCallback(() => {
     zoomCommitRafRef.current = null;
     const pending = pendingZoomRef.current;
@@ -2346,6 +2411,7 @@ function WaveformViewComponent({
     syncMetronomeGridRef.current(pending.scrollX, true);
     scrollRef.current?.scrollTo({ x: pending.scrollX, animated: false });
     verticalScrollRef.current?.scrollTo({ y: pending.scrollY, animated: false });
+    syncSubdivisionFromZoomRef.current(pending.pixelsPerSecond);
   }, []);
 
   const scheduleZoomCommit = useCallback(() => {
@@ -2367,6 +2433,79 @@ function WaveformViewComponent({
 
   // Keep schedule ref current for applyZoomFromGesture (defined above commit helpers).
   scheduleZoomCommitRef.current = scheduleZoomCommit;
+
+  const applyZoomMultipliersRef = useRef((_x: number, _y: number) => {});
+  applyZoomMultipliersRef.current = (x: number, y: number) => {
+    const bounds = zoomBoundsRef.current;
+    const viewportWidth = viewportWidthRef.current;
+    const defaultPps = bounds.pixelsPerSecondDefault;
+    const nextPixelsPerSecond = pixelsPerSecondFromZoomMultiplier(x, defaultPps, bounds);
+    const nextTrackZoom = clampTimelineTrackZoom(Math.round(y), bounds);
+
+    if (
+      nextPixelsPerSecond === pixelsPerSecondRef.current &&
+      nextTrackZoom === trackZoomRef.current
+    ) {
+      return;
+    }
+
+    const playheadTime = scrollXToTime(
+      scrollOffsetRef.current,
+      durationRef.current,
+      pixelsPerSecondRef.current
+    );
+
+    const wah = waveformAreaHeightRef.current;
+    const trackCount = Math.max(1, tracksLengthRef.current);
+    const nextLayoutDuration = Math.max(durationRef.current, layoutDurationRef.current);
+    const nextTargetWidth =
+      nextLayoutDuration > 0 ? nextLayoutDuration * nextPixelsPerSecond : 0;
+    const nextBarCount =
+      nextTargetWidth > 0
+        ? Math.max(1, Math.floor(nextTargetWidth / BAR_STEP))
+        : viewportWidth > 0
+          ? Math.max(1, Math.floor(viewportWidth / BAR_STEP))
+          : 0;
+    const nextContentWidth =
+      nextBarCount > 0 ? Math.max(viewportWidth, nextBarCount * BAR_STEP) : viewportWidth;
+    const nextMaxScrollX = Math.max(0, nextContentWidth);
+    const nextScrollX = timeToScrollX(playheadTime, nextContentWidth, nextPixelsPerSecond);
+
+    const oldTrackHeight = (wah / trackCount) * trackZoomRef.current;
+    const nextTrackHeight = (wah / trackCount) * nextTrackZoom;
+    const focalYInTracks = wah / 2;
+    const trackIndex =
+      oldTrackHeight > 0
+        ? (verticalScrollOffsetRef.current + focalYInTracks) / oldTrackHeight
+        : 0;
+    const nextTracksContentHeight = nextTrackHeight * trackCount;
+    const nextMaxScrollY = Math.max(0, nextTracksContentHeight - wah);
+    const nextScrollY = Math.max(
+      0,
+      Math.min(nextMaxScrollY, trackIndex * nextTrackHeight - focalYInTracks)
+    );
+
+    pendingZoomRef.current = {
+      pixelsPerSecond: nextPixelsPerSecond,
+      trackZoom: nextTrackZoom,
+      scrollX: nextScrollX,
+      scrollY: nextScrollY,
+      maxScrollX: nextMaxScrollX,
+    };
+    scheduleZoomCommitRef.current();
+  };
+
+  const handleZoomDialogChangeX = useCallback((nextX: number) => {
+    const bounds = zoomBoundsRef.current;
+    const currentY = trackZoomRef.current;
+    applyZoomMultipliersRef.current(nextX, currentY);
+  }, []);
+
+  const handleZoomDialogChangeY = useCallback((nextY: number) => {
+    const bounds = zoomBoundsRef.current;
+    const currentX = pixelsPerSecondRef.current / bounds.pixelsPerSecondDefault;
+    applyZoomMultipliersRef.current(currentX, nextY);
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -2395,9 +2534,15 @@ function WaveformViewComponent({
     setTrackZoom(1);
     verticalScrollOffsetRef.current = 0;
     verticalScrollRef.current?.scrollTo({ y: 0, animated: true });
+    syncSubdivisionFromZoomRef.current(bounds.pixelsPerSecondDefault);
     hideZoomControls();
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   }, [hideZoomControls]);
+
+  const handleZoomDialogReset = useCallback(() => {
+    resetZoom();
+    setZoomDialogVisible(false);
+  }, [resetZoom]);
 
   const onZoomControlsChangeRef = useRef(onZoomControlsChange);
   onZoomControlsChangeRef.current = onZoomControlsChange;
@@ -2947,6 +3092,20 @@ function WaveformViewComponent({
           Math.max(duration, layoutDuration)
         );
 
+  const zoomMultipliers = getTimelineZoomDisplayMultipliers(
+    layoutPixelsPerSecond,
+    layoutTrackZoom,
+    zoomBounds.pixelsPerSecondDefault
+  );
+  const zoomMultiplierBounds = getTimelineZoomMultiplierBounds(zoomBounds);
+  const showZoomButton =
+    zoomEnabled && !isTimelineZoomAtDefault(zoomMultipliers.x, zoomMultipliers.y);
+  const loopBarTopOffset = loopOverlay
+    ? loopRowExpanded
+      ? LOOP_ROW_HEIGHT_EXPANDED
+      : LOOP_ROW_HEIGHT
+    : 0;
+
   return (
     <WaveformThemeContext.Provider value={theme}>
     <View
@@ -3086,6 +3245,32 @@ function WaveformViewComponent({
           </View>
         </View>
       </GHScrollView>
+      {showZoomButton ? (
+        <View
+          pointerEvents="box-none"
+          style={[styles.zoomButtonOverlay, { top: loopBarTopOffset + 8 }]}>
+          <FloatingHeaderButton
+            accessibilityLabel="Timeline zoom"
+            icon="magnifyingglass"
+            size="small"
+            tintColor={colors.secondaryText}
+            onPress={() => setZoomDialogVisible(true)}
+          />
+        </View>
+      ) : null}
+      <TimelineZoomDialog
+        visible={zoomDialogVisible}
+        x={zoomMultipliers.x}
+        xMax={zoomMultiplierBounds.xMax}
+        xMin={zoomMultiplierBounds.xMin}
+        y={zoomMultipliers.y}
+        yMax={zoomMultiplierBounds.yMax}
+        yMin={zoomMultiplierBounds.yMin}
+        onChangeX={handleZoomDialogChangeX}
+        onChangeY={handleZoomDialogChangeY}
+        onClose={() => setZoomDialogVisible(false)}
+        onReset={handleZoomDialogReset}
+      />
       <View pointerEvents="none" style={[styles.fixedPlayhead, { height: playheadHeight }]}>
         <View style={styles.playheadCapTop} />
         <View style={styles.playheadLine} />
@@ -3149,7 +3334,8 @@ function areWaveformViewPropsEqual(prev: Props, next: Props): boolean {
     prev.onTrackLongPress !== next.onTrackLongPress ||
     prev.onWidthChange !== next.onWidthChange ||
     prev.onEditGestureActive !== next.onEditGestureActive ||
-    prev.onZoomControlsChange !== next.onZoomControlsChange
+    prev.onZoomControlsChange !== next.onZoomControlsChange ||
+    prev.onMetronomeGridSubdivisionSync !== next.onMetronomeGridSubdivisionSync
   ) {
     return false;
   }
@@ -3244,6 +3430,11 @@ function createWaveformStyles(colors: VoiceMemosColorScheme) {
     width: '100%',
     position: 'relative',
     overflow: 'visible',
+  },
+  zoomButtonOverlay: {
+    position: 'absolute',
+    left: 8,
+    zIndex: 10,
   },
   scrollView: {
     flex: 1,

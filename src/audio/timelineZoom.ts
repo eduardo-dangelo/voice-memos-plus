@@ -100,6 +100,15 @@ export function applyPinchDeltaToTrackZoom(
   );
 }
 
+const ZOOM_DEFAULT_TOLERANCE = 0.05;
+
+/** Whether horizontal and vertical zoom multipliers are at default (1×). */
+export function isTimelineZoomAtDefault(x: number, y: number): boolean {
+  return (
+    Math.abs(x - 1) < ZOOM_DEFAULT_TOLERANCE && Math.abs(y - 1) < ZOOM_DEFAULT_TOLERANCE
+  );
+}
+
 /** Format a zoom multiplier for UI (e.g. `1×`, `1.5×`, `2×`). */
 export function formatTimelineZoomMultiplier(value: number): string {
   if (!Number.isFinite(value) || value <= 0) {
@@ -124,4 +133,32 @@ export function getTimelineZoomDisplayMultipliers(
     x: pixelsPerSecond / defaultPps,
     y: trackZoom,
   };
+}
+
+export function getTimelineZoomMultiplierBounds(bounds: TimelineZoomBounds): {
+  xMin: number;
+  xMax: number;
+  yMin: number;
+  yMax: number;
+} {
+  const defaultPps =
+    bounds.pixelsPerSecondDefault > 0
+      ? bounds.pixelsPerSecondDefault
+      : TIMELINE_DEFAULT_PIXELS_PER_SECOND;
+  return {
+    xMin: bounds.pixelsPerSecondMin / defaultPps,
+    xMax: bounds.pixelsPerSecondMax / defaultPps,
+    yMin: bounds.trackZoomMin,
+    yMax: bounds.trackZoomMax,
+  };
+}
+
+export function pixelsPerSecondFromZoomMultiplier(
+  multiplier: number,
+  pixelsPerSecondDefault: number,
+  bounds: TimelineZoomBounds
+): number {
+  const defaultPps =
+    pixelsPerSecondDefault > 0 ? pixelsPerSecondDefault : TIMELINE_DEFAULT_PIXELS_PER_SECOND;
+  return clampTimelinePixelsPerSecond(multiplier * defaultPps, bounds);
 }

@@ -51,7 +51,7 @@ import {
   getRecordingReplacementSkipSeconds,
   type CueOutputRoute,
 } from '@/src/audio/recordingLatency';
-import { formatTimelineZoomMultiplier } from '@/src/audio/timelineZoom';
+import { formatTimelineZoomMultiplier, isTimelineZoomAtDefault } from '@/src/audio/timelineZoom';
 import {
   slicePeaksForTrim,
   WAVEFORM_BAR_GAP,
@@ -2861,6 +2861,8 @@ export function MemoEditor({
 
   const renderHeaderBar = useCallback(
     () => {
+      const showZoomSubtitle =
+        !isTimelineZoomAtDefault(zoomControls.x, zoomControls.y) || zoomControls.visible;
       const optionsMenu = (
         <MemoOptionsMenu
           includeEditRecording={false}
@@ -2933,7 +2935,7 @@ export function MemoEditor({
               {memo?.title ?? ''}
             </Text>
           </Pressable>
-          {zoomControls.visible ? (
+          {showZoomSubtitle ? (
             <Text pointerEvents="none" style={styles.headerZoomCaption}>
               {`x: ${formatTimelineZoomMultiplier(zoomControls.x)}  y: ${formatTimelineZoomMultiplier(zoomControls.y)}`}
             </Text>
@@ -3984,6 +3986,7 @@ export function MemoEditor({
               onTrackLongPress={handleTrackLongPress}
               onEditGestureActive={handleEditGestureActive}
               onZoomControlsChange={setZoomControls}
+              onMetronomeGridSubdivisionSync={handleMetronomeChange}
             />
           ) : (
             <View style={styles.tracksLoading}>

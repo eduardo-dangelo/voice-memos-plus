@@ -17,9 +17,13 @@ import {
   METRONOME_GRID_MAX_LINES,
   METRONOME_GRID_MIN_SPACING_PX,
   NORMAL_AMPLITUDE,
+  pickGridSubdivisionForPixelsPerSecond,
+  pickMetronomeGridSubdivisionForPixelsPerSecond,
+  pickTimeGridSubdivisionForPixelsPerSecond,
   SECONDARY_ACCENT_GAIN,
   synthesizeClickSamples,
 } from './metronome';
+import { TIMELINE_DEFAULT_PIXELS_PER_SECOND, TIMELINE_MAX_PIXELS_PER_SECOND } from './timelineZoom';
 import {
   DEFAULT_METRONOME_SETTINGS,
   getMetronomeMode,
@@ -496,5 +500,102 @@ describe('getTimeGridAlignedMarkerTimes', () => {
   it('uses denser labels when zoomed in', () => {
     const { labelTimes } = getTimeGridAlignedMarkerTimes(timeSettings, 0, 10, 60, 48, 48);
     assert.deepEqual(labelTimes, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  });
+});
+
+describe('pickGridSubdivisionForPixelsPerSecond', () => {
+  const defaultPps = TIMELINE_DEFAULT_PIXELS_PER_SECOND;
+  const maxPps = TIMELINE_MAX_PIXELS_PER_SECOND;
+
+  it('picks coarsest subdivisions at default zoom', () => {
+    const metronomeSettings = makeSettings({
+      bpm: 120,
+      timeSignature: '4/4',
+      gridBasis: 'metronome',
+      metronomeGridSubdivision: '1/16',
+    });
+    assert.equal(
+      pickMetronomeGridSubdivisionForPixelsPerSecond(
+        metronomeSettings,
+        defaultPps,
+        defaultPps,
+        maxPps
+      ),
+      '1/4'
+    );
+
+    const timeSettings = makeSettings({ gridBasis: 'time', timeGridSubdivision: '0.125s' });
+    assert.equal(
+      pickTimeGridSubdivisionForPixelsPerSecond(timeSettings, defaultPps, defaultPps, maxPps),
+      '1s'
+    );
+  });
+
+  it('picks finest subdivisions at max horizontal zoom', () => {
+    const metronomeSettings = makeSettings({
+      bpm: 120,
+      timeSignature: '4/4',
+      gridBasis: 'metronome',
+    });
+    assert.equal(
+      pickMetronomeGridSubdivisionForPixelsPerSecond(
+        metronomeSettings,
+        maxPps,
+        defaultPps,
+        maxPps
+      ),
+      '1/32'
+    );
+
+    const timeSettings = makeSettings({ gridBasis: 'time' });
+    assert.equal(
+      pickTimeGridSubdivisionForPixelsPerSecond(timeSettings, maxPps, defaultPps, maxPps),
+      '0.125s'
+    );
+  });
+
+  it('picks mid-bracket subdivisions between default and max zoom', () => {
+    const metronomeSettings = makeSettings({
+      bpm: 120,
+      timeSignature: '4/4',
+      gridBasis: 'metronome',
+    });
+    assert.equal(
+      pickMetronomeGridSubdivisionForPixelsPerSecond(
+        metronomeSettings,
+        100,
+        defaultPps,
+        maxPps
+      ),
+      '1/8'
+    );
+
+    const timeSettings = makeSettings({ gridBasis: 'time' });
+    assert.equal(
+      pickTimeGridSubdivisionForPixelsPerSecond(timeSettings, 60, defaultPps, maxPps),
+      '0.5s'
+    );
+  });
+
+  it('returns only the active grid basis field from the wrapper', () => {
+    const metronomeSettings = makeSettings({
+      gridBasis: 'metronome',
+      metronomeGridSubdivision: '1/4',
+      timeGridSubdivision: '1s',
+    });
+    assert.deepEqual(
+      pickGridSubdivisionForPixelsPerSecond(metronomeSettings, maxPps, defaultPps, maxPps),
+      { metronomeGridSubdivision: '1/32', timeGridSubdivision: '1s' }
+    );
+
+    const timeSettings = makeSettings({
+      gridBasis: 'time',
+      metronomeGridSubdivision: '1/4',
+      timeGridSubdivision: '1s',
+    });
+    assert.deepEqual(
+      pickGridSubdivisionForPixelsPerSecond(timeSettings, maxPps, defaultPps, maxPps),
+      { metronomeGridSubdivision: '1/4', timeGridSubdivision: '0.125s' }
+    );
   });
 });

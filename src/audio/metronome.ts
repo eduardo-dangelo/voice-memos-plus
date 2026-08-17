@@ -1,10 +1,12 @@
 import type { AudioBuffer, AudioBufferSourceNode, AudioContext, GainNode } from 'react-native-audio-api';
 
-import type {
-  MetronomeGridSubdivision,
-  MetronomeSettings,
-  TimeGridSubdivision,
-  TimeSignaturePreset,
+import {
+  METRONOME_GRID_SUBDIVISIONS,
+  TIME_GRID_SUBDIVISIONS,
+  type MetronomeGridSubdivision,
+  type MetronomeSettings,
+  type TimeGridSubdivision,
+  type TimeSignaturePreset,
 } from '@/src/storage/types';
 
 /** Short enough to stay clicky; long enough for a clean attack/release. */
@@ -166,6 +168,103 @@ export function getMinPixelsPerSecondForGrid(settings: MetronomeSettings): numbe
     return 0;
   }
   return METRONOME_GRID_AUTO_ZOOM_SPACING_PX / interval;
+}
+
+const PPS_MAX_EPSILON = 0.5;
+
+function pickFinestSubdivisionForPixelsPerSecond<T extends string>(
+  options: readonly T[],
+  pixelsPerSecond: number,
+  pixelsPerSecondDefault: number,
+  pixelsPerSecondMax: number,
+  minPixelsPerSecondFor: (subdivision: T) => number
+): T {
+  const coarsest = options[0]!;
+  const finest = options[options.length - 1]!;
+
+  if (pixelsPerSecond <= pixelsPerSecondDefault + TIME_EPSILON) {
+    return coarsest;
+  }
+  if (pixelsPerSecond >= pixelsPerSecondMax - PPS_MAX_EPSILON) {
+    return finest;
+  }
+
+  let chosen = coarsest;
+  for (const subdivision of options) {
+    const needed = minPixelsPerSecondFor(subdivision);
+    if (needed > 0 && pixelsPerSecond >= needed - TIME_EPSILON) {
+      chosen = subdivision;
+    }
+  }
+  return chosen;
+}
+
+export function pickMetronomeGridSubdivisionForPixelsPerSecond(
+  settings: MetronomeSettings,
+  pixelsPerSecond: number,
+  pixelsPerSecondDefault: number,
+  pixelsPerSecondMax: number
+): MetronomeGridSubdivision {
+  return pickFinestSubdivisionForPixelsPerSecond(
+    METRONOME_GRID_SUBDIVISIONS,
+    pixelsPerSecond,
+    pixelsPerSecondDefault,
+    pixelsPerSecondMax,
+    (metronomeGridSubdivision) =>
+      getMinPixelsPerSecondForGrid({
+        ...settings,
+        gridBasis: 'metronome',
+        metronomeGridSubdivision,
+      })
+  );
+}
+
+export function pickTimeGridSubdivisionForPixelsPerSecond(
+  settings: MetronomeSettings,
+  pixelsPerSecond: number,
+  pixelsPerSecondDefault: number,
+  pixelsPerSecondMax: number
+): TimeGridSubdivision {
+  return pickFinestSubdivisionForPixelsPerSecond(
+    TIME_GRID_SUBDIVISIONS,
+    pixelsPerSecond,
+    pixelsPerSecondDefault,
+    pixelsPerSecondMax,
+    (timeGridSubdivision) =>
+      getMinPixelsPerSecondForGrid({
+        ...settings,
+        gridBasis: 'time',
+        timeGridSubdivision,
+      })
+  );
+}
+
+export function pickGridSubdivisionForPixelsPerSecond(
+  settings: MetronomeSettings,
+  pixelsPerSecond: number,
+  pixelsPerSecondDefault: number,
+  pixelsPerSecondMax: number
+): Pick<MetronomeSettings, 'metronomeGridSubdivision' | 'timeGridSubdivision'> {
+  if (settings.gridBasis === 'time') {
+    return {
+      metronomeGridSubdivision: settings.metronomeGridSubdivision,
+      timeGridSubdivision: pickTimeGridSubdivisionForPixelsPerSecond(
+        settings,
+        pixelsPerSecond,
+        pixelsPerSecondDefault,
+        pixelsPerSecondMax
+      ),
+    };
+  }
+  return {
+    metronomeGridSubdivision: pickMetronomeGridSubdivisionForPixelsPerSecond(
+      settings,
+      pixelsPerSecond,
+      pixelsPerSecondDefault,
+      pixelsPerSecondMax
+    ),
+    timeGridSubdivision: settings.timeGridSubdivision,
+  };
 }
 
 export function getQuarterIntervalSec(bpm: number): number {

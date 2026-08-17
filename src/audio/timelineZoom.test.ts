@@ -9,6 +9,8 @@ import {
   formatTimelineZoomMultiplier,
   getTimelineZoomBounds,
   getTimelineZoomDisplayMultipliers,
+  getTimelineZoomMultiplierBounds,
+  pixelsPerSecondFromZoomMultiplier,
   TIMELINE_FULL_ZOOM_SPAN_PX,
   TIMELINE_MIN_PIXELS_PER_SECOND,
   TIMELINE_DEFAULT_PIXELS_PER_SECOND,
@@ -158,4 +160,25 @@ test('getTimelineZoomDisplayMultipliers uses default pps for x and trackZoom for
   const multipliers = getTimelineZoomDisplayMultipliers(96, 2.5, 48);
   assert.equal(multipliers.x, 2);
   assert.equal(multipliers.y, 2.5);
+});
+
+test('getTimelineZoomMultiplierBounds converts pps limits to multipliers', () => {
+  const bounds = getTimelineZoomBounds(400, 20, 3);
+  const multipliers = getTimelineZoomMultiplierBounds(bounds);
+  assert.equal(multipliers.xMin, bounds.pixelsPerSecondMin / bounds.pixelsPerSecondDefault);
+  assert.equal(multipliers.xMax, bounds.pixelsPerSecondMax / bounds.pixelsPerSecondDefault);
+  assert.equal(multipliers.yMin, 1);
+  assert.equal(multipliers.yMax, 3);
+});
+
+test('pixelsPerSecondFromZoomMultiplier converts and clamps', () => {
+  const bounds = getTimelineZoomBounds(400, 20, 2);
+  assert.equal(
+    pixelsPerSecondFromZoomMultiplier(2, bounds.pixelsPerSecondDefault, bounds),
+    clampTimelinePixelsPerSecond(bounds.pixelsPerSecondDefault * 2, bounds)
+  );
+  assert.equal(
+    pixelsPerSecondFromZoomMultiplier(0.01, bounds.pixelsPerSecondDefault, bounds),
+    bounds.pixelsPerSecondMin
+  );
 });
