@@ -71,7 +71,7 @@ function MetronomeTrackGridComponent({
           style={[
             styles.line,
             {
-              left: sidePadding + line.time * pixelsPerSecond,
+              left: Math.round(sidePadding + line.time * pixelsPerSecond),
               width: LINE_WIDTH[line.kind],
               height,
               backgroundColor: lineColor,
@@ -120,7 +120,7 @@ function MetronomeRulerTicksComponent({
         <View
           key={`ruler-${line.kind}-${line.time}`}
           pointerEvents="none"
-          style={[styles.rulerMarker, { left: sidePadding + line.time * pixelsPerSecond }]}>
+          style={[styles.rulerMarker, { left: Math.round(sidePadding + line.time * pixelsPerSecond) }]}>
           <View
             style={{
               width: line.kind === 'bar' ? 1.5 : 1,

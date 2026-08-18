@@ -12,6 +12,7 @@ import {
   getMetronomeGridStepSec,
   getQuarterIntervalSec,
   getTimeGridAlignedMarkerTimes,
+  getTimeGridMarkerTimesFromLines,
   isPrimaryAccentBeat,
   isSecondaryAccentBeat,
   METRONOME_GRID_MAX_LINES,
@@ -500,6 +501,59 @@ describe('getTimeGridAlignedMarkerTimes', () => {
   it('uses denser labels when zoomed in', () => {
     const { labelTimes } = getTimeGridAlignedMarkerTimes(timeSettings, 0, 10, 60, 48, 48);
     assert.deepEqual(labelTimes, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  });
+});
+
+describe('getTimeGridMarkerTimesFromLines', () => {
+  const timeSettings = makeSettings({
+    gridBasis: 'time',
+    timeGridSubdivision: '1s',
+    showGrid: true,
+  });
+
+  for (const pps of [48, 100.8, 8]) {
+    it(`labels align with bar grid lines at ${pps} px/s`, () => {
+      const lines = getMetronomeGridLinesInRange(timeSettings, 0, 12, pps);
+      const barTimes = new Set(
+        lines.filter((line) => line.kind === 'bar').map((line) => line.time)
+      );
+      const { labelTimes } = getTimeGridMarkerTimesFromLines(lines, pps, 48, 60);
+
+      for (const label of labelTimes) {
+        assert.ok(
+          barTimes.has(label),
+          `label ${label} at ${pps} px/s should match a bar grid line`
+        );
+      }
+    });
+  }
+
+  it('omits labels on seconds with no bar line at low zoom LOD', () => {
+    const settings = makeSettings({
+      gridBasis: 'time',
+      timeGridSubdivision: '1s',
+      showGrid: true,
+    });
+    const pps = 8;
+    const lines = getMetronomeGridLinesInRange(settings, 0, 20, pps);
+    const barTimes = new Set(
+      lines.filter((line) => line.kind === 'bar').map((line) => line.time)
+    );
+    const { labelTimes } = getTimeGridMarkerTimesFromLines(lines, pps, 48, 60);
+
+    assert.ok(!barTimes.has(1), 'sanity: 1s should not have a bar line when grid steps every 2s');
+    assert.ok(!labelTimes.includes(1));
+    for (const label of labelTimes) {
+      assert.ok(barTimes.has(label));
+    }
+  });
+
+  it('matches getTimeGridAlignedMarkerTimes for the same range', () => {
+    const aligned = getTimeGridAlignedMarkerTimes(timeSettings, 0, 10, 60, 48, 48);
+    const gridStep = getMetronomeGridStepSec(timeSettings, 48);
+    const lines = getMetronomeGridLinesInRange(timeSettings, 0, 10 + gridStep, 48);
+    const fromLines = getTimeGridMarkerTimesFromLines(lines, 48, 48, 60);
+    assert.deepEqual(fromLines, aligned);
   });
 });
 

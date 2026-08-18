@@ -21,7 +21,7 @@ import { colorWithAlpha, type VoiceMemosColorScheme } from '@/constants/VoiceMem
 import { fadeEnvelopeGain } from '@/src/audio/fadeCurve';
 import { clampTrimValues, dbToLinear } from '@/src/audio/layerEffects';
 import { snapTimeToGrid } from '@/src/audio/loopSnap';
-import { getMinPixelsPerSecondForGrid, getTimeGridAlignedMarkerTimes, pickGridSubdivisionForPixelsPerSecond, type MetronomeGridLine } from '@/src/audio/metronome';
+import { getMinPixelsPerSecondForGrid, getTimeGridMarkerTimesFromLines, pickGridSubdivisionForPixelsPerSecond, type MetronomeGridLine } from '@/src/audio/metronome';
 import {
   applyPinchDeltaToPixelsPerSecond,
   applyPinchDeltaToTrackZoom,
@@ -89,6 +89,9 @@ const BAR_STEP = BAR_WIDTH + BAR_GAP;
 const MARKER_ROW_HEIGHT = 24;
 const PLAYHEAD_CAP_SIZE = 6;
 const MIN_LABEL_SPACING = 48;
+/** Fixed label column width so timestamps center on the 1px tick (tabular M:SS). */
+const MARKER_LABEL_WIDTH = 28;
+const MARKER_TICK_WIDTH = 1;
 const TIMELINE_HEADROOM_SECONDS = 30;
 const LAYOUT_DURATION_STEP_SECONDS = 30;
 /** Min interval between React viewport/grid commits while auto-scrolling. */
@@ -1972,15 +1975,16 @@ function WaveformViewComponent({
   });
   const viewportTimeBufferRef = useRef<MetronomeGridBuffer | null>(null);
 
+  const [metronomeGridLines, setMetronomeGridLines] = useState<MetronomeGridLine[]>([]);
+  const metronomeGridBufferRef = useRef<MetronomeGridBuffer | null>(null);
+
   const timelineMarkers = useMemo(() => {
     if (metronome?.showGrid && metronome.gridBasis === 'time') {
-      const { tickTimes, labelTimes } = getTimeGridAlignedMarkerTimes(
-        metronome,
-        viewportTimeBuffer.start,
-        viewportTimeBuffer.end,
-        layoutDuration,
+      const { tickTimes, labelTimes } = getTimeGridMarkerTimesFromLines(
+        metronomeGridLines,
         layoutPixelsPerSecond,
-        MIN_LABEL_SPACING
+        MIN_LABEL_SPACING,
+        layoutDuration
       );
       return {
         tickTimes,
@@ -2003,12 +2007,11 @@ function WaveformViewComponent({
     layoutPixelsPerSecond,
     markerInterval,
     metronome,
+    metronomeGridLines,
     viewportTimeBuffer.end,
     viewportTimeBuffer.start,
   ]);
 
-  const [metronomeGridLines, setMetronomeGridLines] = useState<MetronomeGridLine[]>([]);
-  const metronomeGridBufferRef = useRef<MetronomeGridBuffer | null>(null);
   const metronomeRef = useRef(metronome);
   metronomeRef.current = metronome;
   const subdivisionSyncFromZoomRef = useRef(false);
@@ -3231,13 +3234,15 @@ function WaveformViewComponent({
             pointerEvents="none"
             style={[styles.markerBand, { width: bandWidth }]}>
             {timelineMarkers.tickTimes.map((time) => {
-              const x = sidePadding + time * layoutPixelsPerSecond;
+              const x = Math.round(sidePadding + time * layoutPixelsPerSecond);
               const showLabel = timelineMarkers.labelTimes.has(time);
               return (
-                <View key={time} style={[styles.marker, { left: x - 0.5 }]}>
+                <View key={time} style={[styles.marker, { left: x }]}>
                   <View style={styles.markerTick} />
                   {showLabel ? (
-                    <Text style={styles.markerLabel}>{formatMarkerTime(time)}</Text>
+                    <View style={styles.markerLabelWrap}>
+                      <Text style={styles.markerLabel}>{formatMarkerTime(time)}</Text>
+                    </View>
                   ) : null}
                 </View>
               );
@@ -3663,17 +3668,24 @@ function createWaveformStyles(colors: VoiceMemosColorScheme) {
   marker: {
     position: 'absolute',
     top: 0,
-    alignItems: 'center',
   },
   markerTick: {
-    width: 1,
+    width: MARKER_TICK_WIDTH,
     height: 6,
     backgroundColor: colors.secondaryText,
     opacity: 0.35,
   },
+  markerLabelWrap: {
+    position: 'absolute',
+    top: 8,
+    left: MARKER_TICK_WIDTH / 2,
+    width: MARKER_LABEL_WIDTH,
+    marginLeft: -MARKER_LABEL_WIDTH / 2,
+    alignItems: 'center',
+  },
   markerLabel: {
-    marginTop: 2,
     fontSize: 10,
+    textAlign: 'center',
     color: colors.secondaryText,
     fontVariant: ['tabular-nums'],
   },

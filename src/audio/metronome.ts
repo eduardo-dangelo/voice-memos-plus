@@ -420,16 +420,78 @@ function getWholeSecondGridMultiple(gridStep: number): number {
   return factor * gridStep;
 }
 
-function isWholeSecond(time: number): boolean {
-  return Math.abs(time - Math.round(time)) < TIME_EPSILON;
-}
-
 function isAlignedToStep(time: number, step: number): boolean {
   if (step <= 0) {
     return false;
   }
   const quotient = time / step;
   return Math.abs(quotient - Math.round(quotient)) < TIME_EPSILON;
+}
+
+function inferBarGridStepSec(barTimes: number[]): number {
+  if (barTimes.length < 2) {
+    return 1;
+  }
+  let minDiff = Number.POSITIVE_INFINITY;
+  for (let i = 1; i < barTimes.length; i++) {
+    const diff = barTimes[i]! - barTimes[i - 1]!;
+    if (diff > TIME_EPSILON && diff < minDiff) {
+      minDiff = diff;
+    }
+  }
+  return Number.isFinite(minDiff) ? minDiff : 1;
+}
+
+function thinTimeGridLabelTimes(
+  tickTimes: number[],
+  pixelsPerSecond: number,
+  minLabelSpacingPx: number,
+  layoutDuration: number,
+  baseLabelStep: number
+): number[] {
+  let labelStep = baseLabelStep;
+  for (const multiplier of [1, 5, 10, 30]) {
+    const candidate = baseLabelStep * multiplier;
+    if (candidate * pixelsPerSecond >= minLabelSpacingPx) {
+      labelStep = candidate;
+      break;
+    }
+  }
+  while (labelStep * pixelsPerSecond < minLabelSpacingPx && labelStep <= layoutDuration) {
+    labelStep += baseLabelStep;
+  }
+  return tickTimes.filter((time) => isAlignedToStep(time, labelStep));
+}
+
+/** Marker ticks/labels derived from rendered time-grid bar lines (single source of truth). */
+export function getTimeGridMarkerTimesFromLines(
+  lines: MetronomeGridLine[],
+  pixelsPerSecond: number,
+  minLabelSpacingPx: number,
+  layoutDuration: number
+): { tickTimes: number[]; labelTimes: number[] } {
+  if (lines.length === 0 || pixelsPerSecond <= 0 || layoutDuration <= 0) {
+    return { tickTimes: [], labelTimes: [] };
+  }
+
+  const tickTimes = [...new Set(
+    lines.filter((line) => line.kind === 'bar').map((line) => line.time)
+  )].sort((a, b) => a - b);
+
+  if (tickTimes.length === 0) {
+    return { tickTimes: [], labelTimes: [] };
+  }
+
+  const baseLabelStep = getWholeSecondGridMultiple(inferBarGridStepSec(tickTimes));
+  const labelTimes = thinTimeGridLabelTimes(
+    tickTimes,
+    pixelsPerSecond,
+    minLabelSpacingPx,
+    layoutDuration,
+    baseLabelStep
+  );
+
+  return { tickTimes, labelTimes };
 }
 
 /**
@@ -450,34 +512,18 @@ export function getTimeGridAlignedMarkerTimes(
 
   const gridStep = getMetronomeGridStepSec(settings, pixelsPerSecond);
   const inclusiveEnd = Math.min(layoutDuration, Math.ceil(bufferEndSec));
-  const allTimes = collectBeatTimesInRange(
+  const lines = getMetronomeGridLinesInRange(
+    settings,
     bufferStartSec,
     inclusiveEnd + gridStep,
-    gridStep
+    pixelsPerSecond
   );
-  const tickTimes = allTimes.filter(
-    (time) => isWholeSecond(time) && time <= inclusiveEnd + TIME_EPSILON
+  return getTimeGridMarkerTimesFromLines(
+    lines,
+    pixelsPerSecond,
+    minLabelSpacingPx,
+    layoutDuration
   );
-
-  if (tickTimes.length === 0) {
-    return { tickTimes: [], labelTimes: [] };
-  }
-
-  const baseLabelStep = getWholeSecondGridMultiple(gridStep);
-  let labelStep = baseLabelStep;
-  for (const multiplier of [1, 5, 10, 30]) {
-    const candidate = baseLabelStep * multiplier;
-    if (candidate * pixelsPerSecond >= minLabelSpacingPx) {
-      labelStep = candidate;
-      break;
-    }
-  }
-  while (labelStep * pixelsPerSecond < minLabelSpacingPx && labelStep <= layoutDuration) {
-    labelStep += baseLabelStep;
-  }
-
-  const labelTimes = tickTimes.filter((time) => isAlignedToStep(time, labelStep));
-  return { tickTimes, labelTimes };
 }
 
 function classifyGridLine(beatTime: number, settings: MetronomeSettings): MetronomeGridLine {
