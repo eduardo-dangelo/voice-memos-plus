@@ -52,15 +52,6 @@ export type FadeOverlayConfig = {
   /** When false, fade curves stay visible but length/curve handles are hidden. Defaults to true. */
   editable?: boolean;
   snapIntervalSec?: number | null;
-  peerFades?: Array<{ layerId: string } & FadeRegionState>;
-  crossfade?: {
-    outgoingLayerId: string;
-    incomingLayerId: string;
-    overlapStart: number;
-    overlapEnd: number;
-    linked: boolean;
-  } | null;
-  onCrossfadeChange?: (durationSec: number, curve: number) => void;
 };
 
 type TrackLike = {
@@ -86,8 +77,6 @@ type Props = {
   editable: boolean;
   snapIntervalSec?: number | null;
   onChange?: (next: FadeRegionState) => void;
-  crossfade?: FadeOverlayConfig['crossfade'];
-  onCrossfadeChange?: (durationSec: number, curve: number) => void;
   trimScrollHelpers: FadeScrollHelpers;
 };
 
@@ -122,8 +111,6 @@ export function TrackFadeOverlay({
   editable,
   snapIntervalSec,
   onChange,
-  crossfade,
-  onCrossfadeChange,
   trimScrollHelpers,
 }: Props) {
   const colors = useVoiceMemosColors();
@@ -152,23 +139,19 @@ export function TrackFadeOverlay({
   const scrollXAtGrant = useRef(0);
   const dragActiveRef = useRef(false);
   const onChangeRef = useRef(onChange);
-  const onCrossfadeChangeRef = useRef(onCrossfadeChange);
   const helpersRef = useRef(trimScrollHelpers);
   const trackRef = useRef(track);
   const ppsRef = useRef(pixelsPerSecond);
   const layoutDurationRef = useRef(layoutDuration);
   const snapRef = useRef(snapIntervalSec);
   const fadesRef = useRef(fades);
-  const crossfadeRef = useRef(crossfade);
   onChangeRef.current = onChange;
-  onCrossfadeChangeRef.current = onCrossfadeChange;
   helpersRef.current = trimScrollHelpers;
   trackRef.current = track;
   ppsRef.current = pixelsPerSecond;
   layoutDurationRef.current = layoutDuration;
   snapRef.current = snapIntervalSec;
   fadesRef.current = fades;
-  crossfadeRef.current = crossfade;
 
   const [expanded, setExpanded] = useState(false);
   const expandedRef = useRef(expanded);
@@ -346,30 +329,6 @@ export function TrackFadeOverlay({
     emitFades({ ...startFades.current, fadeOutCurve: nextCurve });
   };
 
-  const crossfadeMove = useRef(
-    (_event: GestureResponderEvent, _gesture: PanResponderGestureState) => {}
-  );
-  crossfadeMove.current = (_event, gesture) => {
-    const zone = crossfadeRef.current;
-    if (!editable || !zone || !onCrossfadeChangeRef.current || !ensureDragActive(gesture)) {
-      return;
-    }
-    if (expandedRef.current) {
-      scheduleIdleCollapse();
-    }
-    const pps = ppsRef.current;
-    const dx = getEffectiveDx(gesture);
-    const overlapDuration = Math.max(0, zone.overlapEnd - zone.overlapStart);
-    const startDuration = Math.min(
-      overlapDuration,
-      Math.max(fadesRef.current.fadeOutSec, fadesRef.current.fadeInSec)
-    );
-    const raw = snapDuration(startDuration + dx / pps);
-    const duration = Math.max(0, Math.min(overlapDuration, raw));
-    const curve = clampFadeCurve(fadesRef.current.fadeInCurve);
-    onCrossfadeChangeRef.current(duration, curve);
-  };
-
   const panCapture = {
     onStartShouldSetPanResponder: () => editable,
     onStartShouldSetPanResponderCapture: () => editable,
@@ -393,7 +352,6 @@ export function TrackFadeOverlay({
   const fadeOutLengthResponder = useRef(makeResponder(fadeOutLengthMove)).current;
   const fadeInCurveResponder = useRef(makeResponder(fadeInCurveMove)).current;
   const fadeOutCurveResponder = useRef(makeResponder(fadeOutCurveMove)).current;
-  const crossfadeResponder = useRef(makeResponder(crossfadeMove)).current;
 
   const fadeInHandleStyle = useAnimatedStyle(() => ({
     width: handleTouchSV.value,
@@ -408,19 +366,6 @@ export function TrackFadeOverlay({
     top: bodyTop - FADE_LENGTH_HIT_EXTRA,
     height: resolvedBodyHeight + FADE_LENGTH_HIT_EXTRA,
   }));
-
-  const isCrossfadeLane =
-    crossfade != null &&
-    (crossfade.outgoingLayerId === track.id || crossfade.incomingLayerId === track.id);
-  const crossfadeLeft = crossfade
-    ? sidePadding + crossfade.overlapStart * pixelsPerSecond
-    : 0;
-  const crossfadeWidth = crossfade
-    ? Math.max(0, (crossfade.overlapEnd - crossfade.overlapStart) * pixelsPerSecond)
-    : 0;
-  const showCrossfadeZone = editable && isCrossfadeLane && crossfadeWidth > 4;
-  const showCrossfadeHandle =
-    editable && showCrossfadeZone && onCrossfadeChange != null;
 
   const fadeInCurvePos = curveHandlePosition(
     trackLeft,
@@ -472,23 +417,6 @@ export function TrackFadeOverlay({
             <Path d={fadeOutPath} fill={fillColor} stroke={strokeColor} strokeWidth={1.5} />
           </Svg>
         </View>
-      ) : null}
-
-      {showCrossfadeZone ? (
-        <View
-          pointerEvents="none"
-          style={[
-            styles.crossfadeZone,
-            {
-              left: crossfadeLeft,
-              top: bodyTop,
-              width: crossfadeWidth,
-              height: resolvedBodyHeight,
-              borderColor: colorWithAlpha(accent, crossfade?.linked ? 0.9 : 0.45),
-              backgroundColor: colorWithAlpha(accent, 0.08),
-            },
-          ]}
-        />
       ) : null}
 
       {editable ? (
@@ -543,19 +471,6 @@ export function TrackFadeOverlay({
               ]}
             />
           ) : null}
-          {showCrossfadeHandle ? (
-            <View
-              {...crossfadeResponder.panHandlers}
-              style={[
-                styles.crossfadeHandle,
-                {
-                  left: crossfadeLeft + crossfadeWidth - FADE_HANDLE_TOUCH / 2,
-                  top: bodyTop,
-                  height: resolvedBodyHeight,
-                },
-              ]}
-            />
-          ) : null}
         </>
       ) : null}
     </>
@@ -596,16 +511,5 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#FFFFFF',
     zIndex: 7,
-  },
-  crossfadeZone: {
-    position: 'absolute',
-    borderWidth: 1.5,
-    borderStyle: 'dashed',
-    borderRadius: 3,
-  },
-  crossfadeHandle: {
-    position: 'absolute',
-    width: FADE_HANDLE_TOUCH,
-    zIndex: 8,
   },
 });

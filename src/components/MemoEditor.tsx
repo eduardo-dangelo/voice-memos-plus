@@ -21,11 +21,6 @@ import { DEFAULT_TRACK_COLOR, pickRandomTrackColor } from '@/constants/VoiceMemo
 import { shareMemo } from '@/src/actions/shareMemo';
 import { useAudioEngine, useAudioEngineSelector } from '@/src/audio/AudioEngineContext';
 import { subscribeCueOutputRoute } from '@/src/audio/audioInputRouting';
-import {
-  applyLinkedCrossfade,
-  areFadesLinkedForCrossfade,
-  findCrossfadePeer,
-} from '@/src/audio/crossfade';
 import { clampFadeValues } from '@/src/audio/fadeCurve';
 import {
   isHeadphonesConnected,
@@ -349,6 +344,7 @@ function deactivateLoopForMemo(
 
 type EditDraftSnapshot = {
   tool: 'trim' | 'move';
+  layerId: string | null;
   layers: Layer[];
   duration: number;
   trimEnd: number;
@@ -566,6 +562,8 @@ export function MemoEditor({
   const confirmEditDraftRef = useRef<(keepTool?: boolean) => Promise<void>>(
     async () => {}
   );
+  const pendingConfirmKeepToolRef = useRef<boolean | null>(null);
+  const confirmInFlightRef = useRef<Promise<void> | null>(null);
   const precountCancelledRef = useRef(false);
   const precountDismissResolveRef = useRef<(() => void) | null>(null);
   stackModeRef.current = stackMode;
@@ -798,6 +796,7 @@ export function MemoEditor({
     draftGenerationRef.current += 1;
     editDraftRef.current = {
       tool,
+      layerId: activeLayerIdRef.current,
       layers: cloneLayers(current.layers),
       duration: current.duration,
       trimEnd: current.trimEnd,
@@ -841,81 +840,107 @@ export function MemoEditor({
 
   const confirmEditDraft = useCallback(
     async (keepTool = false): Promise<void> => {
-      if (savingTrimRef.current) {
-        return;
-      }
-      const snapshot = editDraftRef.current;
-      const current = memoRef.current;
-      if (!snapshot || !current) {
-        draftGenerationRef.current += 1;
-        editDraftRef.current = null;
-        editGestureActiveRef.current = false;
-        if (!keepTool) {
-          setActiveEditor(null);
-        }
+      if (confirmInFlightRef.current) {
+        pendingConfirmKeepToolRef.current = keepTool;
+        await confirmInFlightRef.current;
         return;
       }
 
-      if (!isEditDraftDirty(snapshot, current)) {
-        if (!keepTool) {
+      const persistDraft = async (nextKeepTool: boolean): Promise<void> => {
+        const snapshot = editDraftRef.current;
+        const current = memoRef.current;
+        if (!snapshot || !current) {
           draftGenerationRef.current += 1;
           editDraftRef.current = null;
           editGestureActiveRef.current = false;
-          setActiveEditor(null);
-        }
-        return;
-      }
-
-      const persistLayerId = activeLayerIdRef.current;
-      draftGenerationRef.current += 1;
-      clearDraftPersistTimers();
-      editGestureActiveRef.current = false;
-      savingTrimRef.current = true;
-      setSavingTrim(true);
-
-      try {
-        if (snapshot.tool === 'trim' && persistLayerId) {
-          const layer = current.layers.find((entry) => entry.id === persistLayerId);
-          if (layer) {
-            const effects = getLayerEffects(layer);
-            await updateLayerEffects(
-              current.id,
-              persistLayerId,
-              layerEffectsPersistPayload(effects)
-            );
-            await updateLayerLoopUntil(current.id, persistLayerId, layer.loopUntil ?? null);
+          if (!nextKeepTool) {
+            setActiveEditor(null);
           }
+          return;
         }
 
-        const startTimes = Object.fromEntries(
-          current.layers.map((layer) => [layer.id, layer.startTime])
-        );
-        const updated = await updateLayerStartTimes(current.id, startTimes);
-        memoRef.current = updated;
-        setMemo(updated);
-        if (keepTool) {
-          beginEditDraft(snapshot.tool);
-        } else {
-          editDraftRef.current = null;
-          setActiveEditor(null);
+        if (!isEditDraftDirty(snapshot, current)) {
+          if (!nextKeepTool) {
+            draftGenerationRef.current += 1;
+            editDraftRef.current = null;
+            editGestureActiveRef.current = false;
+            setActiveEditor(null);
+          }
+          return;
         }
-      } catch (error) {
-        Alert.alert(
-          snapshot.tool === 'trim' ? 'Could not apply trim' : 'Could not apply move',
-          error instanceof Error ? error.message : 'Unknown error'
-        );
-        editDraftRef.current = {
-          ...snapshot,
-          generation: draftGenerationRef.current,
-        };
-        if (keepTool) {
-          setActiveEditor(snapshot.tool);
-        } else {
-          await cancelEditDraft();
+
+        const persistLayerId = snapshot.layerId;
+        draftGenerationRef.current += 1;
+        clearDraftPersistTimers();
+        editGestureActiveRef.current = false;
+        savingTrimRef.current = true;
+        setSavingTrim(true);
+
+        try {
+          const persistMemo = memoRef.current ?? current;
+          if (snapshot.tool === 'trim' && persistLayerId) {
+            const layer = persistMemo.layers.find((entry) => entry.id === persistLayerId);
+            if (layer) {
+              const effects = getLayerEffects(layer);
+              await updateLayerEffects(
+                persistMemo.id,
+                persistLayerId,
+                layerEffectsPersistPayload(effects)
+              );
+              await updateLayerLoopUntil(
+                persistMemo.id,
+                persistLayerId,
+                layer.loopUntil ?? null
+              );
+            }
+          }
+
+          const startTimes = Object.fromEntries(
+            persistMemo.layers.map((layer) => [layer.id, layer.startTime])
+          );
+          const updated = await updateLayerStartTimes(persistMemo.id, startTimes);
+          memoRef.current = updated;
+          setMemo(updated);
+          if (nextKeepTool) {
+            beginEditDraft(snapshot.tool);
+          } else {
+            editDraftRef.current = null;
+            setActiveEditor(null);
+          }
+        } catch (error) {
+          Alert.alert(
+            snapshot.tool === 'trim' ? 'Could not apply trim' : 'Could not apply move',
+            error instanceof Error ? error.message : 'Unknown error'
+          );
+          editDraftRef.current = {
+            ...snapshot,
+            generation: draftGenerationRef.current,
+          };
+          if (nextKeepTool) {
+            setActiveEditor(snapshot.tool);
+          } else {
+            await cancelEditDraft();
+          }
+        } finally {
+          savingTrimRef.current = false;
+          setSavingTrim(false);
         }
+      };
+
+      const chain = (async () => {
+        await persistDraft(keepTool);
+        while (pendingConfirmKeepToolRef.current !== null) {
+          const queuedKeepTool = pendingConfirmKeepToolRef.current;
+          pendingConfirmKeepToolRef.current = null;
+          await persistDraft(queuedKeepTool);
+        }
+      })();
+
+      confirmInFlightRef.current = chain;
+      try {
+        await chain;
       } finally {
-        savingTrimRef.current = false;
-        setSavingTrim(false);
+        confirmInFlightRef.current = null;
       }
     },
     [beginEditDraft, cancelEditDraft, clearDraftPersistTimers]
@@ -1054,115 +1079,8 @@ export function MemoEditor({
         return;
       }
 
-      const peer = findCrossfadePeer(activeLayer, memoRef.current.layers);
-      const activeEffects = getLayerEffects(activeLayer);
-      const updates: Record<string, FadeRegionState> = {
-        [activeLayerId]: next,
-      };
-
-      if (peer) {
-        const outgoing =
-          peer.outgoingLayerId === activeLayerId
-            ? activeLayer
-            : memoRef.current.layers.find((entry) => entry.id === peer.outgoingLayerId);
-        const incoming =
-          peer.incomingLayerId === activeLayerId
-            ? activeLayer
-            : memoRef.current.layers.find((entry) => entry.id === peer.incomingLayerId);
-        if (outgoing && incoming) {
-          const outgoingEffects =
-            peer.outgoingLayerId === activeLayerId
-              ? { ...activeEffects, ...next }
-              : getLayerEffects(outgoing);
-          const incomingEffects =
-            peer.incomingLayerId === activeLayerId
-              ? { ...activeEffects, ...next }
-              : getLayerEffects(incoming);
-          const wasLinked = areFadesLinkedForCrossfade(
-            getLayerEffects(outgoing),
-            getLayerEffects(incoming),
-            peer.overlapDuration
-          );
-          const editingOutgoingFadeOut =
-            peer.outgoingLayerId === activeLayerId &&
-            (next.fadeOutSec !== activeEffects.fadeOutSec ||
-              next.fadeOutCurve !== activeEffects.fadeOutCurve);
-          const editingIncomingFadeIn =
-            peer.incomingLayerId === activeLayerId &&
-            (next.fadeInSec !== activeEffects.fadeInSec ||
-              next.fadeInCurve !== activeEffects.fadeInCurve);
-
-          if (wasLinked && (editingOutgoingFadeOut || editingIncomingFadeIn)) {
-            const duration = editingOutgoingFadeOut ? next.fadeOutSec : next.fadeInSec;
-            const curve = editingIncomingFadeIn ? next.fadeInCurve : -next.fadeOutCurve;
-            const linked = applyLinkedCrossfade(
-              outgoingEffects,
-              incomingEffects,
-              getLayerActiveDuration(outgoing),
-              getLayerActiveDuration(incoming),
-              Math.min(duration, peer.overlapDuration),
-              curve
-            );
-            updates[outgoing.id] = {
-              fadeInSec: linked.outgoing.fadeInSec,
-              fadeOutSec: linked.outgoing.fadeOutSec,
-              fadeInCurve: linked.outgoing.fadeInCurve,
-              fadeOutCurve: linked.outgoing.fadeOutCurve,
-            };
-            updates[incoming.id] = {
-              fadeInSec: linked.incoming.fadeInSec,
-              fadeOutSec: linked.incoming.fadeOutSec,
-              fadeInCurve: linked.incoming.fadeInCurve,
-              fadeOutCurve: linked.incoming.fadeOutCurve,
-            };
-          }
-        }
-      }
-
-      applyFadeUpdates(updates);
-    },
-    [activeLayerId, applyFadeUpdates]
-  );
-
-  const handleCrossfadeChange = useCallback(
-    (durationSec: number, curve: number) => {
-      if (!activeLayerId || !memoRef.current) {
-        return;
-      }
-      const activeLayer = memoRef.current.layers.find((entry) => entry.id === activeLayerId);
-      if (!activeLayer) {
-        return;
-      }
-      const peer = findCrossfadePeer(activeLayer, memoRef.current.layers);
-      if (!peer) {
-        return;
-      }
-      const outgoing = memoRef.current.layers.find((entry) => entry.id === peer.outgoingLayerId);
-      const incoming = memoRef.current.layers.find((entry) => entry.id === peer.incomingLayerId);
-      if (!outgoing || !incoming) {
-        return;
-      }
-      const linked = applyLinkedCrossfade(
-        getLayerEffects(outgoing),
-        getLayerEffects(incoming),
-        getLayerActiveDuration(outgoing),
-        getLayerActiveDuration(incoming),
-        Math.min(durationSec, peer.overlapDuration),
-        curve
-      );
       applyFadeUpdates({
-        [outgoing.id]: {
-          fadeInSec: linked.outgoing.fadeInSec,
-          fadeOutSec: linked.outgoing.fadeOutSec,
-          fadeInCurve: linked.outgoing.fadeInCurve,
-          fadeOutCurve: linked.outgoing.fadeOutCurve,
-        },
-        [incoming.id]: {
-          fadeInSec: linked.incoming.fadeInSec,
-          fadeOutSec: linked.incoming.fadeOutSec,
-          fadeInCurve: linked.incoming.fadeInCurve,
-          fadeOutCurve: linked.incoming.fadeOutCurve,
-        },
+        [activeLayerId]: next,
       });
     },
     [activeLayerId, applyFadeUpdates]
@@ -1627,7 +1545,7 @@ export function MemoEditor({
   );
 
   const handleTrackDeselect = useCallback(() => {
-    if (!activeLayerId || savingTrim) {
+    if (!activeLayerIdRef.current) {
       return;
     }
 
@@ -1638,13 +1556,7 @@ export function MemoEditor({
       setActiveLayerId(null);
       setActiveEditor(null);
     })();
-  }, [
-    activeLayerId,
-    confirmEditDraft,
-    flushEffectsPersist,
-    flushStartTimePersist,
-    savingTrim,
-  ]);
+  }, [confirmEditDraft, flushEffectsPersist, flushStartTimePersist]);
 
   const handleDeleteTrack = useCallback(
     async (layerId: string) => {
@@ -2099,7 +2011,10 @@ export function MemoEditor({
             break;
           }
           if (getPlayableLayers(memo).length > 1) {
-            Alert.alert('Delete Track', 'Delete this track? This cannot be undone.', [
+            Alert.alert(
+              'Delete Track',
+              `Delete "${layer.label}"? This cannot be undone.`,
+              [
               { text: 'Cancel', style: 'cancel' },
               {
                 text: 'Delete',
@@ -3807,44 +3722,6 @@ export function MemoEditor({
     }
 
     const locked = isLayerLocked(activeLayerEffects);
-    const peer = findCrossfadePeer(activeLayer, memo.layers);
-    const peerFades =
-      peer != null
-        ? [peer.outgoingLayerId, peer.incomingLayerId]
-            .filter((id) => id !== activeLayer.id)
-            .map((layerId) => {
-              const layer = memo.layers.find((entry) => entry.id === layerId);
-              if (!layer) {
-                return null;
-              }
-              const effects = getLayerEffects(layer);
-              return {
-                layerId,
-                fadeInSec: effects.fadeInSec,
-                fadeOutSec: effects.fadeOutSec,
-                fadeInCurve: effects.fadeInCurve,
-                fadeOutCurve: effects.fadeOutCurve,
-              };
-            })
-            .filter((entry): entry is NonNullable<typeof entry> => entry != null)
-        : [];
-
-    const outgoing =
-      peer != null
-        ? memo.layers.find((entry) => entry.id === peer.outgoingLayerId)
-        : undefined;
-    const incoming =
-      peer != null
-        ? memo.layers.find((entry) => entry.id === peer.incomingLayerId)
-        : undefined;
-    const linked =
-      peer != null && outgoing != null && incoming != null
-        ? areFadesLinkedForCrossfade(
-            getLayerEffects(outgoing),
-            getLayerEffects(incoming),
-            peer.overlapDuration
-          )
-        : false;
 
     return {
       layerId: activeLayer.id,
@@ -3857,23 +3734,11 @@ export function MemoEditor({
       editable: !locked,
       onChange: handleFadeChange,
       snapIntervalSec: timelineSnapIntervalSec,
-      peerFades,
-      crossfade: peer
-        ? {
-            outgoingLayerId: peer.outgoingLayerId,
-            incomingLayerId: peer.incomingLayerId,
-            overlapStart: peer.overlapStart,
-            overlapEnd: peer.overlapEnd,
-            linked,
-          }
-        : null,
-      onCrossfadeChange: peer && !locked ? handleCrossfadeChange : undefined,
     };
   }, [
     activeEditor,
     activeLayer,
     activeLayerEffects,
-    handleCrossfadeChange,
     handleFadeChange,
     memo,
     pendingRecordingLayout,
@@ -4144,6 +4009,11 @@ export function MemoEditor({
       />
       <IconActionSheet
         actions={trackMenuActions}
+        title={
+          trackMenuLayerId
+            ? memo?.layers.find((layer) => layer.id === trackMenuLayerId)?.label
+            : undefined
+        }
         formatPicker={
           trackMenuFormatPicker ? { title: 'Choose format…' } : null
         }

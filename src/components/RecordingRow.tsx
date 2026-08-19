@@ -214,6 +214,20 @@ function RecordingRowComponent({
     setRenameVisible(true);
   };
 
+  const titlePressActiveRef = useRef(false);
+  const allowTitleRename = !selectionMode && !selectOnPress;
+
+  const handleTitleLongPress = () => {
+    handleRename();
+  };
+
+  const handleRowLongPress = () => {
+    if (titlePressActiveRef.current) {
+      return;
+    }
+    onOpenEditor();
+  };
+
   const confirmDelete = () => {
     Alert.alert(
       isTrash ? 'Delete Recording' : 'Delete Recording',
@@ -261,7 +275,7 @@ function RecordingRowComponent({
       <View style={styles.row}>
         <Pressable
           onPress={handlePrimaryPress}
-          onLongPress={selectOnPress ? undefined : onOpenEditor}
+          onLongPress={selectOnPress ? undefined : handleRowLongPress}
           style={styles.rowMain}>
           {selectionMode ? (
             <SymbolView
@@ -271,9 +285,20 @@ function RecordingRowComponent({
             />
           ) : null}
           <View style={styles.meta}>
-            <Text numberOfLines={1} style={styles.title}>
-              {memo.title}
-            </Text>
+            <Pressable
+              disabled={!allowTitleRename}
+              onLongPress={allowTitleRename ? handleTitleLongPress : undefined}
+              onPress={handlePrimaryPress}
+              onPressIn={() => {
+                titlePressActiveRef.current = true;
+              }}
+              onPressOut={() => {
+                titlePressActiveRef.current = false;
+              }}>
+              <Text numberOfLines={1} style={styles.title}>
+                {memo.title}
+              </Text>
+            </Pressable>
             <Text style={styles.subtitle}>
               {formatDate(memo.updatedAt)} · {formatDuration(duration)}
             </Text>

@@ -218,22 +218,10 @@ function resolveFadeForTrack(
   fadeOverlay: FadeOverlayConfig | undefined,
   trackId: string
 ): FadeRegionState | null {
-  if (!fadeOverlay) {
+  if (!fadeOverlay || fadeOverlay.layerId !== trackId) {
     return null;
   }
-  if (fadeOverlay.layerId === trackId) {
-    return fadeOverlay.fades;
-  }
-  const peer = fadeOverlay.peerFades?.find((entry) => entry.layerId === trackId);
-  if (!peer) {
-    return null;
-  }
-  return {
-    fadeInSec: peer.fadeInSec,
-    fadeOutSec: peer.fadeOutSec,
-    fadeInCurve: peer.fadeInCurve,
-    fadeOutCurve: peer.fadeOutCurve,
-  };
+  return fadeOverlay.fades;
 }
 
 function getLayoutDuration(
@@ -1092,11 +1080,6 @@ function areTrackWaveformRowPropsEqual(
     prev.fadeOverlay?.layerId !== next.fadeOverlay?.layerId ||
     prev.fadeOverlay?.editable !== next.fadeOverlay?.editable ||
     prev.fadeOverlay?.snapIntervalSec !== next.fadeOverlay?.snapIntervalSec ||
-    prev.fadeOverlay?.crossfade?.outgoingLayerId !== next.fadeOverlay?.crossfade?.outgoingLayerId ||
-    prev.fadeOverlay?.crossfade?.incomingLayerId !== next.fadeOverlay?.crossfade?.incomingLayerId ||
-    prev.fadeOverlay?.crossfade?.overlapStart !== next.fadeOverlay?.crossfade?.overlapStart ||
-    prev.fadeOverlay?.crossfade?.overlapEnd !== next.fadeOverlay?.crossfade?.overlapEnd ||
-    prev.fadeOverlay?.crossfade?.linked !== next.fadeOverlay?.crossfade?.linked ||
     prevFade?.fadeInSec !== nextFade?.fadeInSec ||
     prevFade?.fadeOutSec !== nextFade?.fadeOutSec ||
     prevFade?.fadeInCurve !== nextFade?.fadeInCurve ||
@@ -1217,7 +1200,7 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
   const showTrimOverlay = trimOverlay?.layerId === track.id;
   const showMoveOverlay = moveOverlay?.layerId === track.id;
   const trackFadeState = resolveFadeForTrack(fadeOverlay, track.id);
-  const showFadeOverlay = trackFadeState != null && fadeOverlay != null;
+  const showFadeOverlay = fadeOverlay?.layerId === track.id && trackFadeState != null;
   const showRegionChrome =
     track.isActive && !showTrimOverlay && trackWidth > 0;
   const headerHeight = showRegionChrome ? REGION_HEADER_HEIGHT : 0;
@@ -1695,7 +1678,6 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
         <TrackFadeOverlay
           bodyHeight={bodyHeight}
           bodyTop={bodyTop}
-          crossfade={fadeOverlay.crossfade}
           editable={fadeOverlay.layerId === track.id && fadeOverlay.editable !== false}
           fades={trackFadeState}
           layoutDuration={layoutDuration}
@@ -1708,11 +1690,6 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
           onChange={
             fadeOverlay.layerId === track.id && fadeOverlay.editable !== false
               ? fadeOverlay.onChange
-              : undefined
-          }
-          onCrossfadeChange={
-            fadeOverlay.layerId === track.id && fadeOverlay.editable !== false
-              ? fadeOverlay.onCrossfadeChange
               : undefined
           }
         />
@@ -2354,11 +2331,7 @@ function WaveformViewComponent({
     const isSelectable = track && !track.isMuted && !track.isSoloedOut;
     if (isSelectable) {
       if (isOutsideTimelinePress(locationX, sidePadding, contentWidth)) {
-        const isBeforeZero = locationX < sidePadding;
-        // Keep the active track selected while trimming when tapping the t < 0 gutter.
-        if (!(trimOverlay && isBeforeZero)) {
-          onTrackDeselectRef.current?.();
-        }
+        onTrackDeselectRef.current?.();
       } else {
         onTrackPressRef.current(trackId);
       }
@@ -3514,12 +3487,7 @@ function areWaveformViewPropsEqual(prev: Props, next: Props): boolean {
       prevFade.layerId !== nextFade.layerId ||
       prevFade.editable !== nextFade.editable ||
       prevFade.snapIntervalSec !== nextFade.snapIntervalSec ||
-      prevFade.onChange !== nextFade.onChange ||
-      prevFade.crossfade?.outgoingLayerId !== nextFade.crossfade?.outgoingLayerId ||
-      prevFade.crossfade?.incomingLayerId !== nextFade.crossfade?.incomingLayerId ||
-      prevFade.crossfade?.overlapStart !== nextFade.crossfade?.overlapStart ||
-      prevFade.crossfade?.overlapEnd !== nextFade.crossfade?.overlapEnd ||
-      prevFade.crossfade?.linked !== nextFade.crossfade?.linked
+      prevFade.onChange !== nextFade.onChange
     ) {
       return false;
     }

@@ -106,7 +106,6 @@ export function MetronomeButton({
       ]}>
       {useGlass ? (
         <GlassView
-          colorScheme={colorScheme === 'dark' ? 'dark' : 'light'}
           glassEffectStyle="regular"
           isInteractive={!disabled}
           style={styles.glass}>

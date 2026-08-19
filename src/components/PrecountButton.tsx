@@ -67,7 +67,6 @@ export function PrecountButton({ mode, onCycle, disabled = false }: Props) {
       ]}>
       {useGlass ? (
         <GlassView
-          colorScheme={colorScheme === 'dark' ? 'dark' : 'light'}
           glassEffectStyle="regular"
           isInteractive={!disabled}
           style={styles.glass}>

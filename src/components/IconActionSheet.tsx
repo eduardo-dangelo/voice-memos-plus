@@ -47,6 +47,8 @@ const FORMAT_ACTIONS: IconActionSheetItem[] = [
 type Props = {
   visible: boolean;
   actions: IconActionSheetItem[];
+  /** Title shown above the main actions list (not rename / format / multi-select). */
+  title?: string;
   /** When set, the same Modal shows a select-all rename form instead of actions. */
   rename?: IconActionSheetRename | null;
   /** When set, the same Modal shows format choices instead of actions. */
@@ -66,6 +68,7 @@ const useGlass = isGlassEffectAPIAvailable();
 export function IconActionSheet({
   visible,
   actions,
+  title,
   rename = null,
   formatPicker = null,
   multiSelect = null,
@@ -230,6 +233,8 @@ export function IconActionSheet({
       <>
         {formatPickerActive && formatPicker ? (
           <Text style={styles.formatTitle}>{formatPicker.title}</Text>
+        ) : title ? (
+          <Text style={styles.formatTitle}>{title}</Text>
         ) : null}
         {listActions.map((action) => (
           <Pressable
