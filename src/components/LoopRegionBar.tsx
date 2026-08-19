@@ -26,6 +26,7 @@ const LOOP_HANDLE_INSIDE_EXPANDED = 20;
 export const LOOP_ENABLED_FILL = '#FFCC00';
 const TAP_MOVE_THRESHOLD = 6;
 const LONG_PRESS_DELAY_MS = 400;
+const DOUBLE_TAP_MS = 280;
 const EXPAND_IDLE_MS = 3000;
 
 type GestureMode = 'none' | 'create' | 'left' | 'right' | 'region';
@@ -155,6 +156,7 @@ export function LoopRegionBar({
   expandedRef.current = expanded;
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const regionTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressFiredRef = useRef(false);
   const holdExpandedRef = useRef(holdExpanded);
   holdExpandedRef.current = holdExpanded;
@@ -187,6 +189,13 @@ export function LoopRegionBar({
     if (longPressTimerRef.current) {
       clearTimeout(longPressTimerRef.current);
       longPressTimerRef.current = null;
+    }
+  };
+
+  const clearRegionTapTimer = () => {
+    if (regionTapTimerRef.current) {
+      clearTimeout(regionTapTimerRef.current);
+      regionTapTimerRef.current = null;
     }
   };
 
@@ -249,7 +258,13 @@ export function LoopRegionBar({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- scheduleIdleCollapse uses refs
   }, [expanded, onExpandedChange]);
 
-  useEffect(() => () => clearLongPressTimer(), []);
+  useEffect(
+    () => () => {
+      clearLongPressTimer();
+      clearRegionTapTimer();
+    },
+    []
+  );
 
   const [preview, setPreview] = useState<{ start: number; end: number } | null>(null);
   const previewRef = useRef<{ start: number; end: number } | null>(null);
@@ -438,7 +453,7 @@ export function LoopRegionBar({
     toggleExpandedFromEmptyTap();
   };
 
-  const handleRegionTap = () => {
+  const applyRegionToggle = () => {
     if (!hasRegionRef.current) {
       return;
     }
@@ -450,6 +465,34 @@ export function LoopRegionBar({
       return;
     }
     noteInteraction();
+  };
+
+  const handleRegionDoubleTap = () => {
+    if (editBlockedRef.current || !hasRegionRef.current) {
+      return;
+    }
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    onChangeRef.current(0, 0, false);
+    collapseBar();
+  };
+
+  const handleRegionTap = () => {
+    if (!hasRegionRef.current) {
+      return;
+    }
+    if (editBlockedRef.current) {
+      applyRegionToggle();
+      return;
+    }
+    if (regionTapTimerRef.current) {
+      clearRegionTapTimer();
+      handleRegionDoubleTap();
+      return;
+    }
+    regionTapTimerRef.current = setTimeout(() => {
+      regionTapTimerRef.current = null;
+      applyRegionToggle();
+    }, DOUBLE_TAP_MS);
   };
 
   const grantRef = useRef((_x: number) => {});

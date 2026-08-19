@@ -6,7 +6,6 @@ const LOOP_COLUMN_BORDER_WIDTH = 2;
 const LOOP_COLUMN_FILL_ALPHA = 0.08;
 
 type Props = {
-  height: number;
   loopStart: number;
   loopEnd: number;
   loopEnabled: boolean;
@@ -15,7 +14,6 @@ type Props = {
 };
 
 export function LoopColumnOverlay({
-  height,
   loopStart,
   loopEnd,
   loopEnabled,
@@ -39,9 +37,9 @@ export function LoopColumnOverlay({
       style={{
         position: 'absolute',
         top: 0,
+        bottom: 0,
         left: layout.left,
         width: layout.width,
-        height,
         borderLeftWidth: LOOP_COLUMN_BORDER_WIDTH,
         borderRightWidth: LOOP_COLUMN_BORDER_WIDTH,
         borderBottomWidth: LOOP_COLUMN_BORDER_WIDTH,

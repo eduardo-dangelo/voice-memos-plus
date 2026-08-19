@@ -1,12 +1,13 @@
+import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
 import { useMemo } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { useColorScheme } from '@/components/useColorScheme';
 import { snapTimeToGrid } from '@/src/audio/loopSnap';
 import { MIN_LOOP_DURATION } from '@/src/storage/types';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
-import { formatDurationWithTenths } from '@/src/utils/format';
 
-import { EditorSlider } from './track-editor/primitives/EditorSlider';
+import { NumericDragInput } from './track-editor/primitives/NumericDragInput';
 import { PresetPills } from './track-editor/primitives/PresetPills';
 
 export type LoopSettingsValues = {
@@ -30,6 +31,8 @@ const TOGGLE_OPTIONS: { id: 'on' | 'off'; label: string }[] = [
   { id: 'on', label: 'On' },
   { id: 'off', label: 'Off' },
 ];
+
+const useGlass = isGlassEffectAPIAvailable();
 
 function clampLoopEdges(
   start: number,
@@ -67,9 +70,9 @@ export function LoopSettingsSheet({
   onClose,
 }: Props) {
   const colors = useVoiceMemosColors();
-  const styles = useStyles(colors);
+  const colorScheme = useColorScheme();
+  const styles = useStyles(colors, colorScheme);
   const maxTime = Math.max(values.duration, MIN_LOOP_DURATION);
-  const stepCount = Math.max(1, Math.round(maxTime * 100));
 
   const applyStart = (raw: number) => {
     const { loopStart, loopEnd } = clampLoopEdges(
@@ -91,73 +94,115 @@ export function LoopSettingsSheet({
     onChange({ loopStart, loopEnd });
   };
 
+  const body = (
+    <>
+      <Text style={styles.title}>Loop</Text>
+
+      <View style={styles.pillRow}>
+        <Text style={styles.pillRowLabel}>Start</Text>
+        <View style={styles.controls}>
+          <NumericDragInput
+            accessibilityLabel="Loop start time"
+            decimals={1}
+            max={maxTime}
+            min={0}
+            value={values.loopStart}
+            onChange={applyStart}
+            onCommit={applyStart}
+          />
+          <Text style={styles.suffix}>s</Text>
+        </View>
+      </View>
+
+      <View style={styles.pillRow}>
+        <Text style={styles.pillRowLabel}>End</Text>
+        <View style={styles.controls}>
+          <NumericDragInput
+            accessibilityLabel="Loop end time"
+            decimals={1}
+            max={maxTime}
+            min={0}
+            value={values.loopEnd}
+            onChange={applyEnd}
+            onCommit={applyEnd}
+          />
+          <Text style={styles.suffix}>s</Text>
+        </View>
+      </View>
+
+      <View style={styles.pillRow}>
+        <Text style={styles.pillRowLabel}>Active</Text>
+        <View style={styles.pillRowPills}>
+          <PresetPills
+            align="end"
+            options={TOGGLE_OPTIONS}
+            selectedId={values.loopEnabled ? 'on' : 'off'}
+            onSelect={(value) => onChange({ loopEnabled: value === 'on' })}
+          />
+        </View>
+      </View>
+
+      <View style={styles.pillRow}>
+        <Text style={styles.pillRowLabel}>Snap to grid</Text>
+        <View style={styles.pillRowPills}>
+          <PresetPills
+            align="end"
+            options={TOGGLE_OPTIONS}
+            selectedId={values.loopSnapToGrid ? 'on' : 'off'}
+            onSelect={(value) => onChange({ loopSnapToGrid: value === 'on' })}
+          />
+        </View>
+      </View>
+      <Text style={styles.sectionCaption}>Only available when the grid is visible</Text>
+
+      <Pressable
+        accessibilityLabel="Reset loop"
+        accessibilityRole="button"
+        hitSlop={8}
+        style={styles.resetButton}
+        onPress={() => {
+          onChange({ loopStart: 0, loopEnd: 0, loopEnabled: false });
+          onClose();
+        }}>
+        <Text style={styles.resetButtonText}>Reset loop</Text>
+      </Pressable>
+    </>
+  );
+
   return (
-    <Modal animationType="fade" transparent visible={visible} onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose}>
-        <Pressable style={styles.card} onPress={() => {}}>
-          <Text style={styles.title}>Loop</Text>
-
-          <View style={styles.section}>
-            <View style={styles.sliderRow}>
-              <Text style={styles.sliderLabel}>Start</Text>
-              <View style={styles.sliderTrack}>
-                <EditorSlider
-                  maximumValue={maxTime}
-                  minimumValue={0}
-                  stepCount={stepCount}
-                  value={values.loopStart}
-                  onSlidingComplete={applyStart}
-                  onValueChange={applyStart}
-                />
-              </View>
-              <Text style={styles.sliderValue}>{formatDurationWithTenths(values.loopStart)}</Text>
-            </View>
-          </View>
-
-          <View style={styles.section}>
-            <View style={styles.sliderRow}>
-              <Text style={styles.sliderLabel}>End</Text>
-              <View style={styles.sliderTrack}>
-                <EditorSlider
-                  maximumValue={maxTime}
-                  minimumValue={0}
-                  stepCount={stepCount}
-                  value={values.loopEnd}
-                  onSlidingComplete={applyEnd}
-                  onValueChange={applyEnd}
-                />
-              </View>
-              <Text style={styles.sliderValue}>{formatDurationWithTenths(values.loopEnd)}</Text>
-            </View>
-          </View>
-
-          <View style={styles.section}>
-            <Text style={styles.sectionLabel}>Active</Text>
-            <PresetPills
-              options={TOGGLE_OPTIONS}
-              selectedId={values.loopEnabled ? 'on' : 'off'}
-              onSelect={(value) => onChange({ loopEnabled: value === 'on' })}
-            />
-          </View>
-
-          <View style={styles.section}>
-            <Text style={styles.sectionLabel}>Snap to grid</Text>
-            <PresetPills
-              options={TOGGLE_OPTIONS}
-              selectedId={values.loopSnapToGrid ? 'on' : 'off'}
-              onSelect={(value) => onChange({ loopSnapToGrid: value === 'on' })}
-            />
-            <Text style={styles.sectionCaption}>
-              Only available when the grid is visible
-            </Text>
-          </View>
+    <Modal
+      animationType={useGlass ? 'none' : 'fade'}
+      transparent
+      visible={visible}
+      onRequestClose={onClose}>
+      <Pressable
+        style={[styles.backdrop, useGlass && styles.backdropGlass]}
+        onPress={onClose}>
+        <Pressable style={styles.cardPressable} onPress={() => {}}>
+          {useGlass ? (
+            <GlassView
+              colorScheme={colorScheme === 'dark' ? 'dark' : 'light'}
+              glassEffectStyle="regular"
+              isInteractive
+              style={styles.cardGlass}>
+              {body}
+            </GlassView>
+          ) : (
+            <View style={styles.cardFallback}>{body}</View>
+          )}
         </Pressable>
       </Pressable>
     </Modal>
   );
 }
 
-function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
+function useStyles(
+  colors: ReturnType<typeof useVoiceMemosColors>,
+  colorScheme: 'light' | 'dark' | null | undefined
+) {
+  const cardSurface =
+    colorScheme === 'dark' ? colors.sheetBackground : colors.background;
+
   return useMemo(
     () =>
       StyleSheet.create({
@@ -168,14 +213,31 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           alignItems: 'center',
           padding: 24,
         },
-        card: {
+        backdropGlass: {
+          backgroundColor:
+            colorScheme === 'dark' ? 'rgba(0, 0, 0, 0.35)' : 'rgba(0, 0, 0, 0.22)',
+        },
+        cardPressable: {
           width: '100%',
           maxWidth: 340,
-          backgroundColor: colors.background,
-          borderRadius: 14,
+        },
+        cardGlass: {
+          borderRadius: 20,
           paddingHorizontal: 20,
           paddingVertical: 18,
           gap: 14,
+        },
+        cardFallback: {
+          backgroundColor: cardSurface,
+          borderRadius: 20,
+          paddingHorizontal: 20,
+          paddingVertical: 18,
+          gap: 14,
+          shadowColor: '#000000',
+          shadowOffset: { width: 0, height: 8 },
+          shadowOpacity: colorScheme === 'dark' ? 0.45 : 0.18,
+          shadowRadius: 24,
+          elevation: 8,
         },
         title: {
           fontSize: 17,
@@ -183,13 +245,32 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           color: colors.text,
           textAlign: 'center',
         },
-        section: {
+        pillRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
           gap: 8,
         },
-        sectionLabel: {
+        pillRowLabel: {
+          width: 92,
           fontSize: 13,
           color: colors.secondaryText,
-          textAlign: 'center',
+        },
+        pillRowPills: {
+          flex: 1,
+          minWidth: 0,
+        },
+        controls: {
+          flex: 1,
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'flex-end',
+          gap: 6,
+        },
+        suffix: {
+          width: 16,
+          fontSize: 15,
+          fontWeight: '600',
+          color: colors.secondaryText,
         },
         sectionCaption: {
           fontSize: 12,
@@ -198,27 +279,20 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           textAlign: 'center',
           opacity: 0.85,
         },
-        sliderRow: {
-          flexDirection: 'row',
+        resetButton: {
+          alignSelf: 'stretch',
           alignItems: 'center',
-          gap: 8,
+          justifyContent: 'center',
+          paddingVertical: 12,
+          borderRadius: 10,
+          backgroundColor: colors.waveformInactive,
         },
-        sliderLabel: {
-          width: 40,
-          fontSize: 13,
-          color: colors.secondaryText,
-        },
-        sliderTrack: {
-          flex: 1,
-        },
-        sliderValue: {
-          width: 64,
-          fontSize: 12,
-          color: colors.secondaryText,
-          textAlign: 'right',
-          fontVariant: ['tabular-nums'],
+        resetButtonText: {
+          fontSize: 15,
+          fontWeight: '600',
+          color: colors.accent,
         },
       }),
-    [colors]
+    [cardSurface, colorScheme, colors]
   );
 }

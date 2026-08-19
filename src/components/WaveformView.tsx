@@ -2945,6 +2945,7 @@ function WaveformViewComponent({
 
   const animatedTracksViewportStyle = useAnimatedStyle(() => ({
     height: Math.max(1, waveformAreaHeightSV.value - loopExpandExtraSV.value),
+    overflow: 'hidden',
   }));
 
   const overlayLoopStart = loopPreview?.start ?? loopOverlay?.loopStart ?? 0;
@@ -3323,28 +3324,17 @@ function WaveformViewComponent({
                   pixelsPerSecond={layoutPixelsPerSecond}
                   sidePadding={sidePadding}
                 />
-                {loopOverlay ? (
-                  <LoopColumnOverlay
-                    height={
-                      tracksContentHeight > waveformAreaHeight
-                        ? tracksContentHeight
-                        : Math.max(
-                            1,
-                            waveformAreaHeight -
-                              (loopRowExpanded
-                                ? LOOP_ROW_HEIGHT_EXPANDED - LOOP_ROW_HEIGHT
-                                : 0)
-                          )
-                    }
-                    loopEnabled={overlayLoopEnabled}
-                    loopEnd={overlayLoopEnd}
-                    loopStart={overlayLoopStart}
-                    pixelsPerSecond={layoutPixelsPerSecond}
-                    sidePadding={sidePadding}
-                  />
-                ) : null}
               </View>
             </GHScrollView>
+            {loopOverlay ? (
+              <LoopColumnOverlay
+                loopEnabled={overlayLoopEnabled}
+                loopEnd={overlayLoopEnd}
+                loopStart={overlayLoopStart}
+                pixelsPerSecond={layoutPixelsPerSecond}
+                sidePadding={sidePadding}
+              />
+            ) : null}
           </Animated.View>
           <View
             pointerEvents="none"
