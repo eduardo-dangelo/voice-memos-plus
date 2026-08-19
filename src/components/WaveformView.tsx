@@ -813,14 +813,12 @@ function TrackMoveOverlay({
   const scrollXAtGrant = useRef(0);
   const onChangeRef = useRef(onChange);
   const trimScrollHelpersRef = useRef(trimScrollHelpers);
-  const sidePaddingRef = useRef(sidePadding);
   const trimInRef = useRef(trimIn);
   const pixelsPerSecondRef = useRef(pixelsPerSecond);
   const layoutDurationRef = useRef(layoutDuration);
   const snapIntervalRef = useRef(snapIntervalSec);
   onChangeRef.current = onChange;
   trimScrollHelpersRef.current = trimScrollHelpers;
-  sidePaddingRef.current = sidePadding;
   trimInRef.current = trimIn;
   pixelsPerSecondRef.current = pixelsPerSecond;
   layoutDurationRef.current = layoutDuration;
@@ -843,19 +841,9 @@ function TrackMoveOverlay({
     return gesture.dx + (helpers.getScrollX() - scrollXAtGrant.current);
   };
 
-  const applyEdgeAutoScroll = (contentX: number) => {
-    trimScrollHelpersRef.current.autoScrollForContentX(contentX);
-  };
-
   const moveRef = useRef((_event: GestureResponderEvent, gesture: PanResponderGestureState) => {});
   moveRef.current = (_event, gesture) => {
     const pps = pixelsPerSecondRef.current;
-    const preliminaryDx = getEffectiveDx(gesture);
-    // Use grant-time left + dx (not live segmentLeft) so edge auto-scroll
-    // does not double-count startTime updates from onChange.
-    applyEdgeAutoScroll(
-      sidePaddingRef.current + startLayerStartTime.current * pps + preliminaryDx
-    );
     const effectiveDx = getEffectiveDx(gesture);
     const trimInValue = trimInRef.current;
     let nextStartTime = startLayerStartTime.current + effectiveDx / pps;
