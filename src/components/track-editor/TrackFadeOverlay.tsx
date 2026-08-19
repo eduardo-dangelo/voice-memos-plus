@@ -29,10 +29,12 @@ type FadeScrollHelpers = {
   onTrimGestureActive: (active: boolean) => void;
 };
 
-const FADE_HANDLE_TOUCH = 44;
-const FADE_HANDLE_TOUCH_EXPANDED = 56;
+const FADE_HANDLE_TOUCH = 72;
+const FADE_HANDLE_TOUCH_EXPANDED = 88;
 const FADE_CURVE_HANDLE = 28;
 const FADE_LENGTH_KNOB = 8;
+/** Extra hit pixels above the 8px length knob; visual square stays put. */
+const FADE_LENGTH_HIT_EXTRA = 20;
 const FADE_TAP_MOVE_THRESHOLD = 6;
 const FADE_EXPAND_IDLE_MS = 3000;
 
@@ -396,15 +398,15 @@ export function TrackFadeOverlay({
   const fadeInHandleStyle = useAnimatedStyle(() => ({
     width: handleTouchSV.value,
     left: trackLeft + fadeInWidth - handleTouchSV.value / 2,
-    top: bodyTop,
-    height: resolvedBodyHeight,
+    top: bodyTop - FADE_LENGTH_HIT_EXTRA,
+    height: resolvedBodyHeight + FADE_LENGTH_HIT_EXTRA,
   }));
 
   const fadeOutHandleStyle = useAnimatedStyle(() => ({
     width: handleTouchSV.value,
     left: trackLeft + trackWidth - fadeOutWidth - handleTouchSV.value / 2,
-    top: bodyTop,
-    height: resolvedBodyHeight,
+    top: bodyTop - FADE_LENGTH_HIT_EXTRA,
+    height: resolvedBodyHeight + FADE_LENGTH_HIT_EXTRA,
   }));
 
   const isCrossfadeLane =
@@ -569,6 +571,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     zIndex: 6,
     alignItems: 'center',
+    paddingTop: FADE_LENGTH_HIT_EXTRA,
   },
   lengthKnob: {
     width: FADE_LENGTH_KNOB,

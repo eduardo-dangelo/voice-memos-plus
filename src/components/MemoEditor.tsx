@@ -3799,6 +3799,7 @@ export function MemoEditor({
       !activeLayerEffects ||
       !memo ||
       savingTrim ||
+      pendingRecordingLayout ||
       activeEditor === 'trim' ||
       activeEditor === 'move'
     ) {
@@ -3875,6 +3876,7 @@ export function MemoEditor({
     handleCrossfadeChange,
     handleFadeChange,
     memo,
+    pendingRecordingLayout,
     savingTrim,
     timelineSnapIntervalSec,
   ]);
