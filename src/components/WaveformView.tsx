@@ -325,7 +325,7 @@ type Props = {
   onEditGestureActive?: (active: boolean) => void;
   /** Zoom readout visibility + multipliers for the memo header chip. */
   onZoomControlsChange?: (state: TimelineZoomControlsState) => void;
-  /** Persist grid subdivision picked from horizontal zoom (when show grid is on). */
+  /** Persist grid subdivision picked from horizontal zoom on every zoom commit. */
   onMetronomeGridSubdivisionSync?: (partial: Partial<MetronomeSettings>) => void;
   /** Fires while grid lines are rebuilding after grid-affecting metronome changes. */
   onMetronomeGridProcessingChange?: (processing: boolean) => void;
@@ -1840,6 +1840,8 @@ function WaveformViewComponent({
   const [zoomGestureActive, setZoomGestureActive] = useState(false);
   const [showZoomControls, setShowZoomControls] = useState(false);
   const [zoomDialogVisible, setZoomDialogVisible] = useState(false);
+  const zoomDialogVisibleRef = useRef(false);
+  zoomDialogVisibleRef.current = zoomDialogVisible;
   /** Skip enter on first paint so opening a memo does not fade every row. */
   const [trackTransitionsReady, setTrackTransitionsReady] = useState(false);
   useEffect(() => {
@@ -2029,6 +2031,14 @@ function WaveformViewComponent({
   onMetronomeGridSubdivisionSyncRef.current = onMetronomeGridSubdivisionSync;
   const onMetronomeGridProcessingChangeRef = useRef(onMetronomeGridProcessingChange);
   onMetronomeGridProcessingChangeRef.current = onMetronomeGridProcessingChange;
+  const [metronomeGridProcessing, setMetronomeGridProcessing] = useState(false);
+  const notifyMetronomeGridProcessingRef = useRef((_value: boolean) => {});
+  notifyMetronomeGridProcessingRef.current = (value: boolean) => {
+    setMetronomeGridProcessing(value);
+    onMetronomeGridProcessingChangeRef.current?.(
+      value && !zoomDialogVisibleRef.current
+    );
+  };
   const prevGridProcessingKeyRef = useRef<string | null>(null);
   const layoutPixelsPerSecondRef = useRef(layoutPixelsPerSecond);
   layoutPixelsPerSecondRef.current = layoutPixelsPerSecond;
@@ -2166,12 +2176,12 @@ function WaveformViewComponent({
 
   useEffect(() => {
     return () => {
-      onMetronomeGridProcessingChangeRef.current?.(false);
+      notifyMetronomeGridProcessingRef.current(false);
     };
   }, []);
 
   useLayoutEffect(() => {
-    const notify = onMetronomeGridProcessingChangeRef.current;
+    const notify = (value: boolean) => notifyMetronomeGridProcessingRef.current(value);
     const gridKey = metronome
       ? [
           metronome.showGrid,
@@ -2333,8 +2343,12 @@ function WaveformViewComponent({
     if (followRecordingScroll || isPlaying) {
       return;
     }
-    setPixelsPerSecond((current) => clampTimelinePixelsPerSecond(current, zoomBounds));
+    const nextPps = clampTimelinePixelsPerSecond(pixelsPerSecondRef.current, zoomBounds);
+    setPixelsPerSecond(nextPps);
     setTrackZoom((current) => clampTimelineTrackZoom(current, zoomBounds));
+    if (nextPps !== pixelsPerSecondRef.current) {
+      syncSubdivisionFromZoomRef.current(nextPps);
+    }
   }, [zoomBounds, followRecordingScroll, isPlaying]);
 
   const handleLayout = (event: LayoutChangeEvent) => {
@@ -2442,7 +2456,7 @@ function WaveformViewComponent({
       return;
     }
     const settings = metronomeRef.current;
-    if (!settings?.showGrid) {
+    if (!settings) {
       return;
     }
     const onSync = onMetronomeGridSubdivisionSyncRef.current;
@@ -2641,8 +2655,13 @@ function WaveformViewComponent({
 
   const handleZoomDialogReset = useCallback(() => {
     resetZoom();
-    setZoomDialogVisible(false);
   }, [resetZoom]);
+
+  useEffect(() => {
+    onMetronomeGridProcessingChangeRef.current?.(
+      metronomeGridProcessing && !zoomDialogVisible
+    );
+  }, [metronomeGridProcessing, zoomDialogVisible]);
 
   const onZoomControlsChangeRef = useRef(onZoomControlsChange);
   onZoomControlsChangeRef.current = onZoomControlsChange;
@@ -3368,6 +3387,7 @@ function WaveformViewComponent({
         y={zoomMultipliers.y}
         yMax={zoomMultiplierBounds.yMax}
         yMin={zoomMultiplierBounds.yMin}
+        processing={metronomeGridProcessing}
         onChangeX={handleZoomDialogChangeX}
         onChangeY={handleZoomDialogChangeY}
         onClose={() => setZoomDialogVisible(false)}

@@ -1,6 +1,6 @@
 import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
-import { useMemo } from 'react';
-import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useColorScheme } from '@/components/useColorScheme';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
@@ -21,6 +21,7 @@ export type TimelineZoomDialogProps = {
   onChangeY: (y: number) => void;
   onReset: () => void;
   onClose: () => void;
+  processing?: boolean;
 };
 
 export function TimelineZoomDialog({
@@ -35,11 +36,49 @@ export function TimelineZoomDialog({
   onChangeY,
   onReset,
   onClose,
+  processing = false,
 }: TimelineZoomDialogProps) {
   const colors = useVoiceMemosColors();
   const colorScheme = useColorScheme();
   const styles = useStyles(colors, colorScheme);
   const showVertical = yMax > 1;
+  const [pendingReset, setPendingReset] = useState(false);
+  const resetStartedRef = useRef(false);
+
+  useEffect(() => {
+    if (visible) {
+      return;
+    }
+    resetStartedRef.current = false;
+    setPendingReset(false);
+  }, [visible]);
+
+  useEffect(() => {
+    if (!processing) {
+      setPendingReset(false);
+    }
+  }, [processing]);
+
+  useEffect(() => {
+    if (!pendingReset || processing) {
+      return;
+    }
+    const timeout = setTimeout(() => setPendingReset(false), 400);
+    return () => clearTimeout(timeout);
+  }, [pendingReset, processing]);
+
+  const showSpinner = pendingReset || processing;
+
+  useEffect(() => {
+    if (!visible || !resetStartedRef.current) {
+      return;
+    }
+    if (showSpinner) {
+      return;
+    }
+    resetStartedRef.current = false;
+    onClose();
+  }, [visible, showSpinner, onClose]);
 
   const body = (
     <>
@@ -81,10 +120,24 @@ export function TimelineZoomDialog({
       <Pressable
         accessibilityLabel="Reset zoom"
         accessibilityRole="button"
+        accessibilityState={{ disabled: showSpinner }}
+        disabled={showSpinner}
         hitSlop={8}
-        style={styles.resetButton}
-        onPress={onReset}>
-        <Text style={styles.resetButtonText}>Reset zoom</Text>
+        style={[styles.resetButton, showSpinner && styles.resetButtonDisabled]}
+        onPress={() => {
+          resetStartedRef.current = true;
+          setPendingReset(true);
+          onReset();
+        }}>
+        <View style={styles.resetButtonContent}>
+          <View style={styles.resetSpinnerSlot} />
+          <Text style={styles.resetButtonText}>Reset zoom</Text>
+          <View style={styles.resetSpinnerSlot}>
+            {showSpinner ? (
+              <ActivityIndicator color={colors.accent} size="small" />
+            ) : null}
+          </View>
+        </View>
       </Pressable>
     </>
   );
@@ -194,6 +247,21 @@ function useStyles(
           paddingVertical: 12,
           borderRadius: 10,
           backgroundColor: colors.waveformInactive,
+        },
+        resetButtonDisabled: {
+          opacity: 0.7,
+        },
+        resetButtonContent: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 8,
+        },
+        resetSpinnerSlot: {
+          width: 20,
+          height: 20,
+          alignItems: 'center',
+          justifyContent: 'center',
         },
         resetButtonText: {
           fontSize: 15,
