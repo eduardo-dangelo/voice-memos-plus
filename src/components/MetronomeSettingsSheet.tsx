@@ -1,7 +1,7 @@
 import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
 import { SymbolView } from 'expo-symbols';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { startTransition, useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useColorScheme } from '@/components/useColorScheme';
 import { useAudioEngine, useAudioEngineSelector } from '@/src/audio/AudioEngineContext';
@@ -24,6 +24,7 @@ import { PresetPills } from './track-editor/primitives/PresetPills';
 type Props = {
   visible: boolean;
   settings: MetronomeSettings;
+  processing?: boolean;
   onChange: (partial: Partial<MetronomeSettings>) => void;
   onClose: () => void;
 };
@@ -52,9 +53,28 @@ const METRONOME_SUBDIVISION_OPTIONS: { id: MetronomeGridSubdivision; label: stri
 const TIME_SUBDIVISION_OPTIONS: { id: TimeGridSubdivision; label: string }[] =
   TIME_GRID_SUBDIVISIONS.map((id) => ({ id, label: id }));
 
+const GRID_PROCESSING_FIELDS: (keyof MetronomeSettings)[] = [
+  'showGrid',
+  'gridBasis',
+  'metronomeGridSubdivision',
+  'timeGridSubdivision',
+  'bpm',
+  'timeSignature',
+];
+
+function isGridProcessingChange(partial: Partial<MetronomeSettings>): boolean {
+  return GRID_PROCESSING_FIELDS.some((field) => partial[field] !== undefined);
+}
+
 const useGlass = isGlassEffectAPIAvailable();
 
-export function MetronomeSettingsSheet({ visible, settings, onChange, onClose }: Props) {
+export function MetronomeSettingsSheet({
+  visible,
+  settings,
+  processing = false,
+  onChange,
+  onClose,
+}: Props) {
   const colors = useVoiceMemosColors();
   const colorScheme = useColorScheme();
   const styles = useStyles(colors, colorScheme);
@@ -62,8 +82,35 @@ export function MetronomeSettingsSheet({ visible, settings, onChange, onClose }:
   const isRecording = useAudioEngineSelector((state) => state.isRecording);
   const isPlaying = useAudioEngineSelector((state) => state.isPlaying);
   const [previewActive, setPreviewActive] = useState(false);
+  const [optimistic, setOptimistic] = useState(settings);
+  const [pendingProcessing, setPendingProcessing] = useState(false);
   const previewActiveRef = useRef(false);
   previewActiveRef.current = previewActive;
+
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+
+  useEffect(() => {
+    if (visible) {
+      setOptimistic(settingsRef.current);
+    } else {
+      setPendingProcessing(false);
+    }
+  }, [visible]);
+
+  useEffect(() => {
+    if (!processing) {
+      setPendingProcessing(false);
+    }
+  }, [processing]);
+
+  useEffect(() => {
+    if (!pendingProcessing || processing) {
+      return;
+    }
+    const timeout = setTimeout(() => setPendingProcessing(false), 2000);
+    return () => clearTimeout(timeout);
+  }, [pendingProcessing, processing]);
 
   useEffect(() => {
     if (!visible) {
@@ -83,16 +130,31 @@ export function MetronomeSettingsSheet({ visible, settings, onChange, onClose }:
     if (!previewActiveRef.current) {
       return;
     }
-    void engine.startMetronomePreview(settings);
+    void engine.startMetronomePreview(optimistic);
   }, [
     engine,
-    settings.accentEnabled,
-    settings.bpm,
-    settings.timeSignature,
-    settings.volume,
+    optimistic.accentEnabled,
+    optimistic.bpm,
+    optimistic.timeSignature,
+    optimistic.volume,
   ]);
 
   const previewDisabled = isRecording || isPlaying;
+  const showSpinner = pendingProcessing || processing;
+  const controlsDisabled = showSpinner;
+
+  const handleChange = (partial: Partial<MetronomeSettings>) => {
+    if (controlsDisabled && isGridProcessingChange(partial)) {
+      return;
+    }
+    setOptimistic((current) => ({ ...current, ...partial }));
+    if (isGridProcessingChange(partial)) {
+      setPendingProcessing(true);
+    }
+    startTransition(() => {
+      onChange(partial);
+    });
+  };
 
   const togglePreview = () => {
     if (previewDisabled) {
@@ -103,7 +165,7 @@ export function MetronomeSettingsSheet({ visible, settings, onChange, onClose }:
       setPreviewActive(false);
       return;
     }
-    void engine.startMetronomePreview(settings).then(() => {
+    void engine.startMetronomePreview(optimistic).then(() => {
       setPreviewActive(true);
     });
   };
@@ -117,19 +179,23 @@ export function MetronomeSettingsSheet({ visible, settings, onChange, onClose }:
         <View style={styles.tempoControls}>
           <NumericDragInput
             accessibilityLabel="Tempo, beats per minute"
+            disabled={controlsDisabled}
             max={240}
             min={40}
-            value={settings.bpm}
-            onChange={(bpm) => onChange({ bpm })}
+            value={optimistic.bpm}
+            onChange={(bpm) => handleChange({ bpm })}
           />
           <Text style={styles.bpmSuffix}>BPM</Text>
           <Pressable
             accessibilityLabel={previewActive ? 'Stop metronome preview' : 'Play metronome preview'}
             accessibilityRole="button"
-            accessibilityState={{ disabled: previewDisabled }}
-            disabled={previewDisabled}
+            accessibilityState={{ disabled: previewDisabled || controlsDisabled }}
+            disabled={previewDisabled || controlsDisabled}
             hitSlop={8}
-            style={[styles.previewButton, previewDisabled && styles.previewButtonDisabled]}
+            style={[
+              styles.previewButton,
+              (previewDisabled || controlsDisabled) && styles.previewButtonDisabled,
+            ]}
             onPress={togglePreview}>
             <SymbolView
               name={{ ios: previewActive ? 'stop.fill' : 'play.fill' }}
@@ -146,9 +212,10 @@ export function MetronomeSettingsSheet({ visible, settings, onChange, onClose }:
           <PresetPills
             align="end"
             compact
+            disabled={controlsDisabled}
             options={TIME_SIGNATURE_OPTIONS}
-            selectedId={settings.timeSignature}
-            onSelect={(timeSignature) => onChange({ timeSignature })}
+            selectedId={optimistic.timeSignature}
+            onSelect={(timeSignature) => handleChange({ timeSignature })}
           />
         </View>
       </View>
@@ -159,9 +226,10 @@ export function MetronomeSettingsSheet({ visible, settings, onChange, onClose }:
           <PresetPills
             align="end"
             compact
+            disabled={controlsDisabled}
             options={ACCENT_OPTIONS}
-            selectedId={settings.accentEnabled ? 'on' : 'off'}
-            onSelect={(value) => onChange({ accentEnabled: value === 'on' })}
+            selectedId={optimistic.accentEnabled ? 'on' : 'off'}
+            onSelect={(value) => handleChange({ accentEnabled: value === 'on' })}
           />
         </View>
       </View>
@@ -173,12 +241,12 @@ export function MetronomeSettingsSheet({ visible, settings, onChange, onClose }:
             <EditorSlider
               maximumValue={100}
               minimumValue={0}
-              value={settings.volume}
-              onSlidingComplete={(volume) => onChange({ volume })}
-              onValueChange={(volume) => onChange({ volume })}
+              value={optimistic.volume}
+              onSlidingComplete={(volume) => handleChange({ volume })}
+              onValueChange={(volume) => handleChange({ volume })}
             />
           </View>
-          <Text style={styles.sliderValue}>{Math.round(settings.volume)}%</Text>
+          <Text style={styles.sliderValue}>{Math.round(optimistic.volume)}%</Text>
         </View>
       </View>
 
@@ -190,9 +258,10 @@ export function MetronomeSettingsSheet({ visible, settings, onChange, onClose }:
           <PresetPills
             align="end"
             compact
+            disabled={controlsDisabled}
             options={ACCENT_OPTIONS}
-            selectedId={settings.showGrid ? 'on' : 'off'}
-            onSelect={(value) => onChange({ showGrid: value === 'on' })}
+            selectedId={optimistic.showGrid ? 'on' : 'off'}
+            onSelect={(value) => handleChange({ showGrid: value === 'on' })}
           />
         </View>
       </View>
@@ -203,9 +272,10 @@ export function MetronomeSettingsSheet({ visible, settings, onChange, onClose }:
           <PresetPills
             align="end"
             compact
+            disabled={controlsDisabled}
             options={GRID_BASIS_OPTIONS}
-            selectedId={settings.gridBasis}
-            onSelect={(gridBasis) => onChange({ gridBasis })}
+            selectedId={optimistic.gridBasis}
+            onSelect={(gridBasis) => handleChange({ gridBasis })}
           />
         </View>
       </View>
@@ -213,21 +283,23 @@ export function MetronomeSettingsSheet({ visible, settings, onChange, onClose }:
       <View style={[styles.pillRow, styles.pillRowLast]}>
         <Text style={styles.pillRowLabel}>Subdivision</Text>
         <View style={styles.pillRowPills}>
-          {settings.gridBasis === 'time' ? (
+          {optimistic.gridBasis === 'time' ? (
             <PresetPills
               align="end"
               compact
+              disabled={controlsDisabled}
               options={TIME_SUBDIVISION_OPTIONS}
-              selectedId={settings.timeGridSubdivision}
-              onSelect={(timeGridSubdivision) => onChange({ timeGridSubdivision })}
+              selectedId={optimistic.timeGridSubdivision}
+              onSelect={(timeGridSubdivision) => handleChange({ timeGridSubdivision })}
             />
           ) : (
             <PresetPills
               align="end"
               compact
+              disabled={controlsDisabled}
               options={METRONOME_SUBDIVISION_OPTIONS}
-              selectedId={settings.metronomeGridSubdivision}
-              onSelect={(metronomeGridSubdivision) => onChange({ metronomeGridSubdivision })}
+              selectedId={optimistic.metronomeGridSubdivision}
+              onSelect={(metronomeGridSubdivision) => handleChange({ metronomeGridSubdivision })}
             />
           )}
         </View>
@@ -256,6 +328,11 @@ export function MetronomeSettingsSheet({ visible, settings, onChange, onClose }:
           ) : (
             <View style={styles.cardFallback}>{body}</View>
           )}
+          {showSpinner ? (
+            <View pointerEvents="auto" style={styles.processingOverlay}>
+              <ActivityIndicator color={colors.accent} size="large" />
+            </View>
+          ) : null}
         </Pressable>
       </Pressable>
     </Modal>
@@ -286,6 +363,18 @@ function useStyles(
         cardPressable: {
           width: '100%',
           maxWidth: 340,
+        },
+        processingOverlay: {
+          position: 'absolute',
+          top: 0,
+          right: 0,
+          bottom: 0,
+          left: 0,
+          zIndex: 20,
+          alignItems: 'center',
+          justifyContent: 'center',
+          borderRadius: 20,
+          backgroundColor: 'rgba(0, 0, 0, 0.2)',
         },
         cardGlass: {
           borderRadius: 20,

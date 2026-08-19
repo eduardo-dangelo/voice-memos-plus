@@ -9,10 +9,13 @@ import {
   getMetronomeBeatTimes,
   getMetronomeGridLineKind,
   getMetronomeGridLinesInRange,
+  getMetronomeGridPixelsPerSecondForSubdivision,
   getMetronomeGridStepSec,
+  getPixelsPerSecondForGridSubdivision,
   getQuarterIntervalSec,
   getTimeGridAlignedMarkerTimes,
   getTimeGridMarkerTimesFromLines,
+  getTimeGridPixelsPerSecondForSubdivision,
   isPrimaryAccentBeat,
   isSecondaryAccentBeat,
   METRONOME_GRID_MAX_LINES,
@@ -651,5 +654,88 @@ describe('pickGridSubdivisionForPixelsPerSecond', () => {
       pickGridSubdivisionForPixelsPerSecond(timeSettings, maxPps, defaultPps, maxPps),
       { metronomeGridSubdivision: '1/4', timeGridSubdivision: '0.125s' }
     );
+  });
+});
+
+describe('getPixelsPerSecondForGridSubdivision', () => {
+  const defaultPps = TIMELINE_DEFAULT_PIXELS_PER_SECOND;
+  const maxPps = TIMELINE_MAX_PIXELS_PER_SECOND;
+
+  it('returns lower canonical pps for coarser metronome subdivisions', () => {
+    const subdivisions = ['1/4', '1/8', '1/16', '1/32'] as const;
+    const base = makeSettings({
+      bpm: 120,
+      timeSignature: '4/4',
+      gridBasis: 'metronome',
+      showGrid: true,
+    });
+    const ppsBySub = subdivisions.map((metronomeGridSubdivision) =>
+      getMetronomeGridPixelsPerSecondForSubdivision(
+        { ...base, metronomeGridSubdivision },
+        defaultPps,
+        maxPps
+      )
+    );
+    for (let index = 1; index < ppsBySub.length; index += 1) {
+      assert.ok(
+        ppsBySub[index]! > ppsBySub[index - 1]!,
+        `finer subdivision should map to higher pps`
+      );
+    }
+    assert.equal(ppsBySub[0], defaultPps);
+    assert.equal(ppsBySub[ppsBySub.length - 1], maxPps);
+  });
+
+  it('returns lower canonical pps for coarser time subdivisions', () => {
+    const subdivisions = ['1s', '0.5s', '0.25s', '0.125s'] as const;
+    const base = makeSettings({ gridBasis: 'time', showGrid: true });
+    const ppsBySub = subdivisions.map((timeGridSubdivision) =>
+      getTimeGridPixelsPerSecondForSubdivision(
+        { ...base, timeGridSubdivision },
+        defaultPps,
+        maxPps
+      )
+    );
+    for (let index = 1; index < ppsBySub.length; index += 1) {
+      assert.ok(ppsBySub[index]! > ppsBySub[index - 1]!);
+    }
+    assert.equal(ppsBySub[0], defaultPps);
+    assert.equal(ppsBySub[ppsBySub.length - 1], maxPps);
+  });
+
+  it('round-trips canonical pps through pickGridSubdivisionForPixelsPerSecond', () => {
+    for (const metronomeGridSubdivision of ['1/4', '1/8', '1/16', '1/32'] as const) {
+      const settings = makeSettings({
+        bpm: 120,
+        timeSignature: '4/4',
+        gridBasis: 'metronome',
+        metronomeGridSubdivision,
+        showGrid: true,
+      });
+      const canonical = getPixelsPerSecondForGridSubdivision(settings, defaultPps, maxPps);
+      const picked = pickGridSubdivisionForPixelsPerSecond(
+        settings,
+        canonical,
+        defaultPps,
+        maxPps
+      );
+      assert.equal(picked.metronomeGridSubdivision, metronomeGridSubdivision);
+    }
+
+    for (const timeGridSubdivision of ['1s', '0.5s', '0.25s', '0.125s'] as const) {
+      const settings = makeSettings({
+        gridBasis: 'time',
+        timeGridSubdivision,
+        showGrid: true,
+      });
+      const canonical = getPixelsPerSecondForGridSubdivision(settings, defaultPps, maxPps);
+      const picked = pickGridSubdivisionForPixelsPerSecond(
+        settings,
+        canonical,
+        defaultPps,
+        maxPps
+      );
+      assert.equal(picked.timeGridSubdivision, timeGridSubdivision);
+    }
   });
 });

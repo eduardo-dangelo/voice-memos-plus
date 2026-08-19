@@ -1,7 +1,7 @@
 import * as Haptics from 'expo-haptics';
 import { router, useNavigation } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
+import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import {
   ActionSheetIOS,
   ActivityIndicator,
@@ -500,6 +500,11 @@ export function MemoEditor({
   const [memo, setMemo] = useState<Memo | null>(null);
   const memoRef = useRef<Memo | null>(null);
   memoRef.current = memo;
+  const [liveMetronomeSettings, setLiveMetronomeSettings] = useState<MetronomeSettings>(
+    normalizeMetronomeSettings()
+  );
+  const liveMetronomeSettingsRef = useRef(liveMetronomeSettings);
+  liveMetronomeSettingsRef.current = liveMetronomeSettings;
   const [loading, setLoading] = useState(true);
   const [replaceMode, setReplaceMode] = useState(false);
   const [stackMode, setStackMode] = useState(false);
@@ -524,6 +529,7 @@ export function MemoEditor({
   const [timeSeekVisible, setTimeSeekVisible] = useState(false);
   const [timeSeekInitial, setTimeSeekInitial] = useState('00:00.00');
   const [metronomeSettingsVisible, setMetronomeSettingsVisible] = useState(false);
+  const [metronomeGridProcessing, setMetronomeGridProcessing] = useState(false);
   const [headphonesConnected, setHeadphonesConnected] = useState(false);
   const [headphonesWarningMode, setHeadphonesWarningMode] = useState<
     'replace' | 'stack' | null
@@ -565,6 +571,17 @@ export function MemoEditor({
   stackModeRef.current = stackMode;
   replaceModeRef.current = replaceMode;
   activeLayerIdRef.current = activeLayerId;
+
+  const prevMemoIdRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const currentId = memo?.id;
+    if (currentId !== prevMemoIdRef.current) {
+      prevMemoIdRef.current = currentId;
+      setLiveMetronomeSettings(
+        memo ? getMemoMetronomeSettings(memo) : normalizeMetronomeSettings()
+      );
+    }
+  }, [memo]);
 
   const activeLayer = useMemo(() => {
     if (!memo || !activeLayerId) {
@@ -1265,22 +1282,23 @@ export function MemoEditor({
 
   const handleLoopChange = useCallback(
     (loopStart: number, loopEnd: number, loopEnabled: boolean, loopSnapToGrid?: boolean) => {
-      if (!memo) {
+      const current = memoRef.current;
+      if (!current) {
         return;
       }
       const nextSnap =
-        loopSnapToGrid !== undefined ? loopSnapToGrid : memo.loopSnapToGrid;
-      setMemo({ ...memo, loopStart, loopEnd, loopEnabled, loopSnapToGrid: nextSnap });
+        loopSnapToGrid !== undefined ? loopSnapToGrid : current.loopSnapToGrid;
+      setMemo({ ...current, loopStart, loopEnd, loopEnabled, loopSnapToGrid: nextSnap });
       engine.setLoopRegion(loopStart, loopEnd, loopEnabled);
 
       if (persistLoopTimeout.current) {
         clearTimeout(persistLoopTimeout.current);
       }
       persistLoopTimeout.current = setTimeout(() => {
-        void updateLoopRegion(memo.id, loopStart, loopEnd, loopEnabled, nextSnap);
+        void updateLoopRegion(current.id, loopStart, loopEnd, loopEnabled, nextSnap);
       }, 300);
     },
-    [engine, memo]
+    [engine]
   );
 
   const handleTrackLoopChange = useCallback(
@@ -1366,19 +1384,20 @@ export function MemoEditor({
         loopSnapToGrid: boolean;
       }>
     ) => {
-      if (!memo) {
+      const current = memoRef.current;
+      if (!current) {
         return;
       }
-      const loopStart = partial.loopStart ?? memo.loopStart ?? 0;
-      const loopEnd = partial.loopEnd ?? memo.loopEnd ?? 0;
-      const loopEnabled = partial.loopEnabled ?? memo.loopEnabled ?? false;
+      const loopStart = partial.loopStart ?? current.loopStart ?? 0;
+      const loopEnd = partial.loopEnd ?? current.loopEnd ?? 0;
+      const loopEnabled = partial.loopEnabled ?? current.loopEnabled ?? false;
       const loopSnapToGrid =
         partial.loopSnapToGrid !== undefined
           ? partial.loopSnapToGrid
-          : memo.loopSnapToGrid !== false;
+          : current.loopSnapToGrid !== false;
       handleLoopChange(loopStart, loopEnd, loopEnabled, loopSnapToGrid);
     },
-    [handleLoopChange, memo]
+    [handleLoopChange]
   );
 
   const flushMetronomePersist = useCallback(() => {
@@ -1389,22 +1408,29 @@ export function MemoEditor({
     const pending = pendingMetronomePersist.current;
     if (pending) {
       pendingMetronomePersist.current = null;
+      const current = memoRef.current;
+      if (current && current.id === pending.memoId) {
+        setMemo({ ...current, metronome: pending.settings });
+      }
       void updateMetronomeSettings(pending.memoId, pending.settings);
     }
   }, []);
 
   const handleMetronomeChange = useCallback(
     (partial: Partial<MetronomeSettings>) => {
-      if (!memo) {
+      const current = memoRef.current;
+      if (!current) {
         return;
       }
       const next = normalizeMetronomeSettings({
-        ...getMemoMetronomeSettings(memo),
+        ...liveMetronomeSettingsRef.current,
         ...partial,
       });
-      setMemo({ ...memo, metronome: next });
+      startTransition(() => {
+        setLiveMetronomeSettings(next);
+      });
       engine.setMetronome(next);
-      pendingMetronomePersist.current = { memoId: memo.id, settings: next };
+      pendingMetronomePersist.current = { memoId: current.id, settings: next };
 
       if (persistMetronomeTimeout.current) {
         clearTimeout(persistMetronomeTimeout.current);
@@ -1413,20 +1439,20 @@ export function MemoEditor({
         flushMetronomePersist();
       }, 300);
     },
-    [engine, flushMetronomePersist, memo]
+    [engine, flushMetronomePersist]
   );
 
   const handleMetronomeCycle = useCallback(() => {
-    if (!memo) {
+    if (!memoRef.current) {
       return;
     }
     void (async () => {
       const headphonesConnected = await isHeadphonesConnected();
       handleMetronomeChange(
-        nextMetronomeMode(getMemoMetronomeSettings(memo), { headphonesConnected })
+        nextMetronomeMode(liveMetronomeSettingsRef.current, { headphonesConnected })
       );
     })();
-  }, [handleMetronomeChange, memo]);
+  }, [handleMetronomeChange]);
 
   const handlePrecountCycle = useCallback(() => {
     if (!memo) {
@@ -1567,13 +1593,14 @@ export function MemoEditor({
 
   const handleTrackPress = useCallback(
     (trackId: string) => {
-      if (trackId === activeLayerId || savingTrim) {
+      if (trackId === activeLayerIdRef.current || savingTrimRef.current) {
         return;
       }
 
-      const layer = memo?.layers.find((entry) => entry.id === trackId);
-      const anySoloActive = memo
-        ? hasAnySoloActive(memo.layers.map((entry) => getLayerEffects(entry)))
+      const current = memoRef.current;
+      const layer = current?.layers.find((entry) => entry.id === trackId);
+      const anySoloActive = current
+        ? hasAnySoloActive(current.layers.map((entry) => getLayerEffects(entry)))
         : false;
       if (layer && !isLayerSelectable(getLayerEffects(layer), anySoloActive)) {
         return;
@@ -1593,12 +1620,9 @@ export function MemoEditor({
       })();
     },
     [
-      activeLayerId,
       confirmEditDraft,
       flushEffectsPersist,
       flushStartTimePersist,
-      memo,
-      savingTrim,
     ]
   );
 
@@ -1917,14 +1941,15 @@ export function MemoEditor({
         return;
       }
 
-      const layer = memo?.layers.find((entry) => entry.id === layerId);
-      const anySoloActive = memo
-        ? hasAnySoloActive(memo.layers.map((entry) => getLayerEffects(entry)))
+      const current = memoRef.current;
+      const layer = current?.layers.find((entry) => entry.id === layerId);
+      const anySoloActive = current
+        ? hasAnySoloActive(current.layers.map((entry) => getLayerEffects(entry)))
         : false;
       const canSelect =
         layer &&
-        layerId !== activeLayerId &&
-        !savingTrim &&
+        layerId !== activeLayerIdRef.current &&
+        !savingTrimRef.current &&
         isLayerSelectable(getLayerEffects(layer), anySoloActive);
 
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -1959,13 +1984,10 @@ export function MemoEditor({
       setTrackMenuLayerId(layerId);
     },
     [
-      activeLayerId,
       confirmEditDraft,
       flushEffectsPersist,
       flushStartTimePersist,
       getTrackMenuActions,
-      memo,
-      savingTrim,
     ]
   );
 
@@ -2307,6 +2329,9 @@ export function MemoEditor({
       }
 
       setMemo(result.memo);
+      if (!pendingMetronomePersist.current) {
+        setLiveMetronomeSettings(getMemoMetronomeSettings(result.memo));
+      }
       setActiveLayerId(result.activeLayerId);
       setReplaceMode(false);
       setStackMode(false);
@@ -2328,6 +2353,9 @@ export function MemoEditor({
         return;
       }
       setMemo(memo);
+      if (!pendingMetronomePersist.current) {
+        setLiveMetronomeSettings(getMemoMetronomeSettings(memo));
+      }
     });
   }, [id]);
 
@@ -3180,7 +3208,7 @@ export function MemoEditor({
         }
 
         if (precountMode !== 'off') {
-          const bpm = getMemoMetronomeSettings(memo).bpm;
+          const bpm = liveMetronomeSettingsRef.current.bpm;
           const precountResult = await runPrecount(precountMode, bpm);
           if (!precountResult.completed) {
             await abortArmedRecording();
@@ -3417,10 +3445,7 @@ export function MemoEditor({
       ? recordingTimelineTime
       : pendingTimelineTime
     : currentTime;
-  const metronomeSettings = useMemo(
-    () => (memo ? getMemoMetronomeSettings(memo) : normalizeMetronomeSettings()),
-    [memo]
-  );
+  const metronomeSettings = liveMetronomeSettings;
   /** Match post-save `wasSoftwareMonitoredCue` + route-aware cue compensation. */
   const liveLatencyLeadSec = useMemo(
     () =>
@@ -3987,12 +4012,18 @@ export function MemoEditor({
               onEditGestureActive={handleEditGestureActive}
               onZoomControlsChange={setZoomControls}
               onMetronomeGridSubdivisionSync={handleMetronomeChange}
+              onMetronomeGridProcessingChange={setMetronomeGridProcessing}
             />
           ) : (
             <View style={styles.tracksLoading}>
               <ActivityIndicator color={colors.accent} />
             </View>
           )}
+          {metronomeGridProcessing && !metronomeSettingsVisible ? (
+            <View pointerEvents="none" style={styles.gridProcessingOverlay}>
+              <ActivityIndicator color={colors.accent} size="large" />
+            </View>
+          ) : null}
         </View>
 
         {layoutReady && showEditorContent ? (
@@ -4067,6 +4098,7 @@ export function MemoEditor({
         onSelect={handleTrackColorSelect}
       />
       <MetronomeSettingsSheet
+        processing={metronomeGridProcessing}
         settings={metronomeSettings}
         visible={metronomeSettingsVisible}
         onChange={handleMetronomeChange}
@@ -4321,6 +4353,16 @@ function useMemoEditorStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           alignItems: 'center',
           justifyContent: 'center',
           backgroundColor: 'rgba(0, 0, 0, 0.35)',
+        },
+        gridProcessingOverlay: {
+          position: 'absolute',
+          top: 0,
+          right: 0,
+          bottom: 0,
+          left: 0,
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 20,
         },
         exportCard: {
           alignItems: 'center',

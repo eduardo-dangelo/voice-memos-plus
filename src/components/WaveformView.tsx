@@ -21,7 +21,12 @@ import { colorWithAlpha, type VoiceMemosColorScheme } from '@/constants/VoiceMem
 import { fadeEnvelopeGain } from '@/src/audio/fadeCurve';
 import { clampTrimValues, dbToLinear } from '@/src/audio/layerEffects';
 import { snapTimeToGrid } from '@/src/audio/loopSnap';
-import { getMinPixelsPerSecondForGrid, getTimeGridMarkerTimesFromLines, pickGridSubdivisionForPixelsPerSecond, type MetronomeGridLine } from '@/src/audio/metronome';
+import {
+  getPixelsPerSecondForGridSubdivision,
+  getTimeGridMarkerTimesFromLines,
+  pickGridSubdivisionForPixelsPerSecond,
+  type MetronomeGridLine,
+} from '@/src/audio/metronome';
 import {
   applyPinchDeltaToPixelsPerSecond,
   applyPinchDeltaToTrackZoom,
@@ -322,6 +327,8 @@ type Props = {
   onZoomControlsChange?: (state: TimelineZoomControlsState) => void;
   /** Persist grid subdivision picked from horizontal zoom (when show grid is on). */
   onMetronomeGridSubdivisionSync?: (partial: Partial<MetronomeSettings>) => void;
+  /** Fires while grid lines are rebuilding after grid-affecting metronome changes. */
+  onMetronomeGridProcessingChange?: (processing: boolean) => void;
   trimOverlay?: TrimOverlayConfig;
   moveOverlay?: MoveOverlayConfig;
   fadeOverlay?: FadeOverlayConfig;
@@ -1246,7 +1253,7 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
   // Faded tint for looped cycles (mirrors loopedBarColor treatment).
   const loopedHeaderColor = mixHexTowardWhite(trackColor, 0.55, 0.38);
   const hasLoopedHeaderCycles = cycleDuration + TRACK_LOOP_EPSILON < track.duration;
-  const headerCycleSegments = (() => {
+  const headerCycleSegments = useMemo(() => {
     if (!showRegionChrome || trackWidth <= 0) {
       return [] as { left: number; width: number; isLoop: boolean }[];
     }
@@ -1269,7 +1276,7 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
       }
     }
     return segments;
-  })();
+  }, [showRegionChrome, trackWidth, hasLoopedHeaderCycles, cycleDuration, pixelsPerSecond]);
   // Keep selected region fill in the same ballpark as the pre-header selection tint.
   const regionBodyColor = colorWithAlpha(trackColor, 0.08);
   // Match region header label (#FFFFFF) on the tinted selected header; gray elsewhere.
@@ -1809,6 +1816,7 @@ function WaveformViewComponent({
   onEditGestureActive,
   onZoomControlsChange,
   onMetronomeGridSubdivisionSync,
+  onMetronomeGridProcessingChange,
   trimOverlay,
   moveOverlay,
   fadeOverlay,
@@ -2006,7 +2014,8 @@ function WaveformViewComponent({
     layoutDuration,
     layoutPixelsPerSecond,
     markerInterval,
-    metronome,
+    metronome?.showGrid,
+    metronome?.gridBasis,
     metronomeGridLines,
     viewportTimeBuffer.end,
     viewportTimeBuffer.start,
@@ -2018,6 +2027,9 @@ function WaveformViewComponent({
   const zoomSyncFromSubdivisionRef = useRef(false);
   const onMetronomeGridSubdivisionSyncRef = useRef(onMetronomeGridSubdivisionSync);
   onMetronomeGridSubdivisionSyncRef.current = onMetronomeGridSubdivisionSync;
+  const onMetronomeGridProcessingChangeRef = useRef(onMetronomeGridProcessingChange);
+  onMetronomeGridProcessingChangeRef.current = onMetronomeGridProcessingChange;
+  const prevGridProcessingKeyRef = useRef<string | null>(null);
   const layoutPixelsPerSecondRef = useRef(layoutPixelsPerSecond);
   layoutPixelsPerSecondRef.current = layoutPixelsPerSecond;
   const viewportWidthRef = useRef(viewportWidth);
@@ -2153,19 +2165,104 @@ function WaveformViewComponent({
   ]);
 
   useEffect(() => {
+    return () => {
+      onMetronomeGridProcessingChangeRef.current?.(false);
+    };
+  }, []);
+
+  useLayoutEffect(() => {
+    const notify = onMetronomeGridProcessingChangeRef.current;
+    const gridKey = metronome
+      ? [
+          metronome.showGrid,
+          metronome.gridBasis,
+          metronome.metronomeGridSubdivision,
+          metronome.timeGridSubdivision,
+          metronome.bpm,
+          metronome.timeSignature,
+        ].join(':')
+      : 'off';
+
+    if (followRecordingScrollRef.current || !metronome?.showGrid) {
+      prevGridProcessingKeyRef.current = gridKey;
+      notify?.(false);
+      return;
+    }
+
+    const prevKey = prevGridProcessingKeyRef.current;
+    prevGridProcessingKeyRef.current = gridKey;
+    const isGridChange = prevKey !== null && prevKey !== gridKey;
+    if (isGridChange) {
+      notify?.(true);
+    }
+
+    const bounds = zoomBoundsRef.current;
+    const targetPps = clampTimelinePixelsPerSecond(
+      getPixelsPerSecondForGridSubdivision(
+        metronome,
+        bounds.pixelsPerSecondDefault,
+        bounds.pixelsPerSecondMax
+      ),
+      bounds
+    );
+    const waitingForZoomSnap =
+      isGridChange &&
+      !zoomGestureActiveRef.current &&
+      !subdivisionSyncFromZoomRef.current &&
+      Math.abs(layoutPixelsPerSecond - targetPps) > 0.5;
+    if (waitingForZoomSnap) {
+      const timeout = setTimeout(() => {
+        notify?.(false);
+      }, 2000);
+      return () => clearTimeout(timeout);
+    }
+
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        notify?.(false);
+      });
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      if (raf2) {
+        cancelAnimationFrame(raf2);
+      }
+    };
+  }, [
+    metronome?.showGrid,
+    metronome?.gridBasis,
+    metronome?.metronomeGridSubdivision,
+    metronome?.timeGridSubdivision,
+    metronome?.bpm,
+    metronome?.timeSignature,
+    metronomeGridLines,
+    layoutPixelsPerSecond,
+  ]);
+
+  useEffect(() => {
     if (
       !metronome?.showGrid ||
       zoomGestureActiveRef.current ||
-      subdivisionSyncFromZoomRef.current
+      subdivisionSyncFromZoomRef.current ||
+      followRecordingScrollRef.current
     ) {
       return;
     }
-    const needed = getMinPixelsPerSecondForGrid(metronome);
-    if (needed <= 0 || pixelsPerSecondRef.current >= needed) {
+    const bounds = zoomBoundsRef.current;
+    const target = clampTimelinePixelsPerSecond(
+      getPixelsPerSecondForGridSubdivision(
+        metronome,
+        bounds.pixelsPerSecondDefault,
+        bounds.pixelsPerSecondMax
+      ),
+      bounds
+    );
+    if (Math.abs(pixelsPerSecondRef.current - target) <= 0.5) {
       return;
     }
     zoomSyncFromSubdivisionRef.current = true;
-    setPixelsPerSecond(clampTimelinePixelsPerSecond(needed, zoomBoundsRef.current));
+    setPixelsPerSecond(target);
     queueMicrotask(() => {
       zoomSyncFromSubdivisionRef.current = false;
     });
@@ -3340,7 +3437,8 @@ function areWaveformViewPropsEqual(prev: Props, next: Props): boolean {
     prev.onWidthChange !== next.onWidthChange ||
     prev.onEditGestureActive !== next.onEditGestureActive ||
     prev.onZoomControlsChange !== next.onZoomControlsChange ||
-    prev.onMetronomeGridSubdivisionSync !== next.onMetronomeGridSubdivisionSync
+    prev.onMetronomeGridSubdivisionSync !== next.onMetronomeGridSubdivisionSync ||
+    prev.onMetronomeGridProcessingChange !== next.onMetronomeGridProcessingChange
   ) {
     return false;
   }
@@ -3403,6 +3501,27 @@ function areWaveformViewPropsEqual(prev: Props, next: Props): boolean {
       prevLoop.onOpenSettings !== nextLoop.onOpenSettings ||
       prevLoop.holdExpanded !== nextLoop.holdExpanded ||
       prevLoop.snapIntervalSec !== nextLoop.snapIntervalSec
+    ) {
+      return false;
+    }
+  }
+
+  const prevFade = prev.fadeOverlay;
+  const nextFade = next.fadeOverlay;
+  if (prevFade !== nextFade) {
+    if (!prevFade || !nextFade) {
+      return false;
+    }
+    if (
+      prevFade.layerId !== nextFade.layerId ||
+      prevFade.editable !== nextFade.editable ||
+      prevFade.snapIntervalSec !== nextFade.snapIntervalSec ||
+      prevFade.onChange !== nextFade.onChange ||
+      prevFade.crossfade?.outgoingLayerId !== nextFade.crossfade?.outgoingLayerId ||
+      prevFade.crossfade?.incomingLayerId !== nextFade.crossfade?.incomingLayerId ||
+      prevFade.crossfade?.overlapStart !== nextFade.crossfade?.overlapStart ||
+      prevFade.crossfade?.overlapEnd !== nextFade.crossfade?.overlapEnd ||
+      prevFade.crossfade?.linked !== nextFade.crossfade?.linked
     ) {
       return false;
     }

@@ -239,6 +239,90 @@ export function pickTimeGridSubdivisionForPixelsPerSecond(
   );
 }
 
+/** Stable pixels/second inside the zoom bucket for a subdivision option. */
+function getCanonicalPixelsPerSecondForSubdivisionOption<T extends string>(
+  options: readonly T[],
+  subdivision: T,
+  pixelsPerSecondDefault: number,
+  pixelsPerSecondMax: number,
+  minPixelsPerSecondFor: (subdivision: T) => number
+): number {
+  const index = options.indexOf(subdivision);
+  if (index < 0) {
+    return pixelsPerSecondDefault;
+  }
+
+  if (index === 0) {
+    return pixelsPerSecondDefault;
+  }
+
+  if (index === options.length - 1) {
+    return pixelsPerSecondMax;
+  }
+
+  const minCurrent = minPixelsPerSecondFor(subdivision);
+  const minNext = minPixelsPerSecondFor(options[index + 1]!);
+  return (minCurrent + minNext) / 2;
+}
+
+export function getMetronomeGridPixelsPerSecondForSubdivision(
+  settings: MetronomeSettings,
+  pixelsPerSecondDefault: number,
+  pixelsPerSecondMax: number
+): number {
+  return getCanonicalPixelsPerSecondForSubdivisionOption(
+    METRONOME_GRID_SUBDIVISIONS,
+    settings.metronomeGridSubdivision,
+    pixelsPerSecondDefault,
+    pixelsPerSecondMax,
+    (metronomeGridSubdivision) =>
+      getMinPixelsPerSecondForGrid({
+        ...settings,
+        gridBasis: 'metronome',
+        metronomeGridSubdivision,
+      })
+  );
+}
+
+export function getTimeGridPixelsPerSecondForSubdivision(
+  settings: MetronomeSettings,
+  pixelsPerSecondDefault: number,
+  pixelsPerSecondMax: number
+): number {
+  return getCanonicalPixelsPerSecondForSubdivisionOption(
+    TIME_GRID_SUBDIVISIONS,
+    settings.timeGridSubdivision,
+    pixelsPerSecondDefault,
+    pixelsPerSecondMax,
+    (timeGridSubdivision) =>
+      getMinPixelsPerSecondForGrid({
+        ...settings,
+        gridBasis: 'time',
+        timeGridSubdivision,
+      })
+  );
+}
+
+/** Canonical horizontal zoom for the active grid subdivision (round-trips with pickGridSubdivisionForPixelsPerSecond). */
+export function getPixelsPerSecondForGridSubdivision(
+  settings: MetronomeSettings,
+  pixelsPerSecondDefault: number,
+  pixelsPerSecondMax: number
+): number {
+  if (settings.gridBasis === 'time') {
+    return getTimeGridPixelsPerSecondForSubdivision(
+      settings,
+      pixelsPerSecondDefault,
+      pixelsPerSecondMax
+    );
+  }
+  return getMetronomeGridPixelsPerSecondForSubdivision(
+    settings,
+    pixelsPerSecondDefault,
+    pixelsPerSecondMax
+  );
+}
+
 export function pickGridSubdivisionForPixelsPerSecond(
   settings: MetronomeSettings,
   pixelsPerSecond: number,

@@ -10,6 +10,7 @@ type Props<T extends string> = {
   onSelect: (id: T) => void;
   align?: 'start' | 'end';
   compact?: boolean;
+  disabled?: boolean;
 };
 
 export function PresetPills<T extends string>({
@@ -18,6 +19,7 @@ export function PresetPills<T extends string>({
   onSelect,
   align = 'start',
   compact = false,
+  disabled = false,
 }: Props<T>) {
   const colors = useVoiceMemosColors();
   const styles = useStyles(colors);
@@ -37,11 +39,14 @@ export function PresetPills<T extends string>({
         return (
           <Pressable
             key={option.id}
+            accessibilityState={{ disabled }}
+            disabled={disabled}
             onPress={() => onSelect(option.id)}
             style={[
               styles.pill,
               compact && styles.pillCompact,
               selected && styles.pillSelected,
+              disabled && styles.pillDisabled,
             ]}>
             <Text
               style={[
@@ -99,6 +104,9 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
         },
         pillSelected: {
           backgroundColor: colors.accent,
+        },
+        pillDisabled: {
+          opacity: 0.4,
         },
         label: {
           fontSize: 13,
