@@ -109,12 +109,10 @@ import {
   updatePrecountMode,
   updateTitle,
 } from '@/src/storage/memoStore';
-import { isMemoInTrash } from '@/src/storage/paths';
+import { getLayerFile, isMemoInTrash } from '@/src/storage/paths';
 import type { Layer, Memo, MetronomeSettings, PrecountMode } from '@/src/storage/types';
 import {
-  applyTimelineDeltaToLayers,
   clampLayerStartTime,
-  getEarliestTrimInTimelineDelta,
   getLayerActiveDuration,
   getLayerActiveStartTime,
   getLayerContentEndTime,
@@ -565,6 +563,10 @@ export function MemoEditor({
   const pendingConfirmKeepToolRef = useRef<boolean | null>(null);
   const confirmInFlightRef = useRef<Promise<void> | null>(null);
   const precountCancelledRef = useRef(false);
+  /** True while programmatically dismissing the precount Modal — ignore onCancel. */
+  const precountDismissingRef = useRef(false);
+  /** True only while preparing/precount Modal is intentionally shown — source of truth for cancel. */
+  const precountOverlayActiveRef = useRef(false);
   const precountDismissResolveRef = useRef<(() => void) | null>(null);
   stackModeRef.current = stackMode;
   replaceModeRef.current = replaceMode;
@@ -629,14 +631,9 @@ export function MemoEditor({
       }
 
       const nextEffects = mergeLayerEffects(currentEffects, partial, layer.duration);
-      const trimInChanged = partial.trimIn !== undefined;
       const trimChanged =
         partial.trimIn !== undefined || partial.trimOut !== undefined;
-      const timelineDelta = trimInChanged
-        ? getEarliestTrimInTimelineDelta(layer, prev.layers, nextEffects.trimIn)
-        : 0;
-      const shiftedLayers = applyTimelineDeltaToLayers(prev.layers, timelineDelta);
-      const nextLayers = shiftedLayers.map((entry) => {
+      const nextLayers = prev.layers.map((entry) => {
         if (entry.id !== layerId) {
           return entry;
         }
@@ -646,10 +643,6 @@ export function MemoEditor({
         }
         return updated;
       });
-      const layerStartTimes =
-        timelineDelta !== 0
-          ? Object.fromEntries(nextLayers.map((entry) => [entry.id, entry.startTime]))
-          : undefined;
       const memoId = prev.id;
       const nextTimeline = getMemoTimelineDuration({ ...prev, layers: nextLayers });
       let trimEnd = prev.trimEnd;
@@ -679,9 +672,6 @@ export function MemoEditor({
       }
 
       engine.updateLayerEffects(layerId, partial);
-      if (layerStartTimes) {
-        engine.updateLayerStartTimes(layerStartTimes);
-      }
       if (trimChanged || nextTimeline !== prev.duration) {
         const updatedLayer = nextLayers.find((entry) => entry.id === layerId);
         if (trimChanged) {
@@ -698,7 +688,6 @@ export function MemoEditor({
         memoId,
         layerId,
         effects: nextEffects,
-        ...(layerStartTimes ? { layerStartTimes } : {}),
       };
 
       if (persistEffectsTimeout.current) {
@@ -706,9 +695,6 @@ export function MemoEditor({
       }
       persistEffectsTimeout.current = setTimeout(() => {
         void updateLayerEffects(memoId, layerId, layerEffectsPersistPayload(nextEffects));
-        if (layerStartTimes) {
-          void updateLayerStartTimes(memoId, layerStartTimes);
-        }
       }, 300);
     },
     [engine, isDraftGenerationCurrent]
@@ -1382,6 +1368,8 @@ export function MemoEditor({
   }, [memo]);
 
   const clearPrecountOverlay = useCallback(() => {
+    // Clear before hiding so late onRequestClose / presses cannot abort commit.
+    precountOverlayActiveRef.current = false;
     precountPreparingRef.current = false;
     setPrecountVisible(false);
     setPrecountNumber(null);
@@ -1391,6 +1379,7 @@ export function MemoEditor({
   /** Show preparing Modal and wait one frame so the spinner paints before warmup. */
   const showPreparingOverlay = useCallback(async () => {
     precountCancelledRef.current = false;
+    precountOverlayActiveRef.current = true;
     precountPreparingRef.current = true;
     setPrecountNumber(null);
     setPrecountPreparing(true);
@@ -1406,24 +1395,33 @@ export function MemoEditor({
 
   /** Hide precount Modal and wait until native dismiss finishes (timeout fallback). */
   const dismissPrecountAndWait = useCallback(async () => {
-    await new Promise<void>((resolve) => {
-      let settled = false;
-      const finish = () => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        precountDismissResolveRef.current = null;
-        resolve();
-      };
-      precountDismissResolveRef.current = finish;
-      clearPrecountOverlay();
-      // Android may not fire Modal onDismiss; never block arm forever.
-      setTimeout(finish, 80);
-    });
+    precountDismissingRef.current = true;
+    try {
+      await new Promise<void>((resolve) => {
+        let settled = false;
+        const finish = () => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          precountDismissResolveRef.current = null;
+          resolve();
+        };
+        precountDismissResolveRef.current = finish;
+        clearPrecountOverlay();
+        // Android may not fire Modal onDismiss; never block arm forever.
+        setTimeout(finish, 80);
+      });
+    } finally {
+      precountDismissingRef.current = false;
+    }
   }, [clearPrecountOverlay]);
 
   const handlePrecountCancel = useCallback(() => {
+    // Ignore cancel once the overlay is hidden (programmatic dismiss / late onRequestClose).
+    if (!precountOverlayActiveRef.current || precountDismissingRef.current) {
+      return;
+    }
     precountCancelledRef.current = true;
     engine.abortRecordingStartCommit();
     // Warmup can take seconds on long layers — hide preparing UI immediately.
@@ -1438,6 +1436,7 @@ export function MemoEditor({
       bpm: number
     ): Promise<{ completed: false } | { completed: true; nextBeatDeadlineMs: number }> => {
       precountCancelledRef.current = false;
+      precountOverlayActiveRef.current = true;
       precountPreparingRef.current = false;
       setPrecountPreparing(false);
       setPrecountNumber(null);
@@ -1525,16 +1524,11 @@ export function MemoEditor({
       }
 
       void (async () => {
-        const keepTrimMove =
-          editDraftRef.current?.tool === 'trim' ||
-          editDraftRef.current?.tool === 'move';
-        await confirmEditDraft(keepTrimMove);
+        await confirmEditDraft(false);
         flushEffectsPersist();
         flushStartTimePersist();
         setActiveLayerId(trackId);
-        if (!keepTrimMove) {
-          setActiveEditor(null);
-        }
+        setActiveEditor(null);
       })();
     },
     [
@@ -1679,6 +1673,15 @@ export function MemoEditor({
         setMemo(updated);
         setActiveLayerId(nextActiveId);
         setActiveEditor(null);
+        const survivorLayer =
+          updated.layers.find((entry) => entry.id === nextActiveId) ??
+          getPlayableLayers(updated)[0];
+        if (survivorLayer) {
+          const survivorFile = getLayerFile(updated.id, survivorLayer.fileName);
+          if (survivorFile) {
+            engine.invalidateLayerBuffer(survivorFile.uri);
+          }
+        }
         await loadMemoIntoEngine(engine, updated, seekTime);
       } catch (error) {
         Alert.alert(
@@ -1866,34 +1869,21 @@ export function MemoEditor({
 
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
-      if (canSelect) {
-        void (async () => {
-          const keepTrimMove =
-            editDraftRef.current?.tool === 'trim' ||
-            editDraftRef.current?.tool === 'move';
-          await confirmEditDraft(keepTrimMove);
-          flushEffectsPersist();
-          flushStartTimePersist();
+      void (async () => {
+        await confirmEditDraft(false);
+        flushEffectsPersist();
+        flushStartTimePersist();
+        if (canSelect) {
           setActiveLayerId(layerId);
-          if (!keepTrimMove) {
-            setActiveEditor(null);
-          }
-          setTrackMenuRename(null);
-          setTrackMenuFormatPicker(false);
-          setTrackMenuMergePicker(false);
-          setMemoMergePickerVisible(false);
-          setMemoLockPickerMode(null);
-          setTrackMenuLayerId(layerId);
-        })();
-        return;
-      }
-
-      setTrackMenuRename(null);
-      setTrackMenuFormatPicker(false);
-      setTrackMenuMergePicker(false);
-      setMemoMergePickerVisible(false);
-      setMemoLockPickerMode(null);
-      setTrackMenuLayerId(layerId);
+        }
+        setActiveEditor(null);
+        setTrackMenuRename(null);
+        setTrackMenuFormatPicker(false);
+        setTrackMenuMergePicker(false);
+        setMemoMergePickerVisible(false);
+        setMemoLockPickerMode(null);
+        setTrackMenuLayerId(layerId);
+      })();
     },
     [
       confirmEditDraft,
@@ -2255,8 +2245,15 @@ export function MemoEditor({
       monitorMixRef.current = false;
       pendingRecordingColor.current = null;
       liveRecordingSnapshot.current = null;
+
+      if (
+        !result.engineReloaded &&
+        (result.wasStackMode || result.wasReplaceMode)
+      ) {
+        void loadMemoIntoEngine(engine, result.memo, result.seekTime);
+      }
     });
-  }, [id]);
+  }, [engine, id]);
 
   useEffect(() => {
     if (!id) {
@@ -2987,7 +2984,20 @@ export function MemoEditor({
       return;
     }
 
-    if (beginRecordingInFlight.current || engine.getState().isRecording) {
+    if (
+      beginRecordingInFlight.current ||
+      engine.getState().isRecording ||
+      isStoppingRecordingRef.current
+    ) {
+      return;
+    }
+
+    await awaitSaveInFlight();
+    if (
+      beginRecordingInFlight.current ||
+      engine.getState().isRecording ||
+      isStoppingRecordingRef.current
+    ) {
       return;
     }
 
@@ -3029,11 +3039,27 @@ export function MemoEditor({
       return;
     }
 
-    if (beginRecordingInFlight.current || engine.getState().isRecording) {
+    if (
+      beginRecordingInFlight.current ||
+      engine.getState().isRecording ||
+      isStoppingRecordingRef.current
+    ) {
+      return;
+    }
+
+    await awaitSaveInFlight();
+    if (
+      beginRecordingInFlight.current ||
+      engine.getState().isRecording ||
+      isStoppingRecordingRef.current
+    ) {
       return;
     }
 
     beginRecordingInFlight.current = true;
+    // Fresh arm — clear stale cancel from prior Modal dismiss / id mount.
+    // Otherwise single-track replace (no preparing overlay) aborts before runPrecount.
+    precountCancelledRef.current = false;
     try {
       if (!sidebarCollapsed && onToggleSidebar) {
         onToggleSidebar();
@@ -3084,9 +3110,7 @@ export function MemoEditor({
 
       let nextBeatDeadlineMs: number | undefined;
       const precountMode = getMemoPrecountMode(memo);
-      const abortArmedRecording = async () => {
-        await engine.cancelPreparedRecording();
-        clearPrecountOverlay();
+      const clearArmedRecordingState = () => {
         monitorMixRef.current = false;
         setReplaceMode(false);
         setStackMode(false);
@@ -3095,6 +3119,15 @@ export function MemoEditor({
         pendingRecordingColor.current = null;
         liveRecordingSnapshot.current = null;
         clearSession();
+      };
+      const abortArmedRecording = async () => {
+        clearPrecountOverlay();
+        if (engine.getState().isRecording) {
+          await engine.cancelRecording();
+        } else {
+          await engine.cancelPreparedRecording();
+        }
+        clearArmedRecordingState();
       };
       try {
         if (useMonitorMix) {
@@ -3130,6 +3163,7 @@ export function MemoEditor({
             return;
           }
           if (engine.getState().isRecording) {
+            // Unexpected — leave live capture alone; only clear overlay chrome.
             clearPrecountOverlay();
             return;
           }
@@ -3139,6 +3173,9 @@ export function MemoEditor({
           await dismissPrecountAndWait();
         }
 
+        // Dismiss teardown must not poison commit; only honor cancels after this point.
+        precountCancelledRef.current = false;
+
         await engine.commitRecordingStart({
           monitorMix: useMonitorMix,
           duckMonitorMix: useMonitorMix && duckMonitorMix,
@@ -3147,22 +3184,11 @@ export function MemoEditor({
           silentLayerId: mode === 'replace' ? activeLayerId ?? undefined : undefined,
         });
         clearPrecountOverlay();
-        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {
+          // Best-effort — never abort a live take for haptics failure.
+        });
       } catch (error) {
-        await engine.cancelPreparedRecording();
-        clearPrecountOverlay();
-        // Capture may already be live (e.g. Live Activity start threw after recorder.start).
-        if (engine.getState().isRecording) {
-          return;
-        }
-        monitorMixRef.current = false;
-        setReplaceMode(false);
-        setStackMode(false);
-        setRecordingArmed(false);
-        pendingRecordModeRef.current = null;
-        pendingRecordingColor.current = null;
-        liveRecordingSnapshot.current = null;
-        clearSession();
+        await abortArmedRecording();
         if (error instanceof RecordingStartAbortedError || precountCancelledRef.current) {
           return;
         }
@@ -3299,18 +3325,8 @@ export function MemoEditor({
     if (activeLayerEffects && isLayerLocked(activeLayerEffects)) {
       return [];
     }
-    const base: EditorTool[] = ['trim', 'volume', 'pan', 'reverb', 'delay', 'eq'];
-    if (memo && getPlayableLayers(memo).length > 1) {
-      return ['trim', 'move', 'volume', 'pan', 'reverb', 'delay', 'eq'];
-    }
-    return base;
-  }, [activeLayerEffects, memo]);
-
-  useEffect(() => {
-    if (activeEditor === 'move' && memo && getPlayableLayers(memo).length <= 1) {
-      setActiveEditor(null);
-    }
-  }, [activeEditor, memo]);
+    return ['trim', 'move', 'volume', 'pan', 'reverb', 'delay', 'eq'];
+  }, [activeLayerEffects]);
 
   useEffect(() => {
     if (!memo || !activeLayerId) {
@@ -3393,63 +3409,6 @@ export function MemoEditor({
           showLabel: true,
           color: resolveTrackColor(layer.color),
         };
-        const isTrimEditing =
-          activeEditor === 'trim' && layer.id === activeLayerId;
-        const isMoveEditing = activeEditor === 'move' && layer.id === activeLayerId;
-
-        if (isTrimEditing) {
-          const effects = getLayerEffects(layer);
-          const selectable = isLayerSelectable(effects, anySoloActive);
-          const loopCount = getLayerLoopCount(layer);
-          return {
-            id: layer.id,
-            peaks: layer.waveformPeaks,
-            startTime: layer.startTime,
-            duration: layer.duration,
-            isActive: layer.id === activeLayerId && selectable,
-            isMuted: effects.muted,
-            isSoloed: effects.solo,
-            isSoloedOut: anySoloActive && !effects.solo,
-            isLocked: effects.locked,
-            isLooped: loopCount > 1,
-            loopCount: loopCount > 1 ? loopCount : undefined,
-            volumeDb: effects.volumeDb,
-            ...trackFadeFields(effects),
-            ...trackMeta,
-          };
-        }
-
-        if (isMoveEditing) {
-          const effects = getLayerEffects(layer);
-          const activeDuration = getLayerActiveDuration(layer);
-          const footprintDuration = getLayerFootprintDuration(layer);
-          const selectable = isLayerSelectable(effects, anySoloActive);
-          const loopCount = getLayerLoopCount(layer);
-
-          return {
-            id: layer.id,
-            peaks: slicePeaksForTrim(
-              layer.waveformPeaks,
-              layer.duration,
-              effects.trimIn,
-              effects.trimOut
-            ),
-            startTime: getLayerActiveStartTime(layer),
-            duration: Math.max(footprintDuration, 0.01),
-            cycleDuration: Math.max(activeDuration, 0.01),
-            isActive: layer.id === activeLayerId && selectable,
-            isMuted: effects.muted,
-            isSoloed: effects.solo,
-            isSoloedOut: anySoloActive && !effects.solo,
-            isLocked: effects.locked,
-            isLooped: loopCount > 1,
-            loopCount: loopCount > 1 ? loopCount : undefined,
-            volumeDb: effects.volumeDb,
-            ...trackFadeFields(effects),
-            ...trackMeta,
-          };
-        }
-
         const effects = getLayerEffects(layer);
         const activeDuration = getLayerActiveDuration(layer);
         const footprintDuration = getLayerFootprintDuration(layer);
@@ -3478,7 +3437,7 @@ export function MemoEditor({
           ...trackMeta,
         };
       });
-  }, [activeEditor, activeLayerId, memo]);
+  }, [activeLayerId, memo]);
 
   const inactivePlayableTracks = useMemo(
     () => playableTrackRows.map((track) => ({ ...track, isActive: false })),
@@ -3671,6 +3630,8 @@ export function MemoEditor({
     }
     return {
       layerId: activeLayer.id,
+      layerStartTime: activeLayer.startTime,
+      layerDuration: activeLayer.duration,
       trimIn: activeLayerEffects.trimIn,
       trimOut: activeLayerEffects.trimOut,
       onChange: handleTrimChange,
@@ -3944,7 +3905,12 @@ export function MemoEditor({
                 isPlaying={engineState.isPlaying}
                 isRecording={isRecording}
                 isStoppingRecording={isStoppingRecording}
-                recordDisabled={!memo || !hasRecording(memo) || pendingRecordingLayout}
+                recordDisabled={
+                  !memo ||
+                  !hasRecording(memo) ||
+                  pendingRecordingLayout ||
+                  isStoppingRecording
+                }
                 showProgressBar={false}
                 showTimeLabels={false}
                 stopRecordingDisabled={!isRecording}

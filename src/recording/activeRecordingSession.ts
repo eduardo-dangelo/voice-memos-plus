@@ -37,6 +37,7 @@ export type RecordingSaveResult = {
   seekTime: number;
   wasStackMode: boolean;
   wasReplaceMode: boolean;
+  engineReloaded: boolean;
 };
 
 export type DiscardUnfinishedResult = {
@@ -233,8 +234,6 @@ export async function stopAndSave(
     return null;
   }
 
-  const reloadEngine = options?.reloadEngine !== false;
-
   const savePromise = (async (): Promise<RecordingSaveResult | null> => {
     try {
       const isBackground = AppState.currentState !== 'active';
@@ -246,6 +245,11 @@ export async function stopAndSave(
         throw new Error('Memo not found');
       }
 
+      const wasStackMode = currentSession.mode === 'stack';
+      const wasReplaceMode = currentSession.mode === 'replace';
+      const shouldReloadEngine =
+        (options?.reloadEngine !== false) || wasStackMode || wasReplaceMode;
+
       const { path, duration, peaks } = await engine.finalizeRecordingAfterStop(capture, {
         deferPlaybackSetup: isBackground,
       });
@@ -254,8 +258,6 @@ export async function stopAndSave(
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
 
-      const wasStackMode = currentSession.mode === 'stack';
-      const wasReplaceMode = currentSession.mode === 'replace';
       const capturedStartTime = currentSession.startTime;
       const layerId = currentSession.layerId;
 
@@ -312,38 +314,38 @@ export async function stopAndSave(
         );
         updated = replaceResult.memo;
 
+        const replaceLayerPath = replaceResult.prime?.path;
+        let engineReloaded = false;
+
         const result: RecordingSaveResult = {
           memo: updated,
           activeLayerId,
           seekTime: capturedStartTime,
           wasStackMode,
           wasReplaceMode,
+          engineReloaded: false,
         };
 
         clearSession();
 
         if (isBackground) {
-          engine.scheduleDeferredEngineReload(updated, result.seekTime);
-        } else if (reloadEngine) {
-          await loadMemoIntoEngine(engine, updated, result.seekTime);
-          if (replaceResult.prime) {
-            try {
-              const buffer = await engine.createBufferFromSamples(
-                replaceResult.prime.samples,
-                replaceResult.prime.sampleRate
-              );
-              engine.primeLayerBuffer(replaceResult.prime.path, buffer);
-            } catch (error) {
-              if (__DEV__) {
-                console.warn(
-                  '[activeRecordingSession] prime replace buffer failed',
-                  error
-                );
-              }
-            }
+          engine.scheduleDeferredEngineReload(
+            updated,
+            result.seekTime,
+            replaceLayerPath ? [replaceLayerPath] : undefined
+          );
+        } else if (shouldReloadEngine) {
+          if (replaceLayerPath) {
+            engine.invalidateLayerBuffer(replaceLayerPath);
           }
+          // Do not createBufferFromSamples/prime here — that reopens a playback
+          // AudioContext and leaves the next replace arm fighting a dirty session.
+          // Next play/arm decodes from the updated file after invalidate.
+          await loadMemoIntoEngine(engine, updated, result.seekTime);
+          engineReloaded = true;
         }
 
+        result.engineReloaded = engineReloaded;
         notifyListeners(result);
         return result;
       } else {
@@ -360,14 +362,16 @@ export async function stopAndSave(
         seekTime: wasStackMode || wasReplaceMode ? capturedStartTime : 0,
         wasStackMode,
         wasReplaceMode,
+        engineReloaded: false,
       };
 
       clearSession();
 
       if (isBackground) {
         engine.scheduleDeferredEngineReload(updated, result.seekTime);
-      } else if (reloadEngine) {
+      } else if (shouldReloadEngine) {
         await loadMemoIntoEngine(engine, updated, result.seekTime);
+        result.engineReloaded = true;
       }
 
       notifyListeners(result);

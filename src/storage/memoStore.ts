@@ -33,6 +33,8 @@ import { notifyMemoUpdate } from '@/src/recording/memoUpdateEvents';
 import { createDefaultTitle, sanitizeExportFileName } from '@/src/utils/format';
 import { randomId } from '@/src/utils/id';
 
+import { nextLayerOrder } from './layerOrder';
+
 import {
   getManifestFile,
   getMemoDir,
@@ -680,11 +682,26 @@ export async function addStackedLayer(
     throw new Error('Memo not found');
   }
 
-  const order = memo.layers.length;
+  const order = nextLayerOrder(memo);
   const usedColors = memo.layers.map(
     (entry) => entry.color ?? DEFAULT_TRACK_COLOR
   );
-  const layer = createLayer(order, startTime, usedColors);
+  const extension: '.m4a' | '.wav' = sourcePath.toLowerCase().endsWith('.wav')
+    ? '.wav'
+    : '.m4a';
+  const fileName = allocateUniqueLayerFileName(memo, order, extension);
+  const layer: Layer = {
+    id: randomId(),
+    order,
+    fileName,
+    label: getDefaultLayerLabel(order),
+    color:
+      usedColors.length === 0
+        ? DEFAULT_TRACK_COLOR
+        : pickRandomTrackColor(usedColors),
+    startTime,
+    duration: 0,
+  };
   if (color && isTrackColorAllowed(color)) {
     layer.color = color;
   }
@@ -933,8 +950,7 @@ export async function duplicateLayer(
     throw new Error('Layer file not found');
   }
 
-  const order =
-    memo.layers.reduce((max, entry) => Math.max(max, entry.order), -1) + 1;
+  const order = nextLayerOrder(memo);
   const extension = source.fileName.toLowerCase().endsWith('.wav')
     ? '.wav'
     : '.m4a';

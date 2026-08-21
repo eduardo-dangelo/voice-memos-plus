@@ -26,6 +26,12 @@ describe('clampTrimValues', () => {
     assert.equal(next.trimOut, 3.06);
   });
 
+  it('live drag contract: null quantize stays continuous (no 0.1 default)', () => {
+    const next = clampTrimValues(1.037, 4.912, 10, null);
+    assert.equal(next.trimIn, 1.037);
+    assert.equal(next.trimOut, 4.912);
+  });
+
   it('still enforces min selection without quantization', () => {
     const next = clampTrimValues(2, 2.1, 10, null);
     assert.equal(next.trimIn, 2);

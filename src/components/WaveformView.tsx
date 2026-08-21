@@ -200,6 +200,10 @@ export type TrimScrollHelpers = {
 
 export type TrimOverlayConfig = {
   layerId: string;
+  /** File origin on the timeline (layer.startTime). */
+  layerStartTime: number;
+  /** Full file duration for clampTrimValues. */
+  layerDuration: number;
   trimIn: number;
   trimOut: number;
   onChange: (trimIn: number, trimOut: number) => void;
@@ -441,10 +445,11 @@ function TrackTrimOverlay({
   track,
   sidePadding,
   trackHeight,
+  layerStartTime,
+  layerDuration,
   trimIn,
   trimOut,
   pixelsPerSecond,
-  layoutDuration,
   snapIntervalSec,
   onChange,
   trimScrollHelpers,
@@ -452,45 +457,46 @@ function TrackTrimOverlay({
   track: TrackData;
   sidePadding: number;
   trackHeight: number;
+  layerStartTime: number;
+  layerDuration: number;
   trimIn: number;
   trimOut: number;
   pixelsPerSecond: number;
-  layoutDuration: number;
   snapIntervalSec?: number | null;
   onChange: (trimIn: number, trimOut: number) => void;
   trimScrollHelpers: TrimScrollHelpers;
 }) {
+  type TrimSide = 'left' | 'right';
   const { styles } = useWaveformTheme();
-  const trackOffset = sidePadding + track.startTime * pixelsPerSecond;
-  const trimLeft = trackOffset + trimIn * pixelsPerSecond;
-  const trimRight = trackOffset + trimOut * pixelsPerSecond;
-  const trackEnd = trackOffset + track.duration * pixelsPerSecond;
+  const cycleDuration = Math.max(0.01, track.cycleDuration ?? track.duration);
+  const trimLeft = sidePadding + track.startTime * pixelsPerSecond;
+  const trimRight = sidePadding + (track.startTime + cycleDuration) * pixelsPerSecond;
   const startTrimIn = useRef(trimIn);
   const startTrimOut = useRef(trimOut);
   const scrollXAtGrant = useRef(0);
   const dragActiveRef = useRef(false);
   const onChangeRef = useRef(onChange);
   const trimScrollHelpersRef = useRef(trimScrollHelpers);
-  const trackRef = useRef(track);
-  const sidePaddingRef = useRef(sidePadding);
+  const layerStartTimeRef = useRef(layerStartTime);
+  const layerDurationRef = useRef(layerDuration);
   const pixelsPerSecondRef = useRef(pixelsPerSecond);
-  const layoutDurationRef = useRef(layoutDuration);
   const snapIntervalRef = useRef(snapIntervalSec);
   onChangeRef.current = onChange;
   trimScrollHelpersRef.current = trimScrollHelpers;
-  trackRef.current = track;
-  sidePaddingRef.current = sidePadding;
+  layerStartTimeRef.current = layerStartTime;
+  layerDurationRef.current = layerDuration;
   pixelsPerSecondRef.current = pixelsPerSecond;
-  layoutDurationRef.current = layoutDuration;
   snapIntervalRef.current = snapIntervalSec;
 
-  const [expanded, setExpanded] = useState(false);
-  const expandedRef = useRef(expanded);
-  expandedRef.current = expanded;
+  const [expandedSide, setExpandedSide] = useState<TrimSide | null>(null);
+  const expandedSideRef = useRef(expandedSide);
+  expandedSideRef.current = expandedSide;
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const sideBorderSV = useSharedValue(TRIM_SIDE_BORDER);
-  const handleTouchSV = useSharedValue(TRIM_HANDLE_TOUCH);
+  const leftBorderSV = useSharedValue(TRIM_SIDE_BORDER);
+  const rightBorderSV = useSharedValue(TRIM_SIDE_BORDER);
+  const leftHandleTouchSV = useSharedValue(TRIM_HANDLE_TOUCH);
+  const rightHandleTouchSV = useSharedValue(TRIM_HANDLE_TOUCH);
   const selectionOpacitySV = useSharedValue(1);
   const trimLeftSV = useSharedValue(trimLeft);
   const trimRightSV = useSharedValue(trimRight);
@@ -501,15 +507,29 @@ function TrackTrimOverlay({
 
   useEffect(() => {
     const timing = { duration: LOOP_EXPAND_DURATION_MS, easing: LOOP_EXPAND_EASING };
-    sideBorderSV.value = withTiming(
-      expanded ? TRIM_SIDE_BORDER_EXPANDED : TRIM_SIDE_BORDER,
+    leftBorderSV.value = withTiming(
+      expandedSide === 'left' ? TRIM_SIDE_BORDER_EXPANDED : TRIM_SIDE_BORDER,
       timing
     );
-    handleTouchSV.value = withTiming(
-      expanded ? TRIM_HANDLE_TOUCH_EXPANDED : TRIM_HANDLE_TOUCH,
+    rightBorderSV.value = withTiming(
+      expandedSide === 'right' ? TRIM_SIDE_BORDER_EXPANDED : TRIM_SIDE_BORDER,
       timing
     );
-  }, [expanded, handleTouchSV, sideBorderSV]);
+    leftHandleTouchSV.value = withTiming(
+      expandedSide === 'left' ? TRIM_HANDLE_TOUCH_EXPANDED : TRIM_HANDLE_TOUCH,
+      timing
+    );
+    rightHandleTouchSV.value = withTiming(
+      expandedSide === 'right' ? TRIM_HANDLE_TOUCH_EXPANDED : TRIM_HANDLE_TOUCH,
+      timing
+    );
+  }, [
+    expandedSide,
+    leftBorderSV,
+    leftHandleTouchSV,
+    rightBorderSV,
+    rightHandleTouchSV,
+  ]);
 
   const clearIdleTimer = () => {
     if (idleTimerRef.current) {
@@ -520,69 +540,69 @@ function TrackTrimOverlay({
 
   const scheduleIdleCollapse = () => {
     clearIdleTimer();
-    if (!expandedRef.current) {
+    if (expandedSideRef.current == null) {
       return;
     }
     idleTimerRef.current = setTimeout(() => {
-      setExpanded(false);
+      setExpandedSide(null);
     }, TRIM_EXPAND_IDLE_MS);
   };
 
-  const expandHandles = () => {
-    setExpanded(true);
+  const expandSide = (side: TrimSide) => {
+    setExpandedSide(side);
     scheduleIdleCollapse();
   };
 
-  const collapseHandles = () => {
-    if (!expandedRef.current) {
+  const collapseSide = () => {
+    if (expandedSideRef.current == null) {
       return;
     }
-    setExpanded(false);
+    setExpandedSide(null);
   };
 
-  const toggleExpandedFromTap = () => {
-    if (expandedRef.current) {
-      collapseHandles();
+  const toggleExpandedFromTap = (side: TrimSide) => {
+    if (expandedSideRef.current === side) {
+      collapseSide();
     } else {
-      expandHandles();
+      expandSide(side);
     }
   };
 
   const noteInteraction = () => {
-    if (expandedRef.current) {
+    if (expandedSideRef.current != null) {
       scheduleIdleCollapse();
     }
   };
 
   useEffect(() => {
-    if (expanded) {
+    if (expandedSide != null) {
       scheduleIdleCollapse();
     } else {
       clearIdleTimer();
     }
     return clearIdleTimer;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- scheduleIdleCollapse uses refs
-  }, [expanded]);
+  }, [expandedSide]);
 
   const animatedSelectionStyle = useAnimatedStyle(() => ({
-    borderLeftWidth: sideBorderSV.value,
-    borderRightWidth: sideBorderSV.value,
+    borderLeftWidth: leftBorderSV.value,
+    borderRightWidth: rightBorderSV.value,
     opacity: selectionOpacitySV.value,
   }));
 
   const animatedLeftHandleStyle = useAnimatedStyle(() => ({
-    width: handleTouchSV.value,
-    left: trimLeftSV.value - handleTouchSV.value / 2,
+    width: leftHandleTouchSV.value,
+    left: trimLeftSV.value - leftHandleTouchSV.value / 2,
     height: trackHeightSV.value,
   }));
 
   const animatedRightHandleStyle = useAnimatedStyle(() => ({
-    width: handleTouchSV.value,
-    left: trimRightSV.value - handleTouchSV.value / 2,
+    width: rightHandleTouchSV.value,
+    left: trimRightSV.value - rightHandleTouchSV.value / 2,
     height: trackHeightSV.value,
   }));
 
-  const beginTrimGestureRef = useRef(() => {});
+  const beginTrimGestureRef = useRef((_side: TrimSide) => {});
   beginTrimGestureRef.current = () => {
     dragActiveRef.current = false;
     scrollXAtGrant.current = trimScrollHelpersRef.current.getScrollX();
@@ -591,17 +611,19 @@ function TrackTrimOverlay({
     trimScrollHelpersRef.current.onTrimGestureActive(true);
   };
 
-  const endTrimGestureRef = useRef((_event: GestureResponderEvent, _gesture: PanResponderGestureState) => {});
-  endTrimGestureRef.current = (_event, gesture) => {
+  const endTrimGestureRef = useRef(
+    (_side: TrimSide, _event: GestureResponderEvent, _gesture: PanResponderGestureState) => {}
+  );
+  endTrimGestureRef.current = (side, _event, gesture) => {
     const movement = Math.abs(gesture.dx) + Math.abs(gesture.dy);
     const isTap = !dragActiveRef.current && movement < TRIM_TAP_MOVE_THRESHOLD;
     selectionOpacitySV.value = withTiming(1, { duration: 120 });
     trimScrollHelpersRef.current.onTrimGestureActive(false);
     if (isTap) {
-      toggleExpandedFromTap();
+      toggleExpandedFromTap(side);
       return;
     }
-    expandHandles();
+    expandSide(side);
   };
 
   const getEffectiveDx = (gesture: PanResponderGestureState): number => {
@@ -609,11 +631,7 @@ function TrackTrimOverlay({
     return gesture.dx + (helpers.getScrollX() - scrollXAtGrant.current);
   };
 
-  const applyEdgeAutoScroll = (contentX: number) => {
-    trimScrollHelpersRef.current.autoScrollForContentX(contentX);
-  };
-
-  const ensureDragActive = (gesture: PanResponderGestureState) => {
+  const ensureDragActive = (side: TrimSide, gesture: PanResponderGestureState) => {
     if (dragActiveRef.current) {
       return true;
     }
@@ -623,68 +641,53 @@ function TrackTrimOverlay({
     }
     dragActiveRef.current = true;
     selectionOpacitySV.value = withTiming(TRIM_DRAG_HANDLE_OPACITY, { duration: 80 });
-    expandHandles();
+    expandSide(side);
     return true;
   };
 
+  /** Snap a file-time trim edge; do not clamp to memo layoutDuration. */
   const applyTrimSnap = (fileTime: number): number => {
     const interval = snapIntervalRef.current;
     if (interval == null || !(interval > 0)) {
       return fileTime;
     }
-    const trackData = trackRef.current;
-    const timelineTime = trackData.startTime + fileTime;
-    const snappedTimeline = snapTimeToGrid(
-      timelineTime,
-      interval,
-      layoutDurationRef.current
-    );
-    return snappedTimeline - trackData.startTime;
+    const timelineTime = layerStartTimeRef.current + fileTime;
+    const snappedTimeline = Math.round(timelineTime / interval) * interval;
+    return snappedTimeline - layerStartTimeRef.current;
   };
 
   const leftMoveRef = useRef((_event: GestureResponderEvent, gesture: PanResponderGestureState) => {});
   leftMoveRef.current = (_event, gesture) => {
-    if (!ensureDragActive(gesture)) {
+    if (!ensureDragActive('left', gesture)) {
       return;
     }
     noteInteraction();
-    const trackData = trackRef.current;
     const pps = pixelsPerSecondRef.current;
-    const offset = sidePaddingRef.current + trackData.startTime * pps;
-    const preliminaryDx = getEffectiveDx(gesture);
-    applyEdgeAutoScroll(
-      offset + (startTrimIn.current + preliminaryDx / pps) * pps
-    );
     const effectiveDx = getEffectiveDx(gesture);
     const rawIn = applyTrimSnap(startTrimIn.current + effectiveDx / pps);
-    const quantizeSec =
-      snapIntervalRef.current != null && snapIntervalRef.current > 0 ? null : undefined;
-    const next = clampTrimValues(rawIn, startTrimOut.current, trackData.duration, quantizeSec);
+    const next = clampTrimValues(
+      rawIn,
+      startTrimOut.current,
+      layerDurationRef.current,
+      null
+    );
     onChangeRef.current(next.trimIn, next.trimOut);
   };
 
   const rightMoveRef = useRef((_event: GestureResponderEvent, gesture: PanResponderGestureState) => {});
   rightMoveRef.current = (_event, gesture) => {
-    if (!ensureDragActive(gesture)) {
+    if (!ensureDragActive('right', gesture)) {
       return;
     }
     noteInteraction();
-    const trackData = trackRef.current;
     const pps = pixelsPerSecondRef.current;
-    const offset = sidePaddingRef.current + trackData.startTime * pps;
-    const preliminaryDx = getEffectiveDx(gesture);
-    applyEdgeAutoScroll(
-      offset + (startTrimOut.current + preliminaryDx / pps) * pps
-    );
     const effectiveDx = getEffectiveDx(gesture);
     const rawOut = applyTrimSnap(startTrimOut.current + effectiveDx / pps);
-    const quantizeSec =
-      snapIntervalRef.current != null && snapIntervalRef.current > 0 ? null : undefined;
     const next = clampTrimValues(
       startTrimIn.current,
       rawOut,
-      trackData.duration,
-      quantizeSec
+      layerDurationRef.current,
+      null
     );
     onChangeRef.current(next.trimIn, next.trimOut);
   };
@@ -700,51 +703,29 @@ function TrackTrimOverlay({
   const leftResponder = useRef(
     PanResponder.create({
       ...trimPanCapture,
-      onPanResponderGrant: () => beginTrimGestureRef.current(),
+      onPanResponderGrant: () => beginTrimGestureRef.current('left'),
       onPanResponderMove: (event, gesture) => leftMoveRef.current(event, gesture),
-      onPanResponderRelease: (event, gesture) => endTrimGestureRef.current(event, gesture),
-      onPanResponderTerminate: (event, gesture) => endTrimGestureRef.current(event, gesture),
+      onPanResponderRelease: (event, gesture) =>
+        endTrimGestureRef.current('left', event, gesture),
+      onPanResponderTerminate: (event, gesture) =>
+        endTrimGestureRef.current('left', event, gesture),
     })
   ).current;
 
   const rightResponder = useRef(
     PanResponder.create({
       ...trimPanCapture,
-      onPanResponderGrant: () => beginTrimGestureRef.current(),
+      onPanResponderGrant: () => beginTrimGestureRef.current('right'),
       onPanResponderMove: (event, gesture) => rightMoveRef.current(event, gesture),
-      onPanResponderRelease: (event, gesture) => endTrimGestureRef.current(event, gesture),
-      onPanResponderTerminate: (event, gesture) => endTrimGestureRef.current(event, gesture),
+      onPanResponderRelease: (event, gesture) =>
+        endTrimGestureRef.current('right', event, gesture),
+      onPanResponderTerminate: (event, gesture) =>
+        endTrimGestureRef.current('right', event, gesture),
     })
   ).current;
 
   return (
     <>
-      {trimLeft > trackOffset ? (
-        <View
-          pointerEvents="none"
-          style={[
-            styles.trimDim,
-            {
-              left: trackOffset,
-              width: trimLeft - trackOffset,
-              height: trackHeight,
-            },
-          ]}
-        />
-      ) : null}
-      {trimRight < trackEnd ? (
-        <View
-          pointerEvents="none"
-          style={[
-            styles.trimDim,
-            {
-              left: trimRight,
-              width: trackEnd - trimRight,
-              height: trackHeight,
-            },
-          ]}
-        />
-      ) : null}
       <Animated.View
         pointerEvents="none"
         style={[
@@ -1054,6 +1035,8 @@ function areTrackWaveformRowPropsEqual(
   }
   if (
     prev.trimOverlay?.layerId !== next.trimOverlay?.layerId ||
+    prev.trimOverlay?.layerStartTime !== next.trimOverlay?.layerStartTime ||
+    prev.trimOverlay?.layerDuration !== next.trimOverlay?.layerDuration ||
     prev.trimOverlay?.trimIn !== next.trimOverlay?.trimIn ||
     prev.trimOverlay?.trimOut !== next.trimOverlay?.trimOut ||
     prev.trimOverlay?.snapIntervalSec !== next.trimOverlay?.snapIntervalSec
@@ -1268,11 +1251,11 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
         : liveTrackOffset + liveTrackWidth;
   const selectionStart =
     showTrimOverlay && trimOverlay
-      ? trackOffset + trimOverlay.trimIn * pixelsPerSecond
+      ? trackOffset
       : fullSelectionStart;
   const selectionEnd =
     showTrimOverlay && trimOverlay
-      ? trackOffset + trimOverlay.trimOut * pixelsPerSecond
+      ? trackOffset + cycleDuration * pixelsPerSecond
       : fullSelectionEnd;
   const selectionWidth = selectionEnd - selectionStart;
 
@@ -1495,10 +1478,6 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
                   // Sample one bar — never allocate a full-track resample on zoom.
                   const peak = normalizePeakAt(track.peaks, cycleBarCount, peakIndex);
                   const barTime = (index * BAR_STEP) / pixelsPerSecond;
-                  const inKeepRegion =
-                    !showTrimOverlay ||
-                    !trimOverlay ||
-                    (barTime >= trimOverlay.trimIn && barTime < trimOverlay.trimOut);
                   const trackFades = {
                     fadeInSec: track.fadeInSec ?? 0,
                     fadeOutSec: track.fadeOutSec ?? 0,
@@ -1510,23 +1489,11 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
                     trackFades.fadeInSec > 0 ||
                     trackFades.fadeOutSec > 0
                   ) {
-                    if (showTrimOverlay && trimOverlay) {
-                      const activeDuration = Math.max(
-                        0,
-                        trimOverlay.trimOut - trimOverlay.trimIn
-                      );
-                      const activeTime = barTime - trimOverlay.trimIn;
-                      fadeScale =
-                        inKeepRegion && activeDuration > 0
-                          ? fadeEnvelopeGain(activeTime, activeDuration, trackFades)
-                          : 1;
-                    } else {
-                      fadeScale = fadeEnvelopeGain(
-                        barTime,
-                        track.duration,
-                        trackFades
-                      );
-                    }
+                    fadeScale = fadeEnvelopeGain(
+                      barTime,
+                      track.duration,
+                      trackFades
+                    );
                   }
                   const scaled = peakToAbsoluteScale(peak) * volumeScale * fadeScale;
                   const maxBar = Math.max(4, bodyHeight - 8);
@@ -1535,11 +1502,7 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
                       ? 2
                       : Math.max(4, Math.min(maxBar, scaled * maxBar));
                   const isLoopedCycle = barTime >= cycleDuration - TRACK_LOOP_EPSILON;
-                  const fillColor = !inKeepRegion
-                    ? mutedBarColor
-                    : isLoopedCycle
-                      ? loopedBarColor
-                      : barColor;
+                  const fillColor = isLoopedCycle ? loopedBarColor : barColor;
                   return (
                     <View
                       key={index}
@@ -1647,7 +1610,8 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
       ) : null}
       {showTrimOverlay && trimOverlay && trimScrollHelpers ? (
         <TrackTrimOverlay
-          layoutDuration={layoutDuration}
+          layerDuration={trimOverlay.layerDuration}
+          layerStartTime={trimOverlay.layerStartTime}
           pixelsPerSecond={pixelsPerSecond}
           sidePadding={sidePadding}
           snapIntervalSec={trimOverlay.snapIntervalSec}
@@ -3249,7 +3213,9 @@ function WaveformViewComponent({
                       key={track.id}
                       entering={animateTrackTransition ? TRACK_ROW_ENTER : undefined}
                       exiting={animateTrackTransition ? TRACK_ROW_EXIT : undefined}
-                      needsOffscreenAlphaCompositing
+                      needsOffscreenAlphaCompositing={
+                        !isRecording && !recordingLayoutActive
+                      }
                       style={{ width: bandWidth, height: trackHeight }}>
                       <TrackWaveformRow
                         bandWidth={bandWidth}
@@ -3436,6 +3402,8 @@ function areWaveformViewPropsEqual(prev: Props, next: Props): boolean {
   if (
     !areOverlayConfigsEqual(prev.trimOverlay, next.trimOverlay, [
       'layerId',
+      'layerStartTime',
+      'layerDuration',
       'trimIn',
       'trimOut',
       'onChange',

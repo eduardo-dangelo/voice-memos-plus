@@ -7,6 +7,27 @@ export const PLAYBACK_END_TOLERANCE = 0.05;
 export const PLAYBACK_SCHEDULE_CHUNK_SEC = 12;
 export const PLAYBACK_SCHEDULE_EXTEND_LEAD_SEC = 2;
 
+/** Base AudioContext lead before the first source `start()` in runPlay. */
+export const PLAYBACK_SCHEDULE_LEAD_SEC = 0.01;
+/** Extra lead per ready plan when arming many loop-cycle sources. */
+export const PLAYBACK_SCHEDULE_LEAD_PER_PLAN_SEC = 0.002;
+/** Cap so warm multi-cycle schedules still stay responsive. */
+export const PLAYBACK_SCHEDULE_LEAD_MAX_SEC = 0.08;
+
+/**
+ * Schedule lead before arming sources. Grows with ready-plan count so a burst of
+ * loop-cycle BufferSources does not start after the UI clock origin.
+ */
+export function playbackScheduleLeadSec(readyPlanCount: number): number {
+  const count = Math.max(0, Math.floor(readyPlanCount));
+  const lead =
+    PLAYBACK_SCHEDULE_LEAD_SEC + PLAYBACK_SCHEDULE_LEAD_PER_PLAN_SEC * count;
+  return Math.min(
+    PLAYBACK_SCHEDULE_LEAD_MAX_SEC,
+    Math.max(PLAYBACK_SCHEDULE_LEAD_SEC, lead)
+  );
+}
+
 export type LayerPlaybackPlanSpec = {
   layer: LoadedLayer;
   playbackEffects: LayerEffects;

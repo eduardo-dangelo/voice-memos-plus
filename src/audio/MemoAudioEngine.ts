@@ -36,6 +36,7 @@ import {
   filterPlaybackPlansBySilentLayer,
   getLayerEffectsForPlayback,
   partitionPlansByHorizon,
+  playbackScheduleLeadSec,
   PLAYBACK_END_TOLERANCE,
   PLAYBACK_SCHEDULE_CHUNK_SEC,
   PLAYBACK_SCHEDULE_EXTEND_LEAD_SEC,
@@ -75,6 +76,10 @@ import {
     type Memo,
 } from '@/src/storage/types';
 import { loadMemoIntoEngine } from '@/src/audio/loadMemoIntoEngine';
+import {
+  getResampledCacheKeysForPath,
+  layersNeedingBufferInvalidation,
+} from '@/src/audio/layerBufferCache';
 
 type SessionMode = 'recording' | 'playback' | null;
 
@@ -263,6 +268,11 @@ export class MemoAudioEngine {
   private pendingLayerPlaybacks: LayerPlaybackPlan[] = [];
   /** Monitor-mix schedules dry-only; normal play includes wet paths. */
   private layerPlaybackDryOnly = false;
+  /**
+   * Timeline end of the last monitor-mix plan window that was generated.
+   * Next windows are built in extendMonitorMixSchedule (avoids full loopUntil plan storms).
+   */
+  private monitorMixPlannedUntil = 0;
   private mixGraph = new MemoMixGraph();
   private metronomeSettings: MetronomeSettings = DEFAULT_METRONOME_SETTINGS;
   private metronomeGain: GainNode | null = null;
@@ -277,7 +287,11 @@ export class MemoAudioEngine {
   /** False while Phase B warmup runs so precount clicks cannot rebuild a stale graph. */
   private allowPrecountClicks = true;
   private deferredPlaybackSetup = false;
-  private pendingEngineReload: { memo: Memo; seekTime: number } | null = null;
+  private pendingEngineReload: {
+    memo: Memo;
+    seekTime: number;
+    invalidatePaths?: string[];
+  } | null = null;
   private deferredSetupInFlight: Promise<void> | null = null;
   private recordingSessionPrewarmed = false;
   private stopCaptureInFlight = false;
@@ -608,8 +622,17 @@ export class MemoAudioEngine {
     }
   }
 
-  scheduleDeferredEngineReload(memo: Memo, seekTime: number): void {
-    this.pendingEngineReload = { memo, seekTime };
+  scheduleDeferredEngineReload(
+    memo: Memo,
+    seekTime: number,
+    invalidatePaths?: string[]
+  ): void {
+    this.pendingEngineReload = {
+      memo,
+      seekTime,
+      invalidatePaths:
+        invalidatePaths && invalidatePaths.length > 0 ? invalidatePaths : undefined,
+    };
   }
 
   async finishDeferredPlaybackSetup(): Promise<void> {
@@ -630,6 +653,12 @@ export class MemoAudioEngine {
         await this.resetPlaybackGraph();
         await this.configureForPlayback();
         if (pending) {
+          if (pending.invalidatePaths) {
+            for (const path of pending.invalidatePaths) {
+              this.invalidateLayerBufferForPath(path);
+            }
+            this.resetRecordingWarmupCaches();
+          }
           await loadMemoIntoEngine(this, pending.memo, pending.seekTime);
         }
       } catch (error) {
@@ -951,8 +980,8 @@ export class MemoAudioEngine {
   /**
    * Schedule monitor-mix playback + metronome at a fixed audio time.
    * Uses buffers warmed in finalizeRecordingWarmup — no awaits.
-   * Dry-only + tiled windows: skip delay/reverb DSP and schedule short chunks
-   * so long multi-layer stacks stay lighter on CPU.
+   * Dry-only + tiled windows: skip delay/reverb DSP and only materialize plans for
+   * the first schedule chunk (loopUntil footprints can be huge).
    */
   private startMonitorMixAt(startAt: number, startWhen: number): void {
     const context = this.context;
@@ -970,6 +999,7 @@ export class MemoAudioEngine {
 
     const playDuration = endAt - playStart;
     if (playDuration <= PLAYBACK_END_TOLERANCE) {
+      this.monitorMixPlannedUntil = 0;
       if (this.metronomeSettings.enabled) {
         this.armMetronomeForRecording(startAt, startWhen);
       }
@@ -988,51 +1018,14 @@ export class MemoAudioEngine {
     this.playbackRateAnchorPosition = playStart;
     this.layerPlaybackDryOnly = true;
 
-    const planSpecs = filterPlaybackPlansBySilentLayer(
-      this.buildPlaybackPlans(playStart, endAt),
-      this.monitorSilentLayerId
-    );
-    const resolvedPlans: LayerPlaybackPlan[] = [];
-
-    for (const plan of planSpecs) {
-      const buffer = this.recordingPlaybackBuffers.get(plan.layer.path);
-      if (!buffer) {
-        continue;
-      }
-
-      const resolved = resolvePlanAgainstBuffer(plan, buffer.duration);
-      if (!resolved) {
-        continue;
-      }
-
-      // Dry cue only while stacking — stored layer FX still apply on normal play.
-      resolvedPlans.push({
-        layer: plan.layer,
-        buffer,
-        playbackEffects: {
-          ...resolved.playbackEffects,
-          delay: { ...resolved.playbackEffects.delay, preset: 'off', mix: 0 },
-          reverb: { ...resolved.playbackEffects.reverb, preset: 'off', mix: 0 },
-        },
-        bufferOffset: resolved.bufferOffset,
-        delay: resolved.delay,
-        layerPlayLength: resolved.layerPlayLength,
-      });
-    }
-
-    const { ready, pending } = partitionPlansByHorizon(
-      resolvedPlans,
-      PLAYBACK_SCHEDULE_CHUNK_SEC
-    );
-    this.pendingLayerPlaybacks = pending;
-
-    let scheduledSources = 0;
-    for (const plan of ready) {
-      scheduledSources += this.scheduleResolvedLayerPlan(context, plan);
-    }
+    const horizonEnd = Math.min(endAt, playStart + PLAYBACK_SCHEDULE_CHUNK_SEC);
+    const scheduledSources = this.scheduleMonitorMixWindow(playStart, horizonEnd, 0);
+    this.monitorMixPlannedUntil = horizonEnd;
+    this.pendingLayerPlaybacks = [];
 
     if (scheduledSources === 0) {
       this.playbackContextStartWhen = 0;
+      this.monitorMixPlannedUntil = 0;
       this.resetPlaybackRateClock();
       if (this.metronomeSettings.enabled) {
         this.armMetronomeForRecording(startAt, startWhen);
@@ -1049,6 +1042,54 @@ export class MemoAudioEngine {
       this.metronomeAudioOrigin = startWhen;
       this.extendMetronomeOnlySchedule(playStart);
     }
+  }
+
+  /**
+   * Build and arm monitor-mix plans for [windowStart, windowEnd).
+   * `delayBias` shifts plan.delay so it stays relative to playbackStartAt.
+   */
+  private scheduleMonitorMixWindow(
+    windowStart: number,
+    windowEnd: number,
+    delayBias: number
+  ): number {
+    const context = this.context;
+    if (!context || windowEnd <= windowStart + PLAYBACK_END_TOLERANCE) {
+      return 0;
+    }
+
+    const planSpecs = filterPlaybackPlansBySilentLayer(
+      this.buildPlaybackPlans(windowStart, windowEnd),
+      this.monitorSilentLayerId
+    );
+
+    let scheduledSources = 0;
+    for (const plan of planSpecs) {
+      const buffer = this.recordingPlaybackBuffers.get(plan.layer.path);
+      if (!buffer) {
+        continue;
+      }
+
+      const resolved = resolvePlanAgainstBuffer(plan, buffer.duration);
+      if (!resolved) {
+        continue;
+      }
+
+      scheduledSources += this.scheduleResolvedLayerPlan(context, {
+        layer: plan.layer,
+        buffer,
+        playbackEffects: {
+          ...resolved.playbackEffects,
+          delay: { ...resolved.playbackEffects.delay, preset: 'off', mix: 0 },
+          reverb: { ...resolved.playbackEffects.reverb, preset: 'off', mix: 0 },
+        },
+        bufferOffset: resolved.bufferOffset,
+        delay: resolved.delay + delayBias,
+        layerPlayLength: resolved.layerPlayLength,
+      });
+    }
+
+    return scheduledSources;
   }
 
   /**
@@ -1286,13 +1327,37 @@ export class MemoAudioEngine {
       !this.state.isRecording ||
       !this.state.monitorMixActive ||
       !this.context ||
-      this.playbackContextStartWhen <= 0 ||
-      !this.hasLayerPlaybackScheduled()
+      this.playbackContextStartWhen <= 0
     ) {
       return;
     }
 
-    this.extendLayerPlaybackSchedule(timelineNow);
+    if (this.hasLayerPlaybackScheduled()) {
+      this.extendLayerPlaybackSchedule(timelineNow);
+    }
+
+    if (this.monitorMixPlannedUntil <= 0) {
+      return;
+    }
+    if (
+      timelineNow <
+      this.monitorMixPlannedUntil - PLAYBACK_SCHEDULE_EXTEND_LEAD_SEC
+    ) {
+      return;
+    }
+
+    const windowStart = this.monitorMixPlannedUntil;
+    const windowEnd = Math.min(
+      this.playbackEndAt,
+      windowStart + PLAYBACK_SCHEDULE_CHUNK_SEC
+    );
+    if (windowEnd <= windowStart + PLAYBACK_END_TOLERANCE) {
+      return;
+    }
+
+    const delayBias = windowStart - this.playbackStartAt;
+    this.scheduleMonitorMixWindow(windowStart, windowEnd, delayBias);
+    this.monitorMixPlannedUntil = windowEnd;
   }
 
   /**
@@ -1689,6 +1754,7 @@ export class MemoAudioEngine {
     this.sources = [];
     this.activeLayerPlaybacks = [];
     this.pendingLayerPlaybacks = [];
+    this.monitorMixPlannedUntil = 0;
   }
 
   private stopMetronomeSources(): void {
@@ -2030,6 +2096,31 @@ export class MemoAudioEngine {
     this.resampledLayerBuffers.clear();
   }
 
+  private invalidateLayerBufferForPath(path: string): void {
+    if (!path) {
+      return;
+    }
+    this.layerBuffers.delete(path);
+    for (const key of getResampledCacheKeysForPath(
+      path,
+      this.resampledLayerBuffers.keys()
+    )) {
+      this.resampledLayerBuffers.delete(key);
+    }
+  }
+
+  /** Evict decoded/resampled PCM for a layer file (e.g. after in-place replace). */
+  invalidateLayerBuffer(path: string): void {
+    this.invalidateLayerBufferForPath(path);
+    this.resetRecordingWarmupCaches();
+  }
+
+  private resetRecordingWarmupCaches(): void {
+    this.recordingPlaybackBuffers.clear();
+    this.recordingWarmupFinalized = false;
+    this.recordingPrepared = false;
+  }
+
   private pruneLayerBuffers(): void {
     const activePaths = new Set(this.loadedLayers.map((layer) => layer.path));
     for (const path of this.layerBuffers.keys()) {
@@ -2068,6 +2159,7 @@ export class MemoAudioEngine {
     if (!path || buffer.length <= 0) {
       return;
     }
+    this.invalidateLayerBufferForPath(path);
     this.layerBuffers.set(path, buffer);
   }
 
@@ -2261,6 +2353,15 @@ export class MemoAudioEngine {
     this.stopPlayback();
     this.disposeMixGraph();
     clearReverbIrCache();
+
+    const previousLayers = this.loadedLayers;
+    const pathsToInvalidate = layersNeedingBufferInvalidation(previousLayers, layers);
+    for (const path of pathsToInvalidate) {
+      this.invalidateLayerBufferForPath(path);
+    }
+    if (pathsToInvalidate.length > 0) {
+      this.resetRecordingWarmupCaches();
+    }
 
     this.loadedLayers = layers;
     // Keep decoded PCM for unchanged layer paths across stack save/reload.
@@ -2619,6 +2720,9 @@ export class MemoAudioEngine {
     if (this.state.isRecording || this.recordingPrepared) {
       return;
     }
+
+    // Fresh arm — clear abort left by a prior cancelPreparedRecording / abort.
+    this.recordingStartAborted = false;
 
     const monitorMix = options?.monitorMix ?? false;
     this.preparedMonitorMix = monitorMix;
@@ -3085,6 +3189,7 @@ export class MemoAudioEngine {
       this.clearMetronomeOnlyState();
       this.clearMonitorMixDuck();
       this.playbackContextStartWhen = 0;
+      this.monitorMixPlannedUntil = 0;
       this.resetPlaybackRateClock();
       this.clearPlaybackTimer();
       this.clearRecordingSampleRateState();
@@ -3287,24 +3392,39 @@ export class MemoAudioEngine {
         return;
       }
 
-      const plans = await Promise.all(
-        planSpecs.map(async (plan) => {
-          const buffer = await this.getLayerBuffer(context, plan.layer);
-          const resolved = resolvePlanAgainstBuffer(plan, buffer.duration);
-          if (!resolved) {
-            return null;
-          }
-
-          return {
-            layer: plan.layer,
-            buffer,
-            playbackEffects: resolved.playbackEffects,
-            bufferOffset: resolved.bufferOffset,
-            delay: resolved.delay,
-            layerPlayLength: resolved.layerPlayLength,
-          };
+      const uniqueLayers = new Map<string, LoadedLayer>();
+      for (const plan of planSpecs) {
+        if (!uniqueLayers.has(plan.layer.id)) {
+          uniqueLayers.set(plan.layer.id, plan.layer);
+        }
+      }
+      const buffersByLayerId = new Map<string, AudioBuffer>();
+      await Promise.all(
+        [...uniqueLayers.values()].map(async (layer) => {
+          const buffer = await this.getLayerBuffer(context, layer);
+          buffersByLayerId.set(layer.id, buffer);
         })
       );
+
+      const plans = planSpecs.map((plan) => {
+        const buffer = buffersByLayerId.get(plan.layer.id);
+        if (!buffer) {
+          return null;
+        }
+        const resolved = resolvePlanAgainstBuffer(plan, buffer.duration);
+        if (!resolved) {
+          return null;
+        }
+
+        return {
+          layer: plan.layer,
+          buffer,
+          playbackEffects: resolved.playbackEffects,
+          bufferOffset: resolved.bufferOffset,
+          delay: resolved.delay,
+          layerPlayLength: resolved.layerPlayLength,
+        };
+      });
 
       // Another play()/stop may have started during buffer decode.
       if (
@@ -3326,17 +3446,17 @@ export class MemoAudioEngine {
       // Re-apply effects from loaded state onto persisted channels/buses.
       this.syncMixGraph(context);
 
-      const when = context.currentTime + PLAYBACK_SCHEDULE_LEAD;
-      this.playbackContextStartWhen = when;
-      this.playbackRate = 1;
-      this.playbackRateAnchorContextTime = when;
-      this.playbackRateAnchorPosition = startAt;
-
       const { ready, pending } = partitionPlansByHorizon(
         resolvedPlans,
         PLAYBACK_SCHEDULE_CHUNK_SEC
       );
       this.pendingLayerPlaybacks = pending;
+
+      let when = context.currentTime + playbackScheduleLeadSec(ready.length);
+      this.playbackContextStartWhen = when;
+      this.playbackRate = 1;
+      this.playbackRateAnchorContextTime = when;
+      this.playbackRateAnchorPosition = startAt;
 
       let scheduledSources = 0;
       for (const plan of ready) {
@@ -3348,6 +3468,14 @@ export class MemoAudioEngine {
         this.resetPlaybackRateClock();
         this.pendingLayerPlaybacks = [];
         return;
+      }
+
+      // If arming overran the lead, re-anchor the UI clock to audible start.
+      if (context.currentTime > when) {
+        when = context.currentTime;
+        this.playbackContextStartWhen = when;
+        this.playbackRateAnchorContextTime = when;
+        this.playbackRateAnchorPosition = startAt;
       }
 
       this.scheduleMetronome(context, startAt, endAt, when);

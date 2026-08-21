@@ -7,7 +7,10 @@ import {
   buildLayerPlaybackPlans,
   filterPlaybackPlansBySilentLayer,
   partitionPlansByHorizon,
+  playbackScheduleLeadSec,
   PLAYBACK_SCHEDULE_CHUNK_SEC,
+  PLAYBACK_SCHEDULE_LEAD_MAX_SEC,
+  PLAYBACK_SCHEDULE_LEAD_SEC,
   resolvePlanAgainstBuffer,
 } from '@/src/audio/playbackPlans';
 
@@ -126,6 +129,18 @@ test('resolvePlanAgainstBuffer keeps later cycles at buffer start when starting 
   assert.ok(Math.abs(resolved[1]!.layerPlayLength - 10) < 0.001);
 });
 
+test('resolvePlanAgainstBuffer clamps to stale buffer when manifest duration grew', () => {
+  const layer = makeLayer('replaced', 0, 12);
+  const plans = buildLayerPlaybackPlans([layer], 0, 12);
+  assert.equal(plans.length, 1);
+  assert.ok(Math.abs(plans[0].layerPlayLength - 12) < 0.001);
+
+  const staleBufferDuration = 8;
+  const resolved = resolvePlanAgainstBuffer(plans[0], staleBufferDuration);
+  assert.ok(resolved);
+  assert.ok(Math.abs(resolved!.layerPlayLength - 8) < 0.001);
+});
+
 test('partitionPlansByHorizon only arms segments inside the schedule window', () => {
   const layer = makeLayer('looped', 0, 5);
   layer.loopUntil = 40;
@@ -139,4 +154,33 @@ test('partitionPlansByHorizon only arms segments inside the schedule window', ()
   // 5s cycles: delays 0,5,10 → three ready inside 12s horizon; rest pending.
   assert.equal(ready.length, 3);
   assert.equal(pending.length, 5);
+});
+
+test('windowed buildLayerPlaybackPlans only emits cycles intersecting the window', () => {
+  const layer = makeLayer('short-loop', 0, 2);
+  layer.loopUntil = 40; // 20 cycles of 2s
+  const full = buildLayerPlaybackPlans([layer], 0, 40);
+  assert.equal(full.length, 20);
+
+  const windowed = buildLayerPlaybackPlans([layer], 0, PLAYBACK_SCHEDULE_CHUNK_SEC);
+  assert.ok(windowed.length < full.length);
+  // Cycles at 0,2,4,6,8,10 → 6 segments intersecting [0, 12).
+  assert.equal(windowed.length, 6);
+  assert.ok(windowed.every((plan) => plan.delay < PLAYBACK_SCHEDULE_CHUNK_SEC));
+
+  const nextWindow = buildLayerPlaybackPlans(
+    [layer],
+    PLAYBACK_SCHEDULE_CHUNK_SEC,
+    PLAYBACK_SCHEDULE_CHUNK_SEC * 2
+  );
+  assert.equal(nextWindow.length, 6);
+  assert.ok(nextWindow.every((plan) => plan.delay < PLAYBACK_SCHEDULE_CHUNK_SEC));
+});
+
+test('playbackScheduleLeadSec grows with ready plans and stays bounded', () => {
+  assert.equal(playbackScheduleLeadSec(0), PLAYBACK_SCHEDULE_LEAD_SEC);
+  assert.equal(playbackScheduleLeadSec(1), PLAYBACK_SCHEDULE_LEAD_SEC + 0.002);
+  assert.ok(playbackScheduleLeadSec(10) > playbackScheduleLeadSec(1));
+  assert.equal(playbackScheduleLeadSec(1000), PLAYBACK_SCHEDULE_LEAD_MAX_SEC);
+  assert.equal(playbackScheduleLeadSec(-3), PLAYBACK_SCHEDULE_LEAD_SEC);
 });
