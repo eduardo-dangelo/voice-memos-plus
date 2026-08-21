@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
+  FOLLOW_BAR_PAINT_OVERSCAN_VIEWPORTS,
+  getFollowBarPaintTimeRange,
   getMetronomeGridBufferRange,
   getVisibleTimeRange,
   isMetronomeGridBufferValid,
@@ -28,6 +30,35 @@ test('getVisibleTimeRange clamps start at timeline origin', () => {
   const visible = getVisibleTimeRange(0, VIEWPORT, PPS);
   assert.equal(visible.start, 0);
   assert.ok(visible.end > 0);
+});
+
+test('getFollowBarPaintTimeRange pads past each visible edge', () => {
+  const playheadTime = 10;
+  const scrollX = playheadTime * PPS;
+  const visible = getVisibleTimeRange(scrollX, VIEWPORT, PPS);
+  const padded = getFollowBarPaintTimeRange(scrollX, VIEWPORT, PPS);
+  const padSec = (VIEWPORT / PPS) * FOLLOW_BAR_PAINT_OVERSCAN_VIEWPORTS;
+  assert.ok(padded.start < visible.start);
+  assert.ok(padded.end > visible.end);
+  assert.ok(Math.abs(padded.start - (visible.start - padSec)) < 1e-9);
+  assert.ok(Math.abs(padded.end - (visible.end + padSec)) < 1e-9);
+});
+
+test('getFollowBarPaintTimeRange clamps start at timeline origin', () => {
+  const padded = getFollowBarPaintTimeRange(0, VIEWPORT, PPS);
+  assert.equal(padded.start, 0);
+  assert.ok(padded.end > getVisibleTimeRange(0, VIEWPORT, PPS).end);
+});
+
+test('getFollowBarPaintTimeRange overscan scales with viewport width', () => {
+  const playheadTime = 20;
+  const scrollX = playheadTime * PPS;
+  const phone = getFollowBarPaintTimeRange(scrollX, 390, PPS);
+  const ipad = getFollowBarPaintTimeRange(scrollX, 1024, PPS);
+  const phonePad = phone.end - getVisibleTimeRange(scrollX, 390, PPS).end;
+  const ipadPad = ipad.end - getVisibleTimeRange(scrollX, 1024, PPS).end;
+  assert.ok(ipadPad > phonePad);
+  assert.ok(Math.abs(ipadPad / phonePad - 1024 / 390) < 1e-9);
 });
 
 test('isMetronomeGridBufferValid stays true near timeline end', () => {

@@ -62,8 +62,8 @@ import {
 } from '@/src/components/LoopRegionBar';
 import {
   buildMetronomeGridLines,
+  getFollowBarPaintTimeRange,
   getMetronomeGridBufferRange,
-  getVisibleTimeRange,
   isMetronomeGridBufferValid,
   METRONOME_GRID_BUFFER_VIEWPORTS,
   METRONOME_GRID_PLAYBACK_BUFFER_VIEWPORTS,
@@ -2018,19 +2018,29 @@ function WaveformViewComponent({
         gridDuration,
         bufferViewports
       );
-      // Always seed an invalid/empty viewport. Throttling only skips redundant
-      // refreshes of an already-valid buffer — otherwise stack/follow-scroll
-      // can paint with {0,0} and hitch (or used to mount every bar).
-      const viewportUninitialized =
-        viewportTimeBufferRef.current == null ||
-        viewportTimeBufferRef.current.end <= viewportTimeBufferRef.current.start;
-      if (!throttleCommits || viewportUninitialized || force) {
-        viewportTimeBufferRef.current = buffer;
-        lastViewportCommitMsRef.current = now;
-        setViewportTimeBuffer((prev) =>
-          prev.start === buffer.start && prev.end === buffer.end ? prev : buffer
-        );
-      }
+      // Always commit when invalid — never leave auto-scroll painting stale/empty.
+      // Throttle only applies to already-valid refreshes (playback visible paint).
+      viewportTimeBufferRef.current = buffer;
+      lastViewportCommitMsRef.current = now;
+      setViewportTimeBuffer((prev) =>
+        prev.start === buffer.start && prev.end === buffer.end ? prev : buffer
+      );
+    } else if (
+      // Playback paints visible-only bars; refresh the React window on the
+      // throttle cadence so remounts track the playhead (ScrollView alone
+      // cannot create bars ahead of the last paint range).
+      isPlayingRef.current &&
+      !followRecordingScroll &&
+      !throttleCommits &&
+      vpWidth > 0 &&
+      pps > 0
+    ) {
+      const visible = getFollowBarPaintTimeRange(nextScrollX, vpWidth, pps);
+      viewportTimeBufferRef.current = visible;
+      lastViewportCommitMsRef.current = now;
+      setViewportTimeBuffer((prev) =>
+        prev.start === visible.start && prev.end === visible.end ? prev : visible
+      );
     } else if (vpWidth <= 0 || pps <= 0 || gridDuration <= 0) {
       viewportTimeBufferRef.current = null;
       setViewportTimeBuffer((prev) =>
@@ -3117,14 +3127,18 @@ function WaveformViewComponent({
     setFollowLayoutDuration(0);
   }, [followRecordingScroll]);
 
-  // During capture, paint only the visible viewport (not 3× overscan) so peak
-  // emits remount far fewer bar Views on the live / stacked tracks.
+  // During capture or playback follow, paint the visible viewport plus a small
+  // overscan so virtualization edges stay off-screen between React refreshes.
+  // Idle/scrub keep the larger buffered overscan.
   const barPaintTimeRange =
-    isRecording && viewportWidth > 0 && layoutPixelsPerSecond > 0
-      ? getVisibleTimeRange(
+    (isRecording || isPlaying) && viewportWidth > 0 && layoutPixelsPerSecond > 0
+      ? getFollowBarPaintTimeRange(
           Math.max(
             0,
-            (getRecordingTimeRef.current?.() ?? currentTime) * layoutPixelsPerSecond
+            isRecording
+              ? (getRecordingTimeRef.current?.() ?? currentTime) *
+                  layoutPixelsPerSecond
+              : scrollOffsetRef.current
           ),
           viewportWidth,
           layoutPixelsPerSecond
@@ -3214,7 +3228,7 @@ function WaveformViewComponent({
                       entering={animateTrackTransition ? TRACK_ROW_ENTER : undefined}
                       exiting={animateTrackTransition ? TRACK_ROW_EXIT : undefined}
                       needsOffscreenAlphaCompositing={
-                        !isRecording && !recordingLayoutActive
+                        !isRecording && !recordingLayoutActive && !isPlaying
                       }
                       style={{ width: bandWidth, height: trackHeight }}>
                       <TrackWaveformRow

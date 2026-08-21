@@ -10,6 +10,8 @@ import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
 export {
   buildMetronomeGridLines,
+  FOLLOW_BAR_PAINT_OVERSCAN_VIEWPORTS,
+  getFollowBarPaintTimeRange,
   getMetronomeGridBufferRange,
   getVisibleTimeRange,
   isMetronomeGridBufferValid,

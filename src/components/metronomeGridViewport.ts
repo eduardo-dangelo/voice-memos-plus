@@ -34,6 +34,33 @@ export function getVisibleTimeRange(
   return { start, end };
 }
 
+/**
+ * Extra paint past each screen edge while play/record follow scrolls.
+ * Fraction of viewport width — scales for phone and iPad without device branches.
+ */
+export const FOLLOW_BAR_PAINT_OVERSCAN_VIEWPORTS = 0.2;
+
+/**
+ * Visible range plus a small overscan so virtualization edges stay off-screen
+ * between React paint refreshes during auto-scroll.
+ */
+export function getFollowBarPaintTimeRange(
+  scrollX: number,
+  viewportWidth: number,
+  pixelsPerSecond: number,
+  overscanViewports = FOLLOW_BAR_PAINT_OVERSCAN_VIEWPORTS
+): { start: number; end: number } {
+  const visible = getVisibleTimeRange(scrollX, viewportWidth, pixelsPerSecond);
+  if (viewportWidth <= 0 || pixelsPerSecond <= 0) {
+    return visible;
+  }
+  const pad = (viewportWidth / pixelsPerSecond) * overscanViewports;
+  return {
+    start: Math.max(0, visible.start - pad),
+    end: visible.end + pad,
+  };
+}
+
 /** Dummy/empty-lane duration used before a real clip length is known. */
 export const PLACEHOLDER_TIMELINE_DURATION_SEC = 0.02;
 
