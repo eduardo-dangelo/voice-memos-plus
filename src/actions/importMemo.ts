@@ -1,6 +1,7 @@
 import { copyIncomingProjectAsync, pickProjectAsync } from 'project-document-picker';
 import { Alert } from 'react-native';
 
+import { showImportSuccess } from '@/src/components/ImportSuccessDialog';
 import {
   isProjectFileName,
   readProjectArchiveFromUri,
@@ -113,8 +114,8 @@ export function promptImportMemo(
       if (result.status === 'canceled') {
         return;
       }
-      Alert.alert('Imported', `“${result.memo.title}” was added to your library.`);
       options?.onImported?.(result.memo);
+      showImportSuccess({ title: result.memo.title });
     })
     .catch((error) => {
       Alert.alert(

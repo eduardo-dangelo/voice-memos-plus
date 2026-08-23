@@ -10,6 +10,7 @@ import { useColorScheme } from '@/components/useColorScheme';
 import type { VoiceMemosColorScheme } from '@/constants/VoiceMemosColors';
 import { AudioEngineProvider } from '@/src/audio/AudioEngineContext';
 import { memoAudioEngine } from '@/src/audio/MemoAudioEngine';
+import { ImportSuccessHost } from '@/src/components/ImportSuccessDialog';
 import { useIsRegularWidth } from '@/src/hooks/useIsRegularWidth';
 import { awaitSaveInFlight } from '@/src/recording/activeRecordingSession';
 import { ensureRecordingBootstrapComplete } from '@/src/recording/recordingBootstrap';
@@ -113,6 +114,7 @@ function RootNavigator() {
         <Stack.Screen
           name="import-project"
           options={{
+            presentation: 'fullScreenModal',
             headerShown: false,
             animation: 'none',
           }}
@@ -166,6 +168,8 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <AudioEngineProvider>
+          {/* Host before navigator so its layout effect registers before route effects. */}
+          <ImportSuccessHost />
           <RootNavigator />
         </AudioEngineProvider>
       </SafeAreaProvider>

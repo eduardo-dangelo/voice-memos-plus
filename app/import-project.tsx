@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react';
 import { ActivityIndicator, Alert, StyleSheet, Text, View } from 'react-native';
 
 import { importMemoFromUri } from '@/src/actions/importMemo';
+import { showImportSuccess } from '@/src/components/ImportSuccessDialog';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
 function firstParam(value: string | string[] | undefined): string | undefined {
@@ -10,6 +11,26 @@ function firstParam(value: string | string[] | undefined): string | undefined {
     return value;
   }
   return Array.isArray(value) ? value[0] : undefined;
+}
+
+function dismissToHome(): void {
+  if (router.canDismiss()) {
+    router.dismissAll();
+    return;
+  }
+  router.replace('/');
+}
+
+/** Close any prior form sheets, then open a single memo editor. */
+function openImportedMemo(memoId: string): void {
+  if (router.canDismiss()) {
+    router.dismissAll();
+    requestAnimationFrame(() => {
+      router.push(`/memo/${memoId}`);
+    });
+    return;
+  }
+  router.replace(`/memo/${memoId}`);
 }
 
 export default function ImportProjectScreen() {
@@ -26,21 +47,23 @@ export default function ImportProjectScreen() {
     const fileUri = firstParam(uri);
     if (!fileUri) {
       Alert.alert('Import failed', 'The project file could not be opened.');
-      router.replace('/');
+      dismissToHome();
       return;
     }
 
     void importMemoFromUri(fileUri)
       .then((memo) => {
-        Alert.alert('Imported', `“${memo.title}” was added to your library.`);
-        router.replace(`/memo/${memo.id}`);
+        // Leave the loading screen immediately. The success dialog must not gate
+        // navigation — its Modal can fail to present over a Files open-in flow.
+        openImportedMemo(memo.id);
+        showImportSuccess({ title: memo.title });
       })
       .catch((error) => {
         Alert.alert(
           'Import failed',
           error instanceof Error ? error.message : 'Unknown error'
         );
-        router.replace('/');
+        dismissToHome();
       });
   }, [uri]);
 
