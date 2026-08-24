@@ -1410,7 +1410,8 @@ export function MemoEditor({
         precountDismissResolveRef.current = finish;
         clearPrecountOverlay();
         // Android may not fire Modal onDismiss; never block arm forever.
-        setTimeout(finish, 80);
+        // 250ms gives iOS form-sheet/Modal teardown time before monitor-mix arm.
+        setTimeout(finish, 250);
       });
     } finally {
       precountDismissingRef.current = false;
@@ -1485,9 +1486,13 @@ export function MemoEditor({
         setPrecountNumber(n);
         void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         if (mode === 'sound') {
-          void engine.playMetronomeClick({ accent: n === 4 }).catch(() => {
+          const clickPromise = engine.playMetronomeClick({ accent: n === 4 }).catch(() => {
             // Click is best-effort during precount.
           });
+          // Await beat 4 so resume/context work finishes before the interval continues.
+          if (n === 4) {
+            await clickPromise;
+          }
         }
         const ok = await waitUntil(startMs + (i + 1) * intervalMs);
         if (!ok) {
@@ -1500,6 +1505,8 @@ export function MemoEditor({
       // freezes the UI at "1". Wait for onDismiss (not rAF).
       const beat1Deadline = startMs + 4 * intervalMs;
       await dismissPrecountAndWait();
+      // Extra frame so native Modal teardown finishes before sync monitor-mix arm.
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
       return {
         completed: true,
         nextBeatDeadlineMs: Math.max(beat1Deadline, Date.now()),

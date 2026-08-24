@@ -40,6 +40,12 @@ export const TIME_SIGNATURES: Record<TimeSignaturePreset, TimeSignatureConfig> =
 const normalClickCache = new WeakMap<AudioContext, AudioBuffer>();
 const accentClickCache = new WeakMap<AudioContext, AudioBuffer>();
 const secondaryAccentClickCache = new WeakMap<AudioContext, AudioBuffer>();
+const silentPrimeCache = new WeakMap<AudioContext, AudioBuffer>();
+
+/** Match metronome preview lead so one-shot precount clicks are not dropped. */
+export const PRECOUNT_CLICK_LEAD_SEC = 0.05;
+/** Short silent buffer to wake Bluetooth A2DP before the first audible click. */
+const SILENT_PRIME_DURATION_SEC = 0.04;
 
 /**
  * Synthesize a soft-edged sine click. Attack/release avoid the harsh crack
@@ -114,6 +120,38 @@ function getSecondaryAccentClickBuffer(context: AudioContext): AudioBuffer {
     secondaryAccentClickCache.set(context, buffer);
   }
   return buffer;
+}
+
+function getSilentPrimeBuffer(context: AudioContext): AudioBuffer {
+  let buffer = silentPrimeCache.get(context);
+  if (!buffer) {
+    const length = Math.max(1, Math.ceil(context.sampleRate * SILENT_PRIME_DURATION_SEC));
+    buffer = context.createBuffer(1, length, context.sampleRate);
+    // Channel data stays zero — true silence for A2DP wake without a pop.
+    silentPrimeCache.set(context, buffer);
+  }
+  return buffer;
+}
+
+/** Pre-build click buffers so the first precount accent does not pay synthesis cost. */
+export function prewarmMetronomeClickBuffers(context: AudioContext): void {
+  getNormalClickBuffer(context);
+  getAccentClickBuffer(context);
+}
+
+/** Schedule a short silent buffer on the metronome bus to warm the output route. */
+export function playSilentMetronomePrime(
+  context: AudioContext,
+  outputGain: GainNode
+): AudioBufferSourceNode {
+  const buffer = getSilentPrimeBuffer(context);
+  const when = context.currentTime + 0.01;
+  const source = context.createBufferSource();
+  source.buffer = buffer;
+  source.connect(outputGain);
+  source.start(when);
+  source.stop(when + SILENT_PRIME_DURATION_SEC);
+  return source;
 }
 
 export function getTimeSignatureConfig(timeSignature: TimeSignaturePreset): TimeSignatureConfig {
@@ -716,11 +754,12 @@ export function getMetronomeGridLinesInRange(
 export function playMetronomeClick(
   context: AudioContext,
   outputGain: GainNode,
-  options: { accent?: boolean } = {}
+  options: { accent?: boolean; scheduleLeadSec?: number } = {}
 ): AudioBufferSourceNode {
   const accent = options.accent ?? false;
   const buffer = accent ? getAccentClickBuffer(context) : getNormalClickBuffer(context);
-  const when = context.currentTime;
+  const lead = Math.max(0, options.scheduleLeadSec ?? 0);
+  const when = context.currentTime + lead;
 
   const source = context.createBufferSource();
   source.buffer = buffer;

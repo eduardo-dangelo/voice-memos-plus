@@ -42,8 +42,14 @@ import {
   PLAYBACK_SCHEDULE_EXTEND_LEAD_SEC,
   resolvePlanAgainstBuffer,
 } from '@/src/audio/playbackPlans';
-import { hasAnySoloActive, mergeLayerEffects, type LayerEffects, type LayerEffectsChange } from '@/src/audio/layerEffects';
-import { scheduleMetronomeClicks, playMetronomeClick as scheduleOneMetronomeClick } from '@/src/audio/metronome';
+import { hasAnySoloActive, isLayerAudible, mergeLayerEffects, type LayerEffects, type LayerEffectsChange } from '@/src/audio/layerEffects';
+import {
+  scheduleMetronomeClicks,
+  playMetronomeClick as scheduleOneMetronomeClick,
+  playSilentMetronomePrime,
+  prewarmMetronomeClickBuffers,
+  PRECOUNT_CLICK_LEAD_SEC,
+} from '@/src/audio/metronome';
 import { MemoMixGraph } from '@/src/audio/memoMixGraph';
 import { accumulatePeaksFromSamples } from '@/src/audio/recordingWaveformPeaks';
 import { appendAbsoluteRecordingPeaks } from '@/src/audio/recordingPeaksEmit';
@@ -94,6 +100,8 @@ const PLAYBACK_SCHEDULE_LEAD = 0.01;
 const RECORDING_SCHEDULE_LEAD = 0.015;
 /** Let the precount "1" click finish before arming replaces metronome sources. */
 const PRECOUNT_ONE_TAIL_MS = 40;
+/** Wait after silent prime so Bluetooth A2DP can wake before beat 4. */
+const PRECOUNT_SILENT_PRIME_SETTLE_MS = 100;
 /** Start the recorder this close to the audio downbeat after metro is already armed. */
 const RECORDING_RECORDER_WAKE_LEAD_SEC = 0.005;
 /** How far ahead to schedule metronome clicks while recording without monitor mix. */
@@ -542,6 +550,12 @@ export class MemoAudioEngine {
           console.warn('[MemoAudioEngine] recording route snapshot failed; continuing', error);
         }
       }
+      return;
+    }
+
+    // Armed for record (warmup / precount) — do not tear down the recording context.
+    if (this.recordingPrepared || this.recordingWarmupFinalized) {
+      await this.refreshOutputRouteKey();
       return;
     }
 
@@ -1062,9 +1076,14 @@ export class MemoAudioEngine {
       this.buildPlaybackPlans(windowStart, windowEnd),
       this.monitorSilentLayerId
     );
+    const anySoloActive = this.getAnySoloActive();
 
     let scheduledSources = 0;
     for (const plan of planSpecs) {
+      if (!isLayerAudible(plan.playbackEffects, anySoloActive)) {
+        continue;
+      }
+
       const buffer = this.recordingPlaybackBuffers.get(plan.layer.path);
       if (!buffer) {
         continue;
@@ -2425,7 +2444,7 @@ export class MemoAudioEngine {
     }
   }
 
-  /** Warm AudioContext + metronome gain so the first precount click is not delayed. */
+  /** Warm AudioContext + metronome bus so the first precount click is not dropped. */
   async primeMetronomeOutput(): Promise<void> {
     if (!this.allowPrecountClicks) {
       return;
@@ -2434,8 +2453,22 @@ export class MemoAudioEngine {
     if (!this.allowPrecountClicks || !context) {
       return;
     }
+    prewarmMetronomeClickBuffers(context);
     const gain = this.ensureMetronomeGain(context);
     gain.gain.value = this.metronomeSettings.volume / 100;
+
+    const primeSource = playSilentMetronomePrime(context, gain);
+    this.metronomeSources.push(primeSource);
+    primeSource.onEnded = () => {
+      const index = this.metronomeSources.indexOf(primeSource);
+      if (index >= 0) {
+        this.metronomeSources.splice(index, 1);
+      }
+    };
+
+    await new Promise<void>((resolve) =>
+      setTimeout(resolve, PRECOUNT_SILENT_PRIME_SETTLE_MS)
+    );
   }
 
   /** One-shot click for precount (independent of metronome enabled). */
@@ -2451,6 +2484,7 @@ export class MemoAudioEngine {
     gain.gain.value = this.metronomeSettings.volume / 100;
     const source = scheduleOneMetronomeClick(context, gain, {
       accent: options.accent,
+      scheduleLeadSec: PRECOUNT_CLICK_LEAD_SEC,
     });
     this.metronomeSources.push(source);
     source.onEnded = () => {
@@ -2997,6 +3031,8 @@ export class MemoAudioEngine {
         }
         throwIfAborted();
 
+        // Waits can overrun the precomputed downbeat — re-clamp like runPlay.
+        startWhen = Math.max(startWhen, context.currentTime + RECORDING_SCHEDULE_LEAD);
         armAudibleOutput(startWhen);
 
         const recorderWakeAtMs = deadlineMs - RECORDING_RECORDER_WAKE_LEAD_SEC * 1000;
