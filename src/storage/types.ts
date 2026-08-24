@@ -200,7 +200,7 @@ export function getMemoMetronomeSettings(memo: Pick<Memo, 'metronome'>): Metrono
 
 export type PrecountMode = 'off' | 'sound' | 'silent';
 
-export const PRECOUNT_MODES: PrecountMode[] = ['off', 'silent', 'sound'];
+export const PRECOUNT_MODES: PrecountMode[] = ['off', 'sound', 'silent'];
 
 export const DEFAULT_PRECOUNT_MODE: PrecountMode = 'sound';
 

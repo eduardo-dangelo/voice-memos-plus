@@ -54,7 +54,7 @@ export function PrecountButton({ mode, onCycle, disabled = false }: Props) {
 
   return (
     <Pressable
-      accessibilityHint="Cycles precount: silent, with sound, then off"
+      accessibilityHint="Cycles precount: with sound, silent, then off"
       accessibilityLabel={accessibilityLabelForMode(mode)}
       accessibilityRole="button"
       accessibilityState={{ selected: enabled, disabled }}

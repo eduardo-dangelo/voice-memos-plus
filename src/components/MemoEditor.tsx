@@ -2812,6 +2812,11 @@ export function MemoEditor({
     setRecordingRenameVisible(true);
   }, [memo]);
 
+  const handleTitleLongPress = useCallback(() => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    handleRename();
+  }, [handleRename]);
+
   const handleDuplicate = useCallback(async () => {
     if (!memo) {
       return;
@@ -2933,6 +2938,8 @@ export function MemoEditor({
           <Pressable
             accessibilityLabel="Rename"
             accessibilityRole="button"
+            delayLongPress={400}
+            onLongPress={handleTitleLongPress}
             onPress={handleRename}
             style={styles.headerTitlePressable}>
             <Text numberOfLines={1} style={styles.headerTitleText}>
@@ -2964,6 +2971,7 @@ export function MemoEditor({
       handleLockTracksMenu,
       handleMergeAllLayers,
       handleRename,
+      handleTitleLongPress,
       handleShare,
       handleUnlockTracksMenu,
       isPane,

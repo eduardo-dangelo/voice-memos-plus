@@ -1,4 +1,5 @@
 import { SymbolView } from 'expo-symbols';
+import * as Haptics from 'expo-haptics';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated from 'react-native-reanimated';
@@ -218,6 +219,7 @@ function RecordingRowComponent({
   const allowTitleRename = !selectionMode && !selectOnPress;
 
   const handleTitleLongPress = () => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     handleRename();
   };
 
