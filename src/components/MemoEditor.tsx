@@ -132,6 +132,9 @@ import {
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 import { formatDurationWithTenths } from '@/src/utils/format';
 
+const COMMIT_RECORDING_TIMEOUT_MS = 8000;
+const ARMED_UI_ABORT_DELAY_MS = 500;
+
 type MemoEditorEngineSlice = {
   memoId: string | null;
   isRecording: boolean;
@@ -549,6 +552,7 @@ export function MemoEditor({
   const settleRafRef = useRef<number | null>(null);
   const stackModeRef = useRef(false);
   const replaceModeRef = useRef(false);
+  const recordingArmedRef = useRef(false);
   const pendingRecordModeRef = useRef<'stack' | 'replace' | null>(null);
   const activeLayerIdRef = useRef<string | null>(null);
   const isSavingRecordingOnExit = useRef(false);
@@ -570,6 +574,7 @@ export function MemoEditor({
   const precountDismissResolveRef = useRef<(() => void) | null>(null);
   stackModeRef.current = stackMode;
   replaceModeRef.current = replaceMode;
+  recordingArmedRef.current = recordingArmed;
   activeLayerIdRef.current = activeLayerId;
 
   const prevMemoIdRef = useRef<string | undefined>(undefined);
@@ -2140,6 +2145,19 @@ export function MemoEditor({
     liveRecordingSnapshot.current = null;
   }, []);
 
+  const abortPreparedArming = useCallback(async () => {
+    engine.abortRecordingStartCommit();
+    clearPrecountOverlay();
+    if (engine.getState().isRecording) {
+      await engine.cancelRecording();
+    } else if (engine.isPreparedForRecording()) {
+      await engine.cancelPreparedRecording();
+    }
+    monitorMixRef.current = false;
+    clearArmedRecordingUi();
+    clearSession();
+  }, [clearArmedRecordingUi, clearPrecountOverlay, engine]);
+
   const loadMemo = useCallback(async (generation: number) => {
     if (!id) {
       return;
@@ -2379,6 +2397,9 @@ export function MemoEditor({
         });
 
         if (precountMode !== 'off') {
+          if (!engine.getState().isRecording && engine.isPreparedForRecording()) {
+            await engine.cancelPreparedRecording();
+          }
           await engine.prepareRecordingStart();
           await engine.finalizeRecordingWarmup();
           const precountResult = await runPrecount(precountMode, bpm);
@@ -2398,6 +2419,9 @@ export function MemoEditor({
           }
           nextBeatDeadlineMs = precountResult.nextBeatDeadlineMs;
         } else {
+          if (!engine.getState().isRecording && engine.isPreparedForRecording()) {
+            await engine.cancelPreparedRecording();
+          }
           await engine.prepareRecordingStart();
           await engine.finalizeRecordingWarmup();
         }
@@ -2451,11 +2475,14 @@ export function MemoEditor({
       if (engine.getState().isRecording || beginRecordingInFlight.current) {
         return;
       }
-      clearArmedRecordingUi();
-    }, 0);
+      if (precountOverlayActiveRef.current) {
+        return;
+      }
+      void abortPreparedArming();
+    }, ARMED_UI_ABORT_DELAY_MS);
     return () => clearTimeout(timer);
   }, [
-    clearArmedRecordingUi,
+    abortPreparedArming,
     engine,
     engineState.isRecording,
     recordingArmed,
@@ -2569,6 +2596,21 @@ export function MemoEditor({
         return;
       }
 
+      const isArmedUi =
+        recordingArmedRef.current ||
+        stackModeRef.current ||
+        replaceModeRef.current ||
+        engine.isPreparedForRecording();
+
+      if (!engine.getState().isRecording && isArmedUi) {
+        e.preventDefault();
+        void abortPreparedArming().then(() => {
+          applyPendingLocationNaming();
+          navigation.dispatch(e.data.action);
+        });
+        return;
+      }
+
       if (!engine.getState().isRecording) {
         applyPendingLocationNaming();
         return;
@@ -2584,7 +2626,7 @@ export function MemoEditor({
     });
 
     return unsubscribe;
-  }, [engine, id, navigation, stopAndSaveActiveRecording]);
+  }, [abortPreparedArming, engine, id, navigation, stopAndSaveActiveRecording]);
 
   const resetLayoutReady = useCallback(() => {
     setLayoutReady(false);
@@ -2633,6 +2675,11 @@ export function MemoEditor({
       resetLayoutReady();
       resetPerformanceWarningState();
       engine.pause();
+      if (!engine.getState().isRecording && engine.isPreparedForRecording()) {
+        engine.abortRecordingStartCommit();
+        void engine.cancelPreparedRecording();
+        clearSession();
+      }
       if (persistEffectsTimeout.current) {
         clearTimeout(persistEffectsTimeout.current);
       }
@@ -2666,7 +2713,16 @@ export function MemoEditor({
     if (!recordingSaved) {
       return;
     }
-      engine.pause();
+    if (
+      !engine.getState().isRecording &&
+      (recordingArmedRef.current ||
+        stackModeRef.current ||
+        replaceModeRef.current ||
+        engine.isPreparedForRecording())
+    ) {
+      await abortPreparedArming();
+    }
+    engine.pause();
     await confirmEditDraft(false);
     flushEffectsPersist();
     flushStartTimePersist();
@@ -2686,6 +2742,7 @@ export function MemoEditor({
     }
     onDismiss();
   }, [
+    abortPreparedArming,
     confirmEditDraft,
     engine,
     flushEffectsPersist,
@@ -3068,6 +3125,10 @@ export function MemoEditor({
     // Otherwise single-track replace (no preparing overlay) aborts before runPrecount.
     precountCancelledRef.current = false;
     try {
+      if (!engine.getState().isRecording && engine.isPreparedForRecording()) {
+        await engine.cancelPreparedRecording();
+      }
+
       if (!sidebarCollapsed && onToggleSidebar) {
         onToggleSidebar();
       }
@@ -3117,24 +3178,8 @@ export function MemoEditor({
 
       let nextBeatDeadlineMs: number | undefined;
       const precountMode = getMemoPrecountMode(memo);
-      const clearArmedRecordingState = () => {
-        monitorMixRef.current = false;
-        setReplaceMode(false);
-        setStackMode(false);
-        setRecordingArmed(false);
-        pendingRecordModeRef.current = null;
-        pendingRecordingColor.current = null;
-        liveRecordingSnapshot.current = null;
-        clearSession();
-      };
       const abortArmedRecording = async () => {
-        clearPrecountOverlay();
-        if (engine.getState().isRecording) {
-          await engine.cancelRecording();
-        } else {
-          await engine.cancelPreparedRecording();
-        }
-        clearArmedRecordingState();
+        await abortPreparedArming();
       };
       try {
         if (useMonitorMix) {
@@ -3183,13 +3228,22 @@ export function MemoEditor({
         // Dismiss teardown must not poison commit; only honor cancels after this point.
         precountCancelledRef.current = false;
 
-        await engine.commitRecordingStart({
+        const commitPromise = engine.commitRecordingStart({
           monitorMix: useMonitorMix,
           duckMonitorMix: useMonitorMix && duckMonitorMix,
           monitorStartTime: startTime,
           nextBeatDeadlineMs,
           silentLayerId: mode === 'replace' ? activeLayerId ?? undefined : undefined,
         });
+        await Promise.race([
+          commitPromise,
+          new Promise<never>((_, reject) =>
+            setTimeout(
+              () => reject(new Error('Recording start timed out')),
+              COMMIT_RECORDING_TIMEOUT_MS
+            )
+          ),
+        ]);
         clearPrecountOverlay();
         void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {
           // Best-effort — never abort a live take for haptics failure.

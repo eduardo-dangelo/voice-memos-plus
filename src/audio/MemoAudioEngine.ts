@@ -81,6 +81,7 @@ import {
     type MetronomeSettings,
     type Memo,
 } from '@/src/storage/types';
+import { isHeadphonesConnected } from '@/src/audio/headphoneDetection';
 import { loadMemoIntoEngine } from '@/src/audio/loadMemoIntoEngine';
 import {
   getResampledCacheKeysForPath,
@@ -100,8 +101,10 @@ const PLAYBACK_SCHEDULE_LEAD = 0.01;
 const RECORDING_SCHEDULE_LEAD = 0.015;
 /** Let the precount "1" click finish before arming replaces metronome sources. */
 const PRECOUNT_ONE_TAIL_MS = 40;
-/** Wait after silent prime so Bluetooth A2DP can wake before beat 4. */
+/** Wait after silent prime on speaker before beat 4. */
 const PRECOUNT_SILENT_PRIME_SETTLE_MS = 100;
+/** Longer settle when headphones are connected (A2DP wake). */
+const PRECOUNT_SILENT_PRIME_SETTLE_HEADPHONES_MS = 175;
 /** Start the recorder this close to the audio downbeat after metro is already armed. */
 const RECORDING_RECORDER_WAKE_LEAD_SEC = 0.005;
 /** How far ahead to schedule metronome clicks while recording without monitor mix. */
@@ -603,6 +606,14 @@ export class MemoAudioEngine {
 
   getState(): EngineState {
     return this.state;
+  }
+
+  /** True when Phase A/B warmup left a prepared recorder but capture has not started. */
+  isPreparedForRecording(): boolean {
+    return (
+      !this.state.isRecording &&
+      (this.recordingPrepared || this.recordingWarmupFinalized)
+    );
   }
 
   getPlaybackTime(): number {
@@ -1136,49 +1147,53 @@ export class MemoAudioEngine {
       playLength: plan.layerPlayLength,
     };
 
-    const drySources = [
-      this.schedulePathSource(
+    const drySource = this.schedulePathSource(
+      context,
+      channel.dry,
+      plan.buffer,
+      layerStartWhen,
+      stopWhen,
+      plan.bufferOffset,
+      fadeSchedule
+    );
+    if (!drySource) {
+      return 0;
+    }
+    const drySources = [drySource];
+    let scheduledSources = 1;
+
+    const delaySources: AudioBufferSourceNode[] = [];
+    if (hasDelay && channel.delay) {
+      const delaySource = this.schedulePathSource(
         context,
-        channel.dry,
+        channel.delay,
         plan.buffer,
         layerStartWhen,
         stopWhen,
         plan.bufferOffset,
         fadeSchedule
-      ),
-    ];
-    let scheduledSources = 1;
-
-    const delaySources: AudioBufferSourceNode[] = [];
-    if (hasDelay && channel.delay) {
-      delaySources.push(
-        this.schedulePathSource(
-          context,
-          channel.delay,
-          plan.buffer,
-          layerStartWhen,
-          stopWhen,
-          plan.bufferOffset,
-          fadeSchedule
-        )
       );
-      scheduledSources += 1;
+      if (delaySource) {
+        delaySources.push(delaySource);
+        scheduledSources += 1;
+      }
     }
 
     const reverbSources: AudioBufferSourceNode[] = [];
     if (hasReverb && channel.reverb) {
-      reverbSources.push(
-        this.schedulePathSource(
-          context,
-          channel.reverb,
-          plan.buffer,
-          layerStartWhen,
-          stopWhen,
-          plan.bufferOffset,
-          fadeSchedule
-        )
+      const reverbSource = this.schedulePathSource(
+        context,
+        channel.reverb,
+        plan.buffer,
+        layerStartWhen,
+        stopWhen,
+        plan.bufferOffset,
+        fadeSchedule
       );
-      scheduledSources += 1;
+      if (reverbSource) {
+        reverbSources.push(reverbSource);
+        scheduledSources += 1;
+      }
     }
 
     this.activeLayerPlaybacks.push({
@@ -1268,39 +1283,42 @@ export class MemoAudioEngine {
         this.playbackContextStartWhen + active.scheduleDelay + active.scheduledLength;
       const chunkBufferOffset = active.bufferOffset + active.scheduledLength;
 
-      active.drySources.push(
-        this.schedulePathSource(
+      const drySource = this.schedulePathSource(
+        context,
+        channel.dry,
+        active.buffer,
+        chunkStartWhen,
+        chunkStartWhen + chunk,
+        chunkBufferOffset
+      );
+      if (drySource) {
+        active.drySources.push(drySource);
+      }
+      if (active.hasDelay && channel.delay) {
+        const delaySource = this.schedulePathSource(
           context,
-          channel.dry,
+          channel.delay,
           active.buffer,
           chunkStartWhen,
           chunkStartWhen + chunk,
           chunkBufferOffset
-        )
-      );
-      if (active.hasDelay && channel.delay) {
-        active.delaySources.push(
-          this.schedulePathSource(
-            context,
-            channel.delay,
-            active.buffer,
-            chunkStartWhen,
-            chunkStartWhen + chunk,
-            chunkBufferOffset
-          )
         );
+        if (delaySource) {
+          active.delaySources.push(delaySource);
+        }
       }
       if (active.hasReverb && channel.reverb) {
-        active.reverbSources.push(
-          this.schedulePathSource(
-            context,
-            channel.reverb,
-            active.buffer,
-            chunkStartWhen,
-            chunkStartWhen + chunk,
-            chunkBufferOffset
-          )
+        const reverbSource = this.schedulePathSource(
+          context,
+          channel.reverb,
+          active.buffer,
+          chunkStartWhen,
+          chunkStartWhen + chunk,
+          chunkBufferOffset
         );
+        if (reverbSource) {
+          active.reverbSources.push(reverbSource);
+        }
       }
       active.scheduledLength += chunk;
     }
@@ -1924,23 +1942,30 @@ export class MemoAudioEngine {
     stopWhen: number,
     bufferOffset: number,
     fadeSchedule?: { effects: LayerEffects; playLength: number } | null
-  ): AudioBufferSourceNode {
-    const source = context.createBufferSource();
-    source.buffer = buffer;
-    this.mixGraph.connectSourceToPath(source, path);
-    source.start(startWhen, bufferOffset);
-    source.stop(stopWhen);
-    this.sources.push(source);
-    if (fadeSchedule) {
-      schedulePathFades(
-        path,
-        fadeSchedule.effects,
-        startWhen,
-        fadeSchedule.playLength,
-        bufferOffset
-      );
+  ): AudioBufferSourceNode | null {
+    try {
+      const source = context.createBufferSource();
+      source.buffer = buffer;
+      this.mixGraph.connectSourceToPath(source, path);
+      source.start(startWhen, bufferOffset);
+      source.stop(stopWhen);
+      this.sources.push(source);
+      if (fadeSchedule) {
+        schedulePathFades(
+          path,
+          fadeSchedule.effects,
+          startWhen,
+          fadeSchedule.playLength,
+          bufferOffset
+        );
+      }
+      return source;
+    } catch (error) {
+      if (__DEV__) {
+        console.warn('[MemoAudioEngine] schedulePathSource failed', error);
+      }
+      return null;
     }
-    return source;
   }
 
   /**
@@ -2060,17 +2085,19 @@ export class MemoAudioEngine {
       if (!nextChannel.delay) {
         return false;
       }
-      active.delaySources.push(
-        this.schedulePathSource(
-          context,
-          nextChannel.delay,
-          active.buffer,
-          startWhen,
-          stopWhen,
-          bufferOffset,
-          { effects: nextEffects, playLength: layerPlayLength }
-        )
+      const delaySource = this.schedulePathSource(
+        context,
+        nextChannel.delay,
+        active.buffer,
+        startWhen,
+        stopWhen,
+        bufferOffset,
+        { effects: nextEffects, playLength: layerPlayLength }
       );
+      if (!delaySource) {
+        return false;
+      }
+      active.delaySources.push(delaySource);
     }
 
     if (reverbChanged && wantReverb) {
@@ -2079,17 +2106,19 @@ export class MemoAudioEngine {
       if (!nextChannel.reverb) {
         return false;
       }
-      active.reverbSources.push(
-        this.schedulePathSource(
-          context,
-          nextChannel.reverb,
-          active.buffer,
-          startWhen,
-          stopWhen,
-          bufferOffset,
-          { effects: nextEffects, playLength: layerPlayLength }
-        )
+      const reverbSource = this.schedulePathSource(
+        context,
+        nextChannel.reverb,
+        active.buffer,
+        startWhen,
+        stopWhen,
+        bufferOffset,
+        { effects: nextEffects, playLength: layerPlayLength }
       );
+      if (!reverbSource) {
+        return false;
+      }
+      active.reverbSources.push(reverbSource);
     }
 
     active.hasDelay = wantDelay;
@@ -2466,9 +2495,11 @@ export class MemoAudioEngine {
       }
     };
 
-    await new Promise<void>((resolve) =>
-      setTimeout(resolve, PRECOUNT_SILENT_PRIME_SETTLE_MS)
-    );
+    const headphonesConnected = await isHeadphonesConnected();
+    const settleMs = headphonesConnected
+      ? PRECOUNT_SILENT_PRIME_SETTLE_HEADPHONES_MS
+      : PRECOUNT_SILENT_PRIME_SETTLE_MS;
+    await new Promise<void>((resolve) => setTimeout(resolve, settleMs));
   }
 
   /** One-shot click for precount (independent of metronome enabled). */
@@ -2729,8 +2760,14 @@ export class MemoAudioEngine {
     monitorMix?: boolean;
     duckMonitorMix?: boolean;
   }): Promise<void> {
-    if (this.state.isRecording || this.recordingPrepared) {
+    if (this.state.isRecording) {
       return;
+    }
+    if (this.recordingPrepared) {
+      if (this.recordingPrepareOptionsMatch(options)) {
+        return;
+      }
+      await this.cancelPreparedRecording();
     }
     if (this.recordingPrepareInFlight) {
       return this.recordingPrepareInFlight;
@@ -2747,12 +2784,51 @@ export class MemoAudioEngine {
     }
   }
 
+  private recordingPrepareOptionsMatch(options?: {
+    monitorMix?: boolean;
+    duckMonitorMix?: boolean;
+  }): boolean {
+    if (!this.recordingPrepared || !this.recorder) {
+      return false;
+    }
+    const monitorMix = options?.monitorMix ?? false;
+    const duckMonitorMix = Boolean(monitorMix && options?.duckMonitorMix);
+    return (
+      this.preparedMonitorMix === monitorMix &&
+      this.preparedDuckMonitorMix === duckMonitorMix
+    );
+  }
+
+  private finalizeWarmupOptionsMatch(options?: {
+    monitorMix?: boolean;
+    duckMonitorMix?: boolean;
+  }): boolean {
+    if (!this.recordingWarmupFinalized || !this.context || !this.recorder) {
+      return false;
+    }
+    const monitorMix = options?.monitorMix ?? this.preparedMonitorMix;
+    const duckMonitorMix =
+      options?.duckMonitorMix != null
+        ? Boolean((options.monitorMix ?? this.preparedMonitorMix) && options.duckMonitorMix)
+        : this.preparedDuckMonitorMix;
+    return (
+      this.preparedMonitorMix === monitorMix &&
+      this.preparedDuckMonitorMix === duckMonitorMix
+    );
+  }
+
   private async performPrepareRecordingStart(options?: {
     monitorMix?: boolean;
     duckMonitorMix?: boolean;
   }): Promise<void> {
-    if (this.state.isRecording || this.recordingPrepared) {
+    if (this.state.isRecording) {
       return;
+    }
+    if (this.recordingPrepared) {
+      if (this.recordingPrepareOptionsMatch(options)) {
+        return;
+      }
+      await this.cancelPreparedRecording();
     }
 
     // Fresh arm — clear abort left by a prior cancelPreparedRecording / abort.
@@ -2851,8 +2927,7 @@ export class MemoAudioEngine {
       return;
     }
 
-    // Fast path first — never await prepare in-flight if already warm (avoids hang).
-    if (this.recordingWarmupFinalized && this.context && this.recorder) {
+    if (this.finalizeWarmupOptionsMatch(options)) {
       if (options?.duckMonitorMix != null) {
         this.preparedDuckMonitorMix = Boolean(
           (options.monitorMix ?? this.preparedMonitorMix) && options.duckMonitorMix
@@ -2860,6 +2935,11 @@ export class MemoAudioEngine {
       }
       this.applyPreparedMonitorMixGain();
       return;
+    }
+
+    if (this.recordingWarmupFinalized) {
+      this.recordingWarmupFinalized = false;
+      this.recordingPlaybackBuffers.clear();
     }
 
     if (this.recordingPrepareInFlight) {
@@ -2877,7 +2957,7 @@ export class MemoAudioEngine {
       );
     }
 
-    if (this.recordingWarmupFinalized && this.context && this.recorder) {
+    if (this.finalizeWarmupOptionsMatch(options)) {
       this.applyPreparedMonitorMixGain();
       return;
     }
