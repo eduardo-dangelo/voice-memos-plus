@@ -12,6 +12,10 @@ export type MemoOptionsMenuHandlers = {
   onEditRecording?: () => void;
   onMoveToFolder?: () => void;
   onMergeLayers?: () => void;
+  onMuteTracks?: () => void;
+  onUnmuteTracks?: () => void;
+  onSoloTracks?: () => void;
+  onUnsoloTracks?: () => void;
   onLockTracks?: () => void;
   onUnlockTracks?: () => void;
   onDuplicate: () => void;
@@ -23,6 +27,10 @@ export type MemoOptionActionFlags = {
   includeMoveToFolder?: boolean;
   includeShare?: boolean;
   includeMergeLayers?: boolean;
+  includeMuteTracks?: boolean;
+  includeUnmuteTracks?: boolean;
+  includeSoloTracks?: boolean;
+  includeUnsoloTracks?: boolean;
   includeLockTracks?: boolean;
   includeUnlockTracks?: boolean;
 };
@@ -46,6 +54,10 @@ export function buildMemoOptionActions({
   includeMoveToFolder = false,
   includeShare = true,
   includeMergeLayers = false,
+  includeMuteTracks = false,
+  includeUnmuteTracks = false,
+  includeSoloTracks = false,
+  includeUnsoloTracks = false,
   includeLockTracks = false,
   includeUnlockTracks = false,
 }: MemoOptionActionFlags = {}): MemoOptionAction[] {
@@ -66,6 +78,18 @@ export function buildMemoOptionActions({
       title: 'Merge Layers',
       systemImage: 'square.stack.3d.down.right',
     });
+  }
+  if (includeMuteTracks) {
+    items.push({ id: 'muteTracks', title: 'Mute Tracks', systemImage: 'speaker.slash' });
+  }
+  if (includeUnmuteTracks) {
+    items.push({ id: 'unmuteTracks', title: 'Unmute Tracks', systemImage: 'speaker.wave.2' });
+  }
+  if (includeSoloTracks) {
+    items.push({ id: 'soloTracks', title: 'Solo Tracks', systemImage: 'headphones' });
+  }
+  if (includeUnsoloTracks) {
+    items.push({ id: 'unsoloTracks', title: 'Unsolo Tracks', systemImage: 'headphones' });
   }
   if (includeLockTracks) {
     items.push({ id: 'lockTracks', title: 'Lock Tracks', systemImage: 'lock' });
@@ -98,6 +122,10 @@ export function MemoOptionsMenu({
   includeMoveToFolder = false,
   includeShare = true,
   includeMergeLayers = false,
+  includeMuteTracks = false,
+  includeUnmuteTracks = false,
+  includeSoloTracks = false,
+  includeUnsoloTracks = false,
   includeLockTracks = false,
   includeUnlockTracks = false,
   onShare,
@@ -105,6 +133,10 @@ export function MemoOptionsMenu({
   onEditRecording,
   onMoveToFolder,
   onMergeLayers,
+  onMuteTracks,
+  onUnmuteTracks,
+  onSoloTracks,
+  onUnsoloTracks,
   onLockTracks,
   onUnlockTracks,
   onDuplicate,
@@ -119,6 +151,10 @@ export function MemoOptionsMenu({
           includeMoveToFolder,
           includeShare,
           includeMergeLayers,
+          includeMuteTracks,
+          includeUnmuteTracks,
+          includeSoloTracks,
+          includeUnsoloTracks,
           includeLockTracks,
           includeUnlockTracks,
         })
@@ -128,8 +164,12 @@ export function MemoOptionsMenu({
       includeLockTracks,
       includeMergeLayers,
       includeMoveToFolder,
+      includeMuteTracks,
       includeShare,
+      includeSoloTracks,
       includeUnlockTracks,
+      includeUnmuteTracks,
+      includeUnsoloTracks,
     ]
   );
 
@@ -153,6 +193,18 @@ export function MemoOptionsMenu({
             break;
           case 'mergeLayers':
             onMergeLayers?.();
+            break;
+          case 'muteTracks':
+            onMuteTracks?.();
+            break;
+          case 'unmuteTracks':
+            onUnmuteTracks?.();
+            break;
+          case 'soloTracks':
+            onSoloTracks?.();
+            break;
+          case 'unsoloTracks':
+            onUnsoloTracks?.();
             break;
           case 'lockTracks':
             onLockTracks?.();

@@ -530,6 +530,9 @@ export function MemoEditor({
   const [memoLockPickerMode, setMemoLockPickerMode] = useState<'lock' | 'unlock' | null>(
     null
   );
+  const [memoEffectsPickerMode, setMemoEffectsPickerMode] = useState<
+    'mute' | 'unmute' | 'solo' | 'unsolo' | null
+  >(null);
   const [trackMenuRename, setTrackMenuRename] = useState<{
     layerId: string;
     label: string;
@@ -1784,8 +1787,58 @@ export function MemoEditor({
     setTrackMenuMergePicker(false);
     setTrackMenuRename(null);
     setMemoLockPickerMode(null);
+    setMemoEffectsPickerMode(null);
     setMemoMergePickerVisible(true);
   }, [engineState.isRecording, memo]);
+
+  const openMemoEffectsPicker = useCallback(
+    (mode: 'mute' | 'unmute' | 'solo' | 'unsolo') => {
+      if (!memo || engineState.isRecording) {
+        return;
+      }
+      const hasApplicable = getPlayableLayers(memo).some((layer) => {
+        const effects = getLayerEffects(layer);
+        switch (mode) {
+          case 'mute':
+            return !effects.muted;
+          case 'unmute':
+            return effects.muted;
+          case 'solo':
+            return !effects.solo;
+          case 'unsolo':
+            return effects.solo;
+        }
+      });
+      if (!hasApplicable) {
+        return;
+      }
+      setTrackMenuLayerId(null);
+      setTrackMenuFormatPicker(false);
+      setTrackMenuMergePicker(false);
+      setTrackMenuRename(null);
+      setMemoMergePickerVisible(false);
+      setMemoLockPickerMode(null);
+      setMemoEffectsPickerMode(mode);
+    },
+    [engineState.isRecording, memo]
+  );
+
+  const handleMuteTracksMenu = useCallback(
+    () => openMemoEffectsPicker('mute'),
+    [openMemoEffectsPicker]
+  );
+  const handleUnmuteTracksMenu = useCallback(
+    () => openMemoEffectsPicker('unmute'),
+    [openMemoEffectsPicker]
+  );
+  const handleSoloTracksMenu = useCallback(
+    () => openMemoEffectsPicker('solo'),
+    [openMemoEffectsPicker]
+  );
+  const handleUnsoloTracksMenu = useCallback(
+    () => openMemoEffectsPicker('unsolo'),
+    [openMemoEffectsPicker]
+  );
 
   const handleLockTracksMenu = useCallback(() => {
     if (!memo || engineState.isRecording) {
@@ -1802,6 +1855,7 @@ export function MemoEditor({
     setTrackMenuMergePicker(false);
     setTrackMenuRename(null);
     setMemoMergePickerVisible(false);
+    setMemoEffectsPickerMode(null);
     setMemoLockPickerMode('lock');
   }, [engineState.isRecording, memo]);
 
@@ -1820,6 +1874,7 @@ export function MemoEditor({
     setTrackMenuMergePicker(false);
     setTrackMenuRename(null);
     setMemoMergePickerVisible(false);
+    setMemoEffectsPickerMode(null);
     setMemoLockPickerMode('unlock');
   }, [engineState.isRecording, memo]);
 
@@ -2088,6 +2143,7 @@ export function MemoEditor({
     setTrackMenuRename(null);
     setMemoMergePickerVisible(false);
     setMemoLockPickerMode(null);
+    setMemoEffectsPickerMode(null);
   }, []);
 
   const handleTrackMergeConfirm = useCallback(
@@ -2145,6 +2201,33 @@ export function MemoEditor({
       }
     },
     [applyLayerEffectsChange, memoLockPickerMode]
+  );
+
+  const handleMemoEffectsConfirm = useCallback(
+    (selectedIds: string[]) => {
+      const mode = memoEffectsPickerMode;
+      setMemoEffectsPickerMode(null);
+      if (!mode || selectedIds.length === 0) {
+        return;
+      }
+      for (const layerId of selectedIds) {
+        switch (mode) {
+          case 'mute':
+            applyLayerEffectsChange(layerId, { muted: true, solo: false });
+            break;
+          case 'unmute':
+            applyLayerEffectsChange(layerId, { muted: false });
+            break;
+          case 'solo':
+            applyLayerEffectsChange(layerId, { solo: true, muted: false });
+            break;
+          case 'unsolo':
+            applyLayerEffectsChange(layerId, { solo: false });
+            break;
+        }
+      }
+    },
+    [applyLayerEffectsChange, memoEffectsPickerMode]
   );
 
   const handleTrackRenameSave = useCallback(
@@ -2959,6 +3042,26 @@ export function MemoEditor({
                 ).length > 1
               : false
           }
+          includeMuteTracks={
+            memo
+              ? getPlayableLayers(memo).some((layer) => !getLayerEffects(layer).muted)
+              : false
+          }
+          includeUnmuteTracks={
+            memo
+              ? getPlayableLayers(memo).some((layer) => getLayerEffects(layer).muted)
+              : false
+          }
+          includeSoloTracks={
+            memo
+              ? getPlayableLayers(memo).some((layer) => !getLayerEffects(layer).solo)
+              : false
+          }
+          includeUnsoloTracks={
+            memo
+              ? getPlayableLayers(memo).some((layer) => getLayerEffects(layer).solo)
+              : false
+          }
           includeLockTracks={
             memo
               ? getPlayableLayers(memo).some(
@@ -2977,6 +3080,10 @@ export function MemoEditor({
           onShare={handleShare}
           onRename={handleRename}
           onMergeLayers={handleMergeAllLayers}
+          onMuteTracks={handleMuteTracksMenu}
+          onUnmuteTracks={handleUnmuteTracksMenu}
+          onSoloTracks={handleSoloTracksMenu}
+          onUnsoloTracks={handleUnsoloTracksMenu}
           onLockTracks={handleLockTracksMenu}
           onUnlockTracks={handleUnlockTracksMenu}
           onDuplicate={() => void handleDuplicate()}
@@ -3047,10 +3154,14 @@ export function MemoEditor({
       handleDuplicate,
       handleLockTracksMenu,
       handleMergeAllLayers,
+      handleMuteTracksMenu,
       handleRename,
+      handleSoloTracksMenu,
       handleTitleLongPress,
       handleShare,
       handleUnlockTracksMenu,
+      handleUnmuteTracksMenu,
+      handleUnsoloTracksMenu,
       isPane,
       memo,
       onToggleSidebar,
@@ -3811,6 +3922,29 @@ export function MemoEditor({
         title: layer.label,
       }));
   }, [memo, memoLockPickerMode]);
+  const memoEffectsOptions = useMemo((): IconActionSheetItem[] => {
+    if (!memo || !memoEffectsPickerMode) {
+      return [];
+    }
+    return getPlayableLayersInTimelineOrder(memo.layers)
+      .filter((layer) => {
+        const effects = getLayerEffects(layer);
+        switch (memoEffectsPickerMode) {
+          case 'mute':
+            return !effects.muted;
+          case 'unmute':
+            return effects.muted;
+          case 'solo':
+            return !effects.solo;
+          case 'unsolo':
+            return effects.solo;
+        }
+      })
+      .map((layer) => ({
+        id: layer.id,
+        title: layer.label,
+      }));
+  }, [memo, memoEffectsPickerMode]);
   const showEditorContent = Boolean(memo && !loading);
 
   const timelineSnapIntervalSec = useMemo(
@@ -4184,7 +4318,28 @@ export function MemoEditor({
           trackMenuFormatPicker ? { title: 'Choose format…' } : null
         }
         multiSelect={
-          memoLockPickerMode
+          memoEffectsPickerMode
+            ? {
+                title:
+                  memoEffectsPickerMode === 'mute'
+                    ? 'Mute Tracks'
+                    : memoEffectsPickerMode === 'unmute'
+                      ? 'Unmute Tracks'
+                      : memoEffectsPickerMode === 'solo'
+                        ? 'Solo Tracks'
+                        : 'Unsolo Tracks',
+                options: memoEffectsOptions,
+                confirmTitle:
+                  memoEffectsPickerMode === 'mute'
+                    ? 'Mute'
+                    : memoEffectsPickerMode === 'unmute'
+                      ? 'Unmute'
+                      : memoEffectsPickerMode === 'solo'
+                        ? 'Solo'
+                        : 'Unsolo',
+                minSelection: 1,
+              }
+            : memoLockPickerMode
             ? {
                 title: memoLockPickerMode === 'lock' ? 'Lock Tracks' : 'Unlock Tracks',
                 options: memoLockOptions,
@@ -4214,11 +4369,14 @@ export function MemoEditor({
         visible={
           trackMenuLayerId !== null ||
           memoMergePickerVisible ||
-          memoLockPickerMode !== null
+          memoLockPickerMode !== null ||
+          memoEffectsPickerMode !== null
         }
         onDismiss={dismissTrackMenu}
         onMultiSelectConfirm={
-          memoLockPickerMode
+          memoEffectsPickerMode
+            ? handleMemoEffectsConfirm
+            : memoLockPickerMode
             ? handleMemoLockConfirm
             : memoMergePickerVisible
               ? handleMemoMergeConfirm
