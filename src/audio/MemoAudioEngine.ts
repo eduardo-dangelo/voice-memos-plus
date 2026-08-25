@@ -22,7 +22,9 @@ import {
 } from '@/src/audio/audioInputRouting';
 import {
     classifyCueOutputRoute,
+    classifyMonitorPath,
     type CueOutputRoute,
+    type MonitorPath,
 } from '@/src/audio/recordingLatency';
 import { schedulePathFades } from '@/src/audio/fadeCurve';
 import {
@@ -107,6 +109,11 @@ const PRECOUNT_SILENT_PRIME_SETTLE_MS = 100;
 const PRECOUNT_SILENT_PRIME_SETTLE_HEADPHONES_MS = 175;
 /** Start the recorder this close to the audio downbeat after metro is already armed. */
 const RECORDING_RECORDER_WAKE_LEAD_SEC = 0.005;
+/** AudioContext stall detection while waiting for recorder wake. */
+const RECORDER_WAKE_STALL_MS = 50;
+const RECORDER_WAKE_MAX_RESUME_ATTEMPTS = 2;
+/** Stale Phase-B target vs wall downbeat — skip wait branch when both exceeded. */
+const STALE_CONTEXT_TARGET_SEC = 0.25;
 /** How far ahead to schedule metronome clicks while recording without monitor mix. */
 const METRONOME_SCHEDULE_CHUNK_SEC = 12;
 const METRONOME_SCHEDULE_EXTEND_LEAD_SEC = 2;
@@ -194,6 +201,14 @@ export type RecordingCaptureResult = {
   wasSoftwareMonitoredCue: boolean;
   /** Output route class at recording start — drives software-cue compensation. */
   cueOutputRoute: CueOutputRoute;
+  /** How cues were heard (headphones vs open-speaker bleed). */
+  monitorPath: MonitorPath;
+  /**
+   * AudioContext lead from recorder.start() to scheduled cue origin.
+   * Folded into trim for headphones and speakerBleed (commit jitter);
+   * speakerBleed never adds the headphones route constant.
+   */
+  measuredCueLeadSec: number;
   recorderDuration: number;
   /** True when capture used our 44.1k WAV preset — safe to skip verify-decode. */
   usedWavFormat: boolean;
@@ -319,6 +334,12 @@ export class MemoAudioEngine {
   private recordingStartAborted = false;
   /** Cue-output route captured at prepareRecordingRoute (defaults to wired). */
   private recordingCueOutputRoute: CueOutputRoute = 'wired';
+  /** Monitor path (headphones vs speakerBleed) captured at prepareRecordingRoute. */
+  private recordingMonitorPath: MonitorPath = 'headphones';
+  /** AudioContext when cues were armed (beat 0 / monitor mix origin). */
+  private recordingCueContextWhen = 0;
+  /** AudioContext when recorder.start() returned successfully. */
+  private recordingRecorderStartedAtContextWhen = 0;
   /** Resampled/ready buffers for monitor-mix atomic start (path → buffer). */
   private recordingPlaybackBuffers = new Map<string, AudioBuffer>();
   /** True between AVAudioSession interruption began/ended while a take is live. */
@@ -616,6 +637,35 @@ export class MemoAudioEngine {
     );
   }
 
+  /**
+   * AudioContext currentTime for the recording/precount context, or null if
+   * warmup has not created a context yet. Used to anchor the post-precount
+   * downbeat on the audio clock (Phase B).
+   */
+  getRecordingAudioContextTime(): number | null {
+    if (!this.context) {
+      return null;
+    }
+    return this.context.currentTime;
+  }
+
+  /**
+   * Commit jitter lead (cue origin − recorder.start) while a take is live.
+   * Used by live waveform latency preview to match post-save trim.
+   */
+  getMeasuredCueLeadSec(): number {
+    if (
+      this.recordingCueContextWhen <= 0 ||
+      this.recordingRecorderStartedAtContextWhen <= 0
+    ) {
+      return 0;
+    }
+    return Math.max(
+      0,
+      this.recordingCueContextWhen - this.recordingRecorderStartedAtContextWhen
+    );
+  }
+
   getPlaybackTime(): number {
     if (!this.context || this.playbackContextStartWhen <= 0) {
       return this.state.currentTime;
@@ -675,7 +725,9 @@ export class MemoAudioEngine {
       this.deferredPlaybackSetup = false;
 
       try {
-        await this.resetPlaybackGraph();
+        await this.resetPlaybackGraph({
+          preserveLayerBuffers: this.loadedLayers.length > 0,
+        });
         await this.configureForPlayback();
         if (pending) {
           if (pending.invalidatePaths) {
@@ -864,10 +916,14 @@ export class MemoAudioEngine {
     this.recordingCueOutputRoute = classifyCueOutputRoute(
       routeSnapshot.outputCategory
     );
+    this.recordingMonitorPath = classifyMonitorPath(
+      routeSnapshot.outputCategory
+    );
     logRouteSnapshot('recording-start', routeSnapshot);
     if (__DEV__) {
       console.log(
-        `[audio route] cueOutputRoute=${this.recordingCueOutputRoute}`
+        `[audio route] cueOutputRoute=${this.recordingCueOutputRoute} ` +
+          `monitorPath=${this.recordingMonitorPath}`
       );
     }
     this.refreshActiveRecordingSampleRate();
@@ -2336,15 +2392,39 @@ export class MemoAudioEngine {
       return;
     }
     const duration = this.recorder.getCurrentDuration();
-    const timelineNow = this.playbackStartAt + duration;
+    // Drive metro/monitor extension from AudioContext (same clock as arm),
+    // not recorder duration — avoids dual-clock drift on long stacked takes.
+    const scheduleTimelineNow =
+      this.context && this.playbackContextStartWhen > 0
+        ? this.getElapsedPlaybackTime(this.context)
+        : this.playbackStartAt + duration;
+
+    if (
+      typeof __DEV__ !== 'undefined' &&
+      __DEV__ &&
+      this.context &&
+      this.playbackContextStartWhen > 0
+    ) {
+      const recorderTimeline = this.playbackStartAt + duration;
+      const drift = Math.abs(scheduleTimelineNow - recorderTimeline);
+      if (drift > 0.05) {
+        console.log(
+          `[audio] record clock drift=${(drift * 1000).toFixed(0)}ms ` +
+            `ctx=${scheduleTimelineNow.toFixed(3)}s rec=${recorderTimeline.toFixed(3)}s`
+        );
+      }
+    }
 
     if (this.state.monitorMixActive) {
-      this.extendMonitorMixSchedule(timelineNow);
+      this.extendMonitorMixSchedule(scheduleTimelineNow);
     }
 
     if (this.metronomeOnlyActive) {
-      if (timelineNow >= this.metronomeScheduledUntil - METRONOME_SCHEDULE_EXTEND_LEAD_SEC) {
-        this.extendMetronomeOnlySchedule(timelineNow);
+      if (
+        scheduleTimelineNow >=
+        this.metronomeScheduledUntil - METRONOME_SCHEDULE_EXTEND_LEAD_SEC
+      ) {
+        this.extendMetronomeOnlySchedule(scheduleTimelineNow);
       }
     }
 
@@ -2934,6 +3014,9 @@ export class MemoAudioEngine {
         );
       }
       this.applyPreparedMonitorMixGain();
+      if (this.context?.state === 'suspended') {
+        await this.context.resume();
+      }
       return;
     }
 
@@ -3014,6 +3097,8 @@ export class MemoAudioEngine {
     duckMonitorMix?: boolean;
     monitorStartTime?: number;
     nextBeatDeadlineMs?: number;
+    /** Preferred AudioContext-time downbeat (Phase B); wall deadline is fallback. */
+    nextBeatContextWhen?: number;
     silentLayerId?: string;
   }): Promise<void> {
     if (this.state.isRecording) {
@@ -3040,6 +3125,7 @@ export class MemoAudioEngine {
     duckMonitorMix?: boolean;
     monitorStartTime?: number;
     nextBeatDeadlineMs?: number;
+    nextBeatContextWhen?: number;
     silentLayerId?: string;
   }): Promise<void> {
     if (this.state.isRecording) {
@@ -3047,6 +3133,8 @@ export class MemoAudioEngine {
     }
 
     this.recordingStartAborted = false;
+    this.recordingCueContextWhen = 0;
+    this.recordingRecorderStartedAtContextWhen = 0;
 
     const monitorMix = options?.monitorMix ?? this.preparedMonitorMix;
     const monitorStartTime = options?.monitorStartTime ?? 0;
@@ -3071,7 +3159,15 @@ export class MemoAudioEngine {
     }
 
     const context = this.context;
+    if (context.state === 'suspended') {
+      await context.resume();
+    }
     const deadlineMs = options?.nextBeatDeadlineMs;
+    const contextWhenTarget =
+      options?.nextBeatContextWhen != null &&
+      Number.isFinite(options.nextBeatContextWhen)
+        ? options.nextBeatContextWhen
+        : null;
     const throwIfAborted = () => {
       if (this.recordingStartAborted) {
         this.invalidateAndStopSources();
@@ -3089,15 +3185,101 @@ export class MemoAudioEngine {
       } else if (this.metronomeSettings.enabled) {
         this.armMetronomeForRecording(monitorStartTime, startWhen);
       }
+      this.recordingCueContextWhen = startWhen;
+    };
+
+    /** Wait on AudioContext until just before the cue origin, then start recorder. */
+    const waitForRecorderWake = async (cueWhen: number) => {
+      const recorderWakeAt = cueWhen - RECORDING_RECORDER_WAKE_LEAD_SEC;
+      let lastTime = context.currentTime;
+      let lastAdvanceAt = Date.now();
+      let resumeAttempts = 0;
+
+      while (context.currentTime < recorderWakeAt) {
+        throwIfAborted();
+
+        const now = context.currentTime;
+        if (now > lastTime + 1e-6) {
+          lastTime = now;
+          lastAdvanceAt = Date.now();
+        } else if (
+          Date.now() - lastAdvanceAt >= RECORDER_WAKE_STALL_MS &&
+          resumeAttempts < RECORDER_WAKE_MAX_RESUME_ATTEMPTS
+        ) {
+          resumeAttempts += 1;
+          if (context.state === 'suspended') {
+            await context.resume();
+          }
+          lastAdvanceAt = Date.now();
+        } else if (
+          resumeAttempts >= RECORDER_WAKE_MAX_RESUME_ATTEMPTS &&
+          Date.now() - lastAdvanceAt >= RECORDER_WAKE_STALL_MS
+        ) {
+          if (__DEV__) {
+            console.log(
+              `[audio] recorder wake stalled at ${context.currentTime.toFixed(3)}s ` +
+                `(target ${recorderWakeAt.toFixed(3)}s); starting now`
+            );
+          }
+          break;
+        }
+
+        const remainingSecWait = recorderWakeAt - context.currentTime;
+        await new Promise<void>((resolve) =>
+          setTimeout(
+            resolve,
+            Math.min(16, Math.max(1, remainingSecWait * 1000))
+          )
+        );
+      }
+      throwIfAborted();
     };
 
     let startWhen: number;
 
-    if (deadlineMs != null) {
+    if (contextWhenTarget != null) {
+      // Prefer AudioContext-anchored downbeat (eliminates modal/JS wall jitter).
+      const remainingSec = contextWhenTarget - context.currentTime;
+      const staleContextTarget =
+        remainingSec > STALE_CONTEXT_TARGET_SEC &&
+        deadlineMs != null &&
+        Date.now() >= deadlineMs;
+      if (remainingSec > 0 && !staleContextTarget) {
+        startWhen = contextWhenTarget;
+
+        const oneTailDeadline = Date.now() + PRECOUNT_ONE_TAIL_MS;
+        while (Date.now() < oneTailDeadline) {
+          throwIfAborted();
+          const remaining = oneTailDeadline - Date.now();
+          await new Promise<void>((resolve) =>
+            setTimeout(resolve, Math.min(20, Math.max(1, remaining)))
+          );
+        }
+        throwIfAborted();
+
+        // Re-clamp after one-tail wait, then arm BEFORE recorder wake wait so
+        // heavy monitor-mix scheduling does not push past the cue origin.
+        startWhen = Math.max(startWhen, context.currentTime + RECORDING_SCHEDULE_LEAD);
+        armAudibleOutput(startWhen);
+        await waitForRecorderWake(startWhen);
+      } else {
+        if (__DEV__ && staleContextTarget) {
+          console.log(
+            `[audio] stale context downbeat (${Math.round(remainingSec * 1000)}ms ahead); starting now`
+          );
+        } else if (__DEV__ && remainingSec < -0.05) {
+          console.log(
+            `[audio] recording start missed context downbeat by ${Math.round(-remainingSec * 1000)}ms; starting now`
+          );
+        }
+        startWhen = context.currentTime + RECORDING_SCHEDULE_LEAD;
+        armAudibleOutput(startWhen);
+      }
+    } else if (deadlineMs != null) {
       const remainingMs = deadlineMs - Date.now();
       if (remainingMs > 0) {
-        // Precompute audio-clock downbeat, arm early so beat 0 cannot be dropped,
-        // then start the recorder on the downbeat (not at arm time).
+        // Fallback: map wall-clock downbeat onto AudioContext, then wake on
+        // the audio clock (same as context path) so wake is not wall-jittered.
         const targetWhen = context.currentTime + remainingMs / 1000;
         startWhen = targetWhen;
 
@@ -3111,19 +3293,9 @@ export class MemoAudioEngine {
         }
         throwIfAborted();
 
-        // Waits can overrun the precomputed downbeat — re-clamp like runPlay.
         startWhen = Math.max(startWhen, context.currentTime + RECORDING_SCHEDULE_LEAD);
         armAudibleOutput(startWhen);
-
-        const recorderWakeAtMs = deadlineMs - RECORDING_RECORDER_WAKE_LEAD_SEC * 1000;
-        while (Date.now() < recorderWakeAtMs) {
-          throwIfAborted();
-          const remaining = recorderWakeAtMs - Date.now();
-          await new Promise<void>((resolve) =>
-            setTimeout(resolve, Math.min(20, Math.max(1, remaining)))
-          );
-        }
-        throwIfAborted();
+        await waitForRecorderWake(startWhen);
       } else {
         if (__DEV__ && remainingMs < -50) {
           console.log(
@@ -3147,6 +3319,22 @@ export class MemoAudioEngine {
     }
 
     const startResult = this.recorder.start();
+    this.recordingRecorderStartedAtContextWhen = context.currentTime;
+
+    if (
+      typeof __DEV__ !== 'undefined' &&
+      __DEV__ &&
+      this.recordingCueContextWhen > 0
+    ) {
+      const measuredLead =
+        this.recordingCueContextWhen - this.recordingRecorderStartedAtContextWhen;
+      console.log(
+        `[audio] commit measuredLead=${(measuredLead * 1000).toFixed(1)}ms ` +
+          `path=${this.recordingMonitorPath} route=${this.recordingCueOutputRoute} ` +
+          `cueWhen=${this.recordingCueContextWhen.toFixed(3)} ` +
+          `recWhen=${this.recordingRecorderStartedAtContextWhen.toFixed(3)}`
+      );
+    }
 
     if (startResult.status === 'error') {
       this.recorder.clearOnAudioReady();
@@ -3154,6 +3342,8 @@ export class MemoAudioEngine {
       this.recordingPrepared = false;
       this.recordingWarmupFinalized = false;
       this.monitorSilentLayerId = null;
+      this.recordingCueContextWhen = 0;
+      this.recordingRecorderStartedAtContextWhen = 0;
       this.invalidateAndStopSources();
       throw new Error(startResult.message);
     }
@@ -3233,6 +3423,9 @@ export class MemoAudioEngine {
     this.recordingPlaybackBuffers.clear();
     this.allowPrecountClicks = true;
     this.recordingCueOutputRoute = 'wired';
+    this.recordingMonitorPath = 'headphones';
+    this.recordingCueContextWhen = 0;
+    this.recordingRecorderStartedAtContextWhen = 0;
     this.clearRecordingSampleRateState();
     this.invalidateAndStopSources();
   }
@@ -3255,6 +3448,9 @@ export class MemoAudioEngine {
       this.recordingPlaybackBuffers.clear();
       this.allowPrecountClicks = true;
       this.recordingCueOutputRoute = 'wired';
+      this.recordingMonitorPath = 'headphones';
+      this.recordingCueContextWhen = 0;
+      this.recordingRecorderStartedAtContextWhen = 0;
       this.clearRecordingSampleRateState();
       await this.resetPlaybackGraph();
       await this.configureForPlayback();
@@ -3298,6 +3494,16 @@ export class MemoAudioEngine {
       // Capture before clearMetronomeOnlyState — metro-only first takes need cue compensation.
       const wasSoftwareMonitoredCue = wasMonitorMix || this.metronomeOnlyActive;
       const cueOutputRoute = this.recordingCueOutputRoute;
+      const monitorPath = this.recordingMonitorPath;
+      const measuredCueLeadSec =
+        this.recordingCueContextWhen > 0 &&
+        this.recordingRecorderStartedAtContextWhen > 0
+          ? Math.max(
+              0,
+              this.recordingCueContextWhen -
+                this.recordingRecorderStartedAtContextWhen
+            )
+          : 0;
       const usedWavFormat = this.recordingUsedWavFormat;
       this.stopMetronomeSources();
       this.stopActiveSources();
@@ -3313,6 +3519,9 @@ export class MemoAudioEngine {
       this.allowPrecountClicks = true;
       this.recordingInterrupted = false;
       this.recordingCueOutputRoute = 'wired';
+      this.recordingMonitorPath = 'headphones';
+      this.recordingCueContextWhen = 0;
+      this.recordingRecorderStartedAtContextWhen = 0;
       this.emit({
         isRecording: false,
         recordingDuration: 0,
@@ -3330,6 +3539,14 @@ export class MemoAudioEngine {
         throw new Error('Recording file was not written. Try recording again.');
       }
 
+      if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        console.log(
+          `[audio] capture cue route=${cueOutputRoute} path=${monitorPath} ` +
+            `measuredLead=${(measuredCueLeadSec * 1000).toFixed(1)}ms ` +
+            `softwareCue=${wasSoftwareMonitoredCue}`
+        );
+      }
+
       return {
         path,
         duration: result.duration,
@@ -3337,6 +3554,8 @@ export class MemoAudioEngine {
         wasMonitorMix,
         wasSoftwareMonitoredCue,
         cueOutputRoute,
+        monitorPath,
+        measuredCueLeadSec,
         recorderDuration: result.duration,
         usedWavFormat,
       };
@@ -3469,6 +3688,18 @@ export class MemoAudioEngine {
     }
 
     try {
+      // Do not arm playback while a stop/save is still restoring the session.
+      await awaitSaveInFlight();
+      if (requestId !== this.playRequestId || this.state.isRecording) {
+        return;
+      }
+      if (this.deferredPlaybackSetup || this.pendingEngineReload) {
+        await this.finishDeferredPlaybackSetup();
+      }
+      if (requestId !== this.playRequestId || this.state.isRecording) {
+        return;
+      }
+
       const context = await this.ensureContext();
       if (requestId !== this.playRequestId || this.state.isRecording) {
         return;
@@ -3556,6 +3787,26 @@ export class MemoAudioEngine {
       );
 
       if (resolvedPlans.length === 0) {
+        return;
+      }
+
+      // Cold post-stack play: context may suspend during long buffer decode.
+      if (context.state === 'suspended') {
+        await context.resume();
+      }
+      if (context.state !== 'running') {
+        if (__DEV__) {
+          console.warn(
+            `[MemoAudioEngine] play aborted; AudioContext state=${context.state}`
+          );
+        }
+        return;
+      }
+      if (
+        requestId !== this.playRequestId ||
+        sessionId !== this.activePlaybackSessionId ||
+        this.state.isRecording
+      ) {
         return;
       }
 

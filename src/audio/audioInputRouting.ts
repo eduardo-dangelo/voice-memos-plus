@@ -2,7 +2,10 @@ import { AudioManager } from 'react-native-audio-api';
 
 import {
   classifyCueOutputRoute,
+  classifyMonitorPath,
+  shouldDuckMonitorMixForCategory,
   type CueOutputRoute,
+  type MonitorPath,
 } from '@/src/audio/recordingLatency';
 
 const BLUETOOTH_INPUT_CATEGORIES = new Set([
@@ -122,6 +125,24 @@ export async function getCueOutputRoute(): Promise<CueOutputRoute> {
   }
 }
 
+export async function getMonitorPath(): Promise<MonitorPath> {
+  try {
+    const snapshot = await getActiveRouteSnapshot();
+    return classifyMonitorPath(snapshot.outputCategory);
+  } catch {
+    return 'headphones';
+  }
+}
+
+export async function shouldDuckMonitorMixNow(): Promise<boolean> {
+  try {
+    const snapshot = await getActiveRouteSnapshot();
+    return shouldDuckMonitorMixForCategory(snapshot.outputCategory);
+  } catch {
+    return false;
+  }
+}
+
 /** Initial check + live updates whenever the audio route changes. */
 export function subscribeCueOutputRoute(
   onChange: (route: CueOutputRoute) => void
@@ -132,6 +153,31 @@ export function subscribeCueOutputRoute(
     void getCueOutputRoute().then((route) => {
       if (!cancelled) {
         onChange(route);
+      }
+    });
+  };
+
+  refresh();
+  const subscription = AudioManager.addSystemEventListener('routeChange', () => {
+    refresh();
+  });
+
+  return () => {
+    cancelled = true;
+    subscription?.remove();
+  };
+}
+
+/** Live monitor-path updates for latency preview (headphones vs speakerBleed). */
+export function subscribeMonitorPath(
+  onChange: (path: MonitorPath) => void
+): () => void {
+  let cancelled = false;
+
+  const refresh = () => {
+    void getMonitorPath().then((path) => {
+      if (!cancelled) {
+        onChange(path);
       }
     });
   };

@@ -16,6 +16,13 @@ export const RECORDING_WAKE_TRIM_SEC = 0.02;
  */
 export type CueOutputRoute = 'wired' | 'bluetooth' | 'speaker';
 
+/**
+ * How cues were heard during capture.
+ * `speakerBleed` — open speaker/room path; mic may record acoustic bleed.
+ * `headphones` — sealed/cued path; performer hears software cues without bleed.
+ */
+export type MonitorPath = 'headphones' | 'speakerBleed';
+
 const WIRED_OUTPUT_CATEGORIES = new Set([
   'Headphones',
   'HeadsetMic',
@@ -37,11 +44,36 @@ const SPEAKER_OUTPUT_CATEGORIES = new Set([
   'BuiltInReceiver',
 ]);
 
+/** Open room outputs — acoustic bleed into the phone mic is likely. */
+const SPEAKER_BLEED_OUTPUT_CATEGORIES = new Set([
+  'BuiltInSpeaker',
+  'BuiltInReceiver',
+  'AirPlay',
+  'CarAudio',
+  'HDMI',
+]);
+
+/**
+ * Sealed / private cue paths — no same-device speaker bleed into the mic.
+ * BluetoothA2DP is treated as sealed for trim (AirPods) but may still duck
+ * for open BT speakers via `shouldDuckMonitorMixForCategory`.
+ */
+const SEALED_HEADPHONE_CATEGORIES = new Set([
+  'Headphones',
+  'HeadsetMic',
+  'USBAudio',
+  'LineOut',
+  'BluetoothHFP',
+  'BluetoothLE',
+  'BluetoothA2DP',
+]);
+
 /**
  * Per-route software-cue compensation (seconds).
  * Wired tuned on-device; bluetooth is a starting point (~130ms above wired)
  * for A2DP stacks — raise/lower in ~20ms steps after clap/metro tests.
- * Speaker matches wired until measured separately.
+ * Speaker matches wired until measured separately (fallback only; speakerBleed
+ * uses wake-only trim).
  */
 export const SOFTWARE_CUE_COMPENSATION_BY_ROUTE: Record<CueOutputRoute, number> =
   {
@@ -53,6 +85,10 @@ export const SOFTWARE_CUE_COMPENSATION_BY_ROUTE: Record<CueOutputRoute, number> 
 /** Wired alias — kept for callers/tests that mean the wired baseline. */
 export const SOFTWARE_CUE_OUTPUT_COMPENSATION_SEC =
   SOFTWARE_CUE_COMPENSATION_BY_ROUTE.wired;
+
+/** Clamp measured AudioContext lead to a sane cue window. */
+const MEASURED_CUE_LEAD_MIN_SEC = 0;
+const MEASURED_CUE_LEAD_MAX_SEC = 0.5;
 
 /** Classify iOS output category into a cue-compensation route. Defaults to wired. */
 export function classifyCueOutputRoute(
@@ -80,26 +116,130 @@ export function classifyCueOutputRoute(
   return 'wired';
 }
 
+/** Classify whether capture heard cues privately or via open/room bleed. */
+export function classifyMonitorPath(
+  outputCategory: string | null | undefined
+): MonitorPath {
+  if (!outputCategory) {
+    return 'headphones';
+  }
+  if (SPEAKER_BLEED_OUTPUT_CATEGORIES.has(outputCategory)) {
+    return 'speakerBleed';
+  }
+  if (outputCategory.toLowerCase().includes('speaker')) {
+    return 'speakerBleed';
+  }
+  return 'headphones';
+}
+
+/** True for sealed private cue paths (wired / in-ear BT). */
+export function isSealedHeadphoneCategory(
+  outputCategory: string | null | undefined
+): boolean {
+  if (!outputCategory) {
+    return false;
+  }
+  return SEALED_HEADPHONE_CATEGORIES.has(outputCategory);
+}
+
+/**
+ * Duck monitor mix on open outputs (built-in speaker, room remotes, A2DP
+ * speakers) so mic bleed is quieter during stack/replace.
+ */
+export function shouldDuckMonitorMixForCategory(
+  outputCategory: string | null | undefined
+): boolean {
+  if (!outputCategory) {
+    return false;
+  }
+  if (SPEAKER_BLEED_OUTPUT_CATEGORIES.has(outputCategory)) {
+    return true;
+  }
+  // A2DP often drives open BT speakers; ducking AirPods is mild (−8 dB).
+  if (outputCategory === 'BluetoothA2DP') {
+    return true;
+  }
+  if (outputCategory.toLowerCase().includes('speaker')) {
+    return true;
+  }
+  return false;
+}
+
 export function getSoftwareCueCompensationSec(route: CueOutputRoute): number {
-  return Math.max(0, SOFTWARE_CUE_COMPENSATION_BY_ROUTE[route] ?? SOFTWARE_CUE_COMPENSATION_BY_ROUTE.wired);
+  return Math.max(
+    0,
+    SOFTWARE_CUE_COMPENSATION_BY_ROUTE[route] ??
+      SOFTWARE_CUE_COMPENSATION_BY_ROUTE.wired
+  );
+}
+
+export type RecordingLatencySkipOptions = {
+  softwareCue?: boolean;
+  cueRoute?: CueOutputRoute;
+  /** Measured AudioContext lead from recorder start to first scheduled cue. */
+  measuredCueLeadSec?: number;
+  /** How cues were heard; speakerBleed uses wake-only when software cues ran. */
+  monitorPath?: MonitorPath;
+};
+
+function clampMeasuredCueLeadSec(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.min(
+    MEASURED_CUE_LEAD_MAX_SEC,
+    Math.max(MEASURED_CUE_LEAD_MIN_SEC, value)
+  );
+}
+
+/**
+ * Shared wake(+cue) seconds for first/stack trimIn, replace PCM skip, and live
+ * waveform lead. Keep all three consumers on this single helper.
+ */
+export function getRecordingLatencySkipSeconds(
+  options?: RecordingLatencySkipOptions
+): number {
+  const wake = Math.max(0, RECORDING_WAKE_TRIM_SEC);
+  if (options?.softwareCue !== true) {
+    return wake;
+  }
+
+  const measured =
+    options.measuredCueLeadSec != null
+      ? clampMeasuredCueLeadSec(options.measuredCueLeadSec)
+      : null;
+  const measuredOrZero =
+    measured != null && measured > 0.001 ? measured : 0;
+
+  const monitorPath = options.monitorPath ?? 'headphones';
+  // Open-speaker bleed: never apply the headphones route constant (~150ms) —
+  // that double-counts acoustic capture. Still fold measured commit lead so
+  // stacked takes share the same file offset for identical clicks.
+  if (monitorPath === 'speakerBleed') {
+    return wake + measuredOrZero;
+  }
+
+  // Headphones: route constant is output latency; measured lead is commit
+  // jitter — add both (do not replace the constant with ~5–15ms measured).
+  const cueRoute = options.cueRoute ?? 'wired';
+  return wake + getSoftwareCueCompensationSec(cueRoute) + measuredOrZero;
 }
 
 /** Seconds to skip at the start of a replace-splice replacement buffer. */
 export function getRecordingReplacementSkipSeconds(
   softwareCue: boolean,
-  route: CueOutputRoute = 'wired'
+  route: CueOutputRoute = 'wired',
+  options?: Omit<RecordingLatencySkipOptions, 'softwareCue' | 'cueRoute'>
 ): number {
-  const wake = Math.max(0, RECORDING_WAKE_TRIM_SEC);
-  const cue = softwareCue ? getSoftwareCueCompensationSec(route) : 0;
-  return wake + cue;
+  return getRecordingLatencySkipSeconds({
+    softwareCue,
+    cueRoute: route,
+    measuredCueLeadSec: options?.measuredCueLeadSec,
+    monitorPath: options?.monitorPath,
+  });
 }
 
-export type RecordingLatencyTrimOptions = {
-  /** True when AudioContext cues (layers and/or metronome) played during the take. */
-  softwareCue?: boolean;
-  /** Output route used while hearing software cues. Defaults to wired. */
-  cueRoute?: CueOutputRoute;
-};
+export type RecordingLatencyTrimOptions = RecordingLatencySkipOptions;
 
 /**
  * Apply wake trim and, for software-cued takes, pull the take earlier via
@@ -111,12 +251,8 @@ export function applyRecordingIoLatencyTrim(
   options?: RecordingLatencyTrimOptions
 ): void {
   const cueRoute = options?.cueRoute ?? 'wired';
-  const cueCompensation =
-    options?.softwareCue === true
-      ? getSoftwareCueCompensationSec(cueRoute)
-      : 0;
-  const wake = Math.max(0, RECORDING_WAKE_TRIM_SEC);
-  const totalRequested = wake + cueCompensation;
+  const monitorPath = options?.monitorPath ?? 'headphones';
+  const totalRequested = getRecordingLatencySkipSeconds(options);
 
   if (totalRequested <= 0 || layer.duration <= totalRequested * 2) {
     return;
@@ -137,9 +273,11 @@ export function applyRecordingIoLatencyTrim(
 
   if (typeof __DEV__ !== 'undefined' && __DEV__) {
     const activeStart = layer.startTime + trimIn;
+    const cuePart = Math.max(0, trimIn - RECORDING_WAKE_TRIM_SEC);
     console.log(
-      `[audio] latency trim route=${cueRoute} wake=${wake.toFixed(3)}s ` +
-        `cue=${cueCompensation.toFixed(3)}s trimIn=${trimIn.toFixed(3)}s ` +
+      `[audio] latency trim route=${cueRoute} path=${monitorPath} ` +
+        `wake=${RECORDING_WAKE_TRIM_SEC.toFixed(3)}s ` +
+        `cue=${cuePart.toFixed(3)}s trimIn=${trimIn.toFixed(3)}s ` +
         `startTime=${layer.startTime.toFixed(3)}s activeStart=${activeStart.toFixed(3)}s`
     );
   }

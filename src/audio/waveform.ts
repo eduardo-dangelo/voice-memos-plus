@@ -117,11 +117,20 @@ export function waveformPeaksFromCaptured(
   capturedPeaks: number[] | undefined,
   duration: number
 ): number[] | undefined {
-  if (!shouldUseCapturedPeaks(capturedPeaks, duration)) {
+  if (!capturedPeaks || capturedPeaks.length === 0 || !(duration > 0)) {
     return undefined;
   }
-  const peakCount = peakCountForDuration(duration);
-  return resamplePeaks(capturedPeaks!.map(peakToAbsoluteScale), peakCount);
+  const expected = peakCountForDuration(duration);
+  // Never upsample under-dense captures — that bakes temporal stretch into
+  // stored peaks (visual frog vs correct PCM). Decode the file instead.
+  if (Math.abs(capturedPeaks.length - expected) > 2) {
+    return undefined;
+  }
+  if (capturedPeaks.length === expected) {
+    return capturedPeaks.map(peakToAbsoluteScale);
+  }
+  // Within ±2 bars of design density: resample only to exact count (tiny skew).
+  return resamplePeaks(capturedPeaks.map(peakToAbsoluteScale), expected);
 }
 
 export async function resolveWaveformPeaks(
@@ -130,10 +139,16 @@ export async function resolveWaveformPeaks(
   capturedPeaks?: number[],
   decodedChannelData?: ArrayLike<number>
 ): Promise<number[] | undefined> {
-  // Prefer live peaks only when they span the full file at design density.
-  if (shouldUseCapturedPeaks(capturedPeaks, duration)) {
-    const peakCount = duration ? peakCountForDuration(duration) : capturedPeaks!.length;
-    return resamplePeaks(capturedPeaks!.map(peakToAbsoluteScale), peakCount);
+  // Prefer live peaks only when they match design density (±2 bars). Never
+  // upsample sparse captures — that stretches the waveform vs PCM.
+  if (capturedPeaks && capturedPeaks.length > 0 && duration != null && duration > 0) {
+    const fromCapture = waveformPeaksFromCaptured(capturedPeaks, duration);
+    if (fromCapture) {
+      return fromCapture;
+    }
+  } else if (shouldUseCapturedPeaks(capturedPeaks, duration)) {
+    // No duration (or unknown) — keep prior behavior for list/fallback callers.
+    return capturedPeaks!.map(peakToAbsoluteScale);
   }
 
   try {
@@ -228,15 +243,14 @@ export function slicePeaksForTrim(
   const safeTrimIn = Math.max(0, Math.min(trimIn, duration));
   const safeTrimOut = Math.max(safeTrimIn, Math.min(trimOut, duration));
   const designCount = peakCountForDuration(duration);
-  const denseEnough =
-    peaks.length >= Math.max(1, Math.floor(designCount * CAPTURED_PEAKS_MIN_DENSITY));
+  // Design-density indexing only when peak count matches file duration exactly.
+  // Otherwise proportional indices keep slice and normalizePeakAt on one timebase.
+  const exactDesignDensity = peaks.length === designCount;
 
   let startIndex: number;
   let endIndex: number;
-  if (denseEnough) {
+  if (exactDesignDensity) {
     // Design-density bars (~16/s) — same mapping as live latency preview.
-    // Proportional floor() under-sliced (e.g. 0.17s → 2 bars / 125ms) and left a
-    // quiet lead gap that pushed accents late vs the metronome grid.
     startIndex = Math.max(
       0,
       Math.round((safeTrimIn * WAVEFORM_PIXELS_PER_SECOND) / barStep)

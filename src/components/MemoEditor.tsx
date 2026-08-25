@@ -20,9 +20,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { DEFAULT_TRACK_COLOR, pickRandomTrackColor } from '@/constants/VoiceMemosColors';
 import { shareMemo } from '@/src/actions/shareMemo';
 import { useAudioEngine, useAudioEngineSelector } from '@/src/audio/AudioEngineContext';
-import { subscribeCueOutputRoute } from '@/src/audio/audioInputRouting';
+import {
+  subscribeCueOutputRoute,
+  subscribeMonitorPath,
+  shouldDuckMonitorMixNow,
+} from '@/src/audio/audioInputRouting';
 import { clampFadeValues } from '@/src/audio/fadeCurve';
 import {
+  ALLOW_METRONOME_WITHOUT_HEADPHONES,
   isHeadphonesConnected,
   needsMonitorMix,
   subscribeHeadphoneDisconnect,
@@ -32,6 +37,10 @@ import type { LayerEffects, LayerEffectsChange } from '@/src/audio/layerEffects'
 import { hasAnySoloActive, isLayerLocked, isLayerSelectable, isLockedLayerEffectsChangeAllowed, mergeLayerEffects } from '@/src/audio/layerEffects';
 import { loadMemoIntoEngine } from '@/src/audio/loadMemoIntoEngine';
 import { RecordingStartAbortedError, type EngineState } from '@/src/audio/MemoAudioEngine';
+import {
+  computePostPrecountContextWhen,
+  POST_PRECOUNT_SCHEDULE_LEAD_SEC,
+} from '@/src/audio/postPrecountTiming';
 import {
   canMergeLayers,
   getMergePartnerLayers,
@@ -43,8 +52,9 @@ import {
   resetPerformanceWarningState,
 } from '@/src/audio/performanceWarning';
 import {
-  getRecordingReplacementSkipSeconds,
+  getRecordingLatencySkipSeconds,
   type CueOutputRoute,
+  type MonitorPath,
 } from '@/src/audio/recordingLatency';
 import { formatTimelineZoomMultiplier, isTimelineZoomAtDefault } from '@/src/audio/timelineZoom';
 import {
@@ -533,6 +543,7 @@ export function MemoEditor({
   >(null);
   const [cueOutputRoute, setCueOutputRoute] =
     useState<CueOutputRoute>('wired');
+  const [monitorPath, setMonitorPath] = useState<MonitorPath>('headphones');
   const [loopSettingsVisible, setLoopSettingsVisible] = useState(false);
   const [loopDialogLayerId, setLoopDialogLayerId] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
@@ -1356,7 +1367,8 @@ export function MemoEditor({
       return;
     }
     void (async () => {
-      const headphonesConnected = await isHeadphonesConnected();
+      const headphonesConnected =
+        ALLOW_METRONOME_WITHOUT_HEADPHONES || (await isHeadphonesConnected());
       handleMetronomeChange(
         nextMetronomeMode(liveMetronomeSettingsRef.current, { headphonesConnected })
       );
@@ -1440,7 +1452,14 @@ export function MemoEditor({
     async (
       mode: Exclude<PrecountMode, 'off'>,
       bpm: number
-    ): Promise<{ completed: false } | { completed: true; nextBeatDeadlineMs: number }> => {
+    ): Promise<
+      | { completed: false }
+      | {
+          completed: true;
+          nextBeatDeadlineMs: number;
+          nextBeatContextWhen: number | null;
+        }
+    > => {
       precountCancelledRef.current = false;
       precountOverlayActiveRef.current = true;
       precountPreparingRef.current = false;
@@ -1480,6 +1499,9 @@ export function MemoEditor({
       }
 
       const startMs = Date.now();
+      // Snapshot audio clock in parallel with wall precount so commit can arm
+      // without modal/JS wall-clock jitter (Phase B).
+      const contextStart = engine.getRecordingAudioContextTime();
 
       // Beats "4" → "1" — equal timing; number + click in the same turn.
       for (let i = 0; i < 4; i++) {
@@ -1512,9 +1534,23 @@ export function MemoEditor({
       await dismissPrecountAndWait();
       // Extra frame so native Modal teardown finishes before sync monitor-mix arm.
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+      // Map the wall downbeat onto AudioContext using the precount-start snapshot,
+      // then re-clamp against live currentTime after dismiss.
+      const nextBeatContextWhen = computePostPrecountContextWhen({
+        contextStart,
+        live: engine.getRecordingAudioContextTime(),
+        startMs,
+        beat1DeadlineMs: beat1Deadline,
+        intervalMs,
+        nowMs: Date.now(),
+        scheduleLeadSec: POST_PRECOUNT_SCHEDULE_LEAD_SEC,
+      });
+
       return {
         completed: true,
         nextBeatDeadlineMs: Math.max(beat1Deadline, Date.now()),
+        nextBeatContextWhen,
       };
     },
     [dismissPrecountAndWait, engine]
@@ -2381,6 +2417,7 @@ export function MemoEditor({
       const precountMode = getMemoPrecountMode(refreshed);
       const bpm = getMemoMetronomeSettings(refreshed).bpm;
       let nextBeatDeadlineMs: number | undefined;
+      let nextBeatContextWhen: number | undefined;
       try {
         await confirmEditDraft(false);
         setActiveEditor(null);
@@ -2418,6 +2455,7 @@ export function MemoEditor({
             return;
           }
           nextBeatDeadlineMs = precountResult.nextBeatDeadlineMs;
+          nextBeatContextWhen = precountResult.nextBeatContextWhen ?? undefined;
         } else {
           if (!engine.getState().isRecording && engine.isPreparedForRecording()) {
             await engine.cancelPreparedRecording();
@@ -2426,7 +2464,10 @@ export function MemoEditor({
           await engine.finalizeRecordingWarmup();
         }
 
-        await engine.commitRecordingStart({ nextBeatDeadlineMs });
+        await engine.commitRecordingStart({
+          nextBeatDeadlineMs,
+          nextBeatContextWhen,
+        });
         clearPrecountOverlay();
       } catch (error) {
         await engine.cancelPreparedRecording();
@@ -2524,7 +2565,21 @@ export function MemoEditor({
           peaks: state.recordingPeaks,
           color: pendingRecordingColor.current,
         };
-        const result = await stopAndSave(engine, options);
+        const result = await stopAndSave(engine, {
+          ...options,
+          onCaptureComplete: () => {
+            // Exit recording layout + stop chrome immediately; persist continues.
+            setReplaceMode(false);
+            setStackMode(false);
+            setRecordingArmed(false);
+            pendingRecordModeRef.current = null;
+            monitorMixRef.current = false;
+            pendingRecordingColor.current = null;
+            liveRecordingSnapshot.current = null;
+            isStoppingRecordingRef.current = false;
+            setIsStoppingRecording(false);
+          },
+        });
         if (!result) {
           Alert.alert(
             'Could not save recording',
@@ -3095,12 +3150,18 @@ export function MemoEditor({
 
     const useMonitorMix = needsMonitorMix(memo, mode);
     const headphonesConnected = await isHeadphonesConnected();
-    if (useMonitorMix && !headphonesConnected) {
+    if (
+      useMonitorMix &&
+      !headphonesConnected &&
+      !ALLOW_METRONOME_WITHOUT_HEADPHONES
+    ) {
       setHeadphonesWarningMode(mode);
       return;
     }
 
-    await startArmedRecording(mode, false);
+    // Phase D: duck open outputs even when "headphones" is true (e.g. A2DP speakers).
+    const duckOpen = useMonitorMix && (await shouldDuckMonitorMixNow());
+    await startArmedRecording(mode, duckOpen);
   };
 
   const startArmedRecording = async (
@@ -3185,6 +3246,7 @@ export function MemoEditor({
       });
 
       let nextBeatDeadlineMs: number | undefined;
+      let nextBeatContextWhen: number | undefined;
       const precountMode = getMemoPrecountMode(memo);
       const abortArmedRecording = async () => {
         await abortPreparedArming();
@@ -3228,6 +3290,7 @@ export function MemoEditor({
             return;
           }
           nextBeatDeadlineMs = precountResult.nextBeatDeadlineMs;
+          nextBeatContextWhen = precountResult.nextBeatContextWhen ?? undefined;
         } else if (useMonitorMix) {
           // Dismiss preparing Modal before arm — same rule as precount dismiss.
           await dismissPrecountAndWait();
@@ -3241,6 +3304,7 @@ export function MemoEditor({
           duckMonitorMix: useMonitorMix && duckMonitorMix,
           monitorStartTime: startTime,
           nextBeatDeadlineMs,
+          nextBeatContextWhen,
           silentLayerId: mode === 'replace' ? activeLayerId ?? undefined : undefined,
         });
         await Promise.race([
@@ -3359,6 +3423,7 @@ export function MemoEditor({
 
   useEffect(() => subscribeHeadphonesConnected(setHeadphonesConnected), []);
   useEffect(() => subscribeCueOutputRoute(setCueOutputRoute), []);
+  useEffect(() => subscribeMonitorPath(setMonitorPath), []);
 
   useEffect(() => {
     if (!isRecording || !engineState.monitorMixActive) {
@@ -3446,14 +3511,25 @@ export function MemoEditor({
       : pendingTimelineTime
     : currentTime;
   const metronomeSettings = liveMetronomeSettings;
-  /** Match post-save `wasSoftwareMonitoredCue` + route-aware cue compensation. */
+  /** Match post-save latency skip (wake + cue + measured / speakerBleed wake+measured). */
   const liveLatencyLeadSec = useMemo(
     () =>
-      getRecordingReplacementSkipSeconds(
-        engineState.monitorMixActive || metronomeSettings.enabled,
-        cueOutputRoute
-      ),
-    [engineState.monitorMixActive, metronomeSettings.enabled, cueOutputRoute]
+      getRecordingLatencySkipSeconds({
+        softwareCue: engineState.monitorMixActive || metronomeSettings.enabled,
+        cueRoute: cueOutputRoute,
+        monitorPath,
+        measuredCueLeadSec: isRecording
+          ? engine.getMeasuredCueLeadSec()
+          : undefined,
+      }),
+    [
+      engine,
+      engineState.monitorMixActive,
+      metronomeSettings.enabled,
+      cueOutputRoute,
+      monitorPath,
+      isRecording,
+    ]
   );
   const precountMode = useMemo(
     () => (memo ? getMemoPrecountMode(memo) : 'off'),

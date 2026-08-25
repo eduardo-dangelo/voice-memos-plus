@@ -20,8 +20,13 @@ import {
 import {
   applyRecordingIoLatencyTrim,
   getRecordingReplacementSkipSeconds,
-  type CueOutputRoute,
+  type RecordingLatencySkipOptions,
 } from '@/src/audio/recordingLatency';
+import {
+  applyStackAlignmentTrimDelta,
+  estimateStackAlignmentFromFiles,
+  findStackAlignmentReference,
+} from '@/src/audio/stackAlignment';
 import { spliceRecording, writeAudioBufferToWavFile } from '@/src/audio/wavUtils';
 import { encodeWavToM4a } from 'audio-encode';
 import {
@@ -558,7 +563,7 @@ export async function saveRecording(
   sourcePath: string,
   duration: number,
   capturedPeaks?: number[],
-  options?: { softwareCue?: boolean; cueRoute?: CueOutputRoute }
+  options?: RecordingLatencySkipOptions
 ): Promise<Memo> {
   const memo = await getMemo(memoId);
   if (!memo) {
@@ -587,10 +592,7 @@ export async function saveRecording(
       ? { duration, waveformPeaks: precomputedPeaks }
       : undefined
   );
-  applyRecordingIoLatencyTrim(layer, {
-    softwareCue: options?.softwareCue,
-    cueRoute: options?.cueRoute,
-  });
+  applyRecordingIoLatencyTrim(layer, options);
   memo.trimStart = 0;
   updateMemoTimeline(memo);
   memo.updatedAt = new Date().toISOString();
@@ -671,11 +673,7 @@ export async function addStackedLayer(
   sourcePath: string,
   capturedPeaks?: number[],
   color?: string,
-  options?: {
-    softwareCue?: boolean;
-    cueRoute?: CueOutputRoute;
-    duration?: number;
-  }
+  options?: RecordingLatencySkipOptions & { duration?: number }
 ): Promise<Memo> {
   const memo = await getMemo(memoId);
   if (!memo) {
@@ -730,7 +728,31 @@ export async function addStackedLayer(
   applyRecordingIoLatencyTrim(layer, {
     softwareCue: options?.softwareCue === true,
     cueRoute: options?.cueRoute,
+    measuredCueLeadSec: options?.measuredCueLeadSec,
+    monitorPath: options?.monitorPath,
   });
+
+  // Phase E: sample-accurate PCM fine-trim vs an existing layer at the same
+  // stack point. Never runs on replace (different latency model).
+  if (options?.softwareCue === true) {
+    const reference = findStackAlignmentReference(memo, startTime, layer.id);
+    if (reference) {
+      const referenceFile = requireLayerFile(memoId, reference.fileName);
+      const estimate = await estimateStackAlignmentFromFiles(
+        referenceFile.uri,
+        dest.uri,
+        reference.id,
+        {
+          referenceTrimInSec: getLayerEffects(reference).trimIn,
+          candidateTrimInSec: getLayerEffects(layer).trimIn,
+        }
+      );
+      if (estimate) {
+        applyStackAlignmentTrimDelta(layer, estimate.deltaTrimSec);
+      }
+    }
+  }
+
   memo.layers.push(layer);
   updateMemoTimeline(memo);
   memo.updatedAt = new Date().toISOString();
@@ -755,7 +777,10 @@ export async function replaceLayerSegment(
   trimEnd: number,
   replacementPath: string,
   leadingPadSeconds = 0,
-  options?: { softwareCue?: boolean; cueRoute?: CueOutputRoute }
+  options?: RecordingLatencySkipOptions & {
+    /** Precomputed skip — must match hole sizing in getReplaceSpliceParams. */
+    replacementSkipSeconds?: number;
+  }
 ): Promise<ReplaceLayerSegmentResult> {
   const memo = await getMemo(memoId);
   if (!memo) {
@@ -774,6 +799,17 @@ export async function replaceLayerSegment(
     output.delete();
   }
 
+  const replacementSkipSeconds =
+    options?.replacementSkipSeconds ??
+    getRecordingReplacementSkipSeconds(
+      options?.softwareCue === true,
+      options?.cueRoute ?? 'wired',
+      {
+        measuredCueLeadSec: options?.measuredCueLeadSec,
+        monitorPath: options?.monitorPath,
+      }
+    );
+
   const splice = await spliceRecording(
     original.uri,
     trimStart,
@@ -782,10 +818,7 @@ export async function replaceLayerSegment(
     output.uri,
     {
       leadingPadSeconds,
-      replacementSkipSeconds: getRecordingReplacementSkipSeconds(
-        options?.softwareCue === true,
-        options?.cueRoute ?? 'wired'
-      ),
+      replacementSkipSeconds,
     }
   );
 

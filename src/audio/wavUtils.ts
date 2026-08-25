@@ -26,6 +26,13 @@ export {
   SPLICE_EDGE_FADE_SECONDS,
 } from '@/src/audio/spliceEdgeFades';
 
+export {
+  readWavMonoSamplesWindow as readWavLeadingMonoSamples,
+} from '@/src/audio/wavLeadingRead';
+export type { WavMonoWindow } from '@/src/audio/wavLeadingRead';
+export { parseWavPcm16MonoLayout } from '@/src/audio/wavPcmLayout';
+export type { WavPcmLayout } from '@/src/audio/wavPcmLayout';
+
 function getTrimSampleRange(
   buffer: AudioBuffer,
   startSec: number,

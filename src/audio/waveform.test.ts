@@ -13,6 +13,7 @@ import {
   resamplePeaks,
   shouldUseCapturedPeaks,
   slicePeaksForTrim,
+  waveformPeaksFromCaptured,
   WAVEFORM_BAR_GAP,
   WAVEFORM_BAR_WIDTH,
   WAVEFORM_PIXELS_PER_SECOND,
@@ -144,6 +145,28 @@ test('slicePeaksForTrim returns the same array when trim spans the full take', (
   const peaks = Array.from({ length: peakCountForDuration(duration) }, () => 0.4);
   const sliced = slicePeaksForTrim(peaks, duration, 0, duration);
   assert.equal(sliced, peaks);
+});
+
+test('waveformPeaksFromCaptured rejects under-dense captures instead of upsampling', () => {
+  const underDense = Array.from({ length: 460 }, () => 0.4);
+  assert.equal(waveformPeaksFromCaptured(underDense, 30), undefined);
+
+  const exact = Array.from({ length: 480 }, () => 0.4);
+  const accepted = waveformPeaksFromCaptured(exact, 30);
+  assert.ok(accepted);
+  assert.equal(accepted!.length, 480);
+});
+
+test('slicePeaksForTrim uses proportional indices when peak count is not design density', () => {
+  const duration = 10;
+  // Half design density — must not use round(t*16) into a short array.
+  const peaks = Array.from({ length: 80 }, (_, i) => (i === 40 ? 0.99 : 0.1));
+  const trimIn = 5;
+  const sliced = slicePeaksForTrim(peaks, duration, trimIn, duration);
+  assert.ok(sliced);
+  // Proportional: start at round(0.5 * 80) = 40.
+  assert.equal(sliced![0], 0.99);
+  assert.equal(sliced!.length, 40);
 });
 
 test('computeWaveformPeaksFromChannelData matches peakCount and finds loud samples', () => {

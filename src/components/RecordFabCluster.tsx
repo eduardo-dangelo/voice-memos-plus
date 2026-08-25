@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Alert, StyleSheet, View } from 'react-native';
 
 import {
+  ALLOW_METRONOME_WITHOUT_HEADPHONES,
   isHeadphonesConnected,
   subscribeHeadphonesConnected,
 } from '@/src/audio/headphoneDetection';
@@ -88,7 +89,8 @@ export function RecordFabCluster({ disabled, bottomOffset = 32, onRecord }: Prop
 
   const handleMetronomeCycle = () => {
     void (async () => {
-      const headphonesConnected = await isHeadphonesConnected();
+      const headphonesConnected =
+        ALLOW_METRONOME_WITHOUT_HEADPHONES || (await isHeadphonesConnected());
       setMetronome((current) => {
         const next = {
           ...current,
@@ -110,7 +112,11 @@ export function RecordFabCluster({ disabled, bottomOffset = 32, onRecord }: Prop
 
   const handleRecord = () => {
     void (async () => {
-      if (metronome.enabled && !(await isHeadphonesConnected())) {
+      if (
+        !ALLOW_METRONOME_WITHOUT_HEADPHONES &&
+        metronome.enabled &&
+        !(await isHeadphonesConnected())
+      ) {
         Alert.alert(METRONOME_HEADPHONES_TITLE, METRONOME_HEADPHONES_MESSAGE);
         return;
       }

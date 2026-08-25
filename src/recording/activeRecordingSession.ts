@@ -4,7 +4,7 @@ import { AppState } from 'react-native';
 
 import { loadMemoIntoEngine } from '@/src/audio/loadMemoIntoEngine';
 import type { MemoAudioEngine } from '@/src/audio/MemoAudioEngine';
-import { getRecordingReplacementSkipSeconds } from '@/src/audio/recordingLatency';
+import { getRecordingLatencySkipSeconds } from '@/src/audio/recordingLatency';
 import { notifyLibraryChanged } from '@/src/recording/memoUpdateEvents';
 import {
   addStackedLayer,
@@ -222,9 +222,24 @@ export async function discardUnfinishedRecording(
   }
 }
 
+export type StopAndSaveOptions = {
+  reloadEngine?: boolean;
+  /**
+   * Called right after recorder capture stops (before finalize / persist).
+   * Use to exit recording UI while save continues.
+   */
+  onCaptureComplete?: () => void;
+};
+
+/**
+ * Stop capture, persist the take, and reload the engine.
+ * Always defers playback-session restore until after file persist so
+ * `onCaptureComplete` can exit recording layout without waiting on graph reset
+ * or stack PCM alignment.
+ */
 export async function stopAndSave(
   engine: MemoAudioEngine,
-  options?: { reloadEngine?: boolean }
+  options?: StopAndSaveOptions
 ): Promise<RecordingSaveResult | null> {
   if (saveInFlight) {
     return saveInFlight;
@@ -239,6 +254,9 @@ export async function stopAndSave(
       const isBackground = AppState.currentState !== 'active';
 
       const capture = await engine.stopRecorderCapture();
+      // Exit recording layout before finalize/PCM align/graph restore.
+      options?.onCaptureComplete?.();
+
       const currentSession = getSession() ?? (await ensureSessionForStop());
       const currentMemo = await getMemo(currentSession.memoId);
       if (!currentMemo) {
@@ -250,8 +268,9 @@ export async function stopAndSave(
       const shouldReloadEngine =
         (options?.reloadEngine !== false) || wasStackMode || wasReplaceMode;
 
+      // Always defer AVAudioSession/graph restore past UI exit + file persist.
       const { path, duration, peaks } = await engine.finalizeRecordingAfterStop(capture, {
-        deferPlaybackSetup: isBackground,
+        deferPlaybackSetup: true,
       });
 
       if (!isBackground) {
@@ -263,9 +282,20 @@ export async function stopAndSave(
 
       let updated: Memo;
       let activeLayerId: string | null = layerId;
+      let replaceLayerPath: string | undefined;
 
       const softwareCue = capture.wasSoftwareMonitoredCue;
       const cueRoute = capture.cueOutputRoute;
+      const monitorPath = capture.monitorPath;
+      const measuredCueLeadSec = capture.measuredCueLeadSec;
+      const latencyOptions = {
+        softwareCue: softwareCue === true,
+        cueRoute,
+        monitorPath,
+        measuredCueLeadSec,
+      };
+      // Single skip value for replace hole + PCM — never re-derive separately.
+      const replacementSkipSeconds = getRecordingLatencySkipSeconds(latencyOptions);
 
       if (wasStackMode) {
         updated = await addStackedLayer(
@@ -274,7 +304,7 @@ export async function stopAndSave(
           path,
           peaks,
           currentSession.trackColor ?? undefined,
-          { softwareCue, cueRoute, duration }
+          { ...latencyOptions, duration }
         );
         activeLayerId = updated.layers[updated.layers.length - 1]?.id ?? layerId;
       } else if (wasReplaceMode) {
@@ -285,10 +315,6 @@ export async function stopAndSave(
         if (!replaceLayer || replaceLayer.duration <= 0) {
           throw new Error('No active layer');
         }
-        const replacementSkipSeconds = getRecordingReplacementSkipSeconds(
-          softwareCue === true,
-          cueRoute
-        );
         const { trimStart: fileTrimStart, trimEnd: fileTrimEnd, leadingPadSeconds } =
           getReplaceSpliceParams(
             replaceLayer,
@@ -310,31 +336,40 @@ export async function stopAndSave(
           fileTrimEnd,
           path,
           leadingPadSeconds,
-          { softwareCue, cueRoute }
+          { ...latencyOptions, replacementSkipSeconds }
         );
         updated = replaceResult.memo;
+        replaceLayerPath = replaceResult.prime?.path;
+      } else {
+        updated = await saveRecording(currentMemo.id, path, duration, peaks, latencyOptions);
+        activeLayerId = updated.layers[0]?.id ?? null;
+      }
 
-        const replaceLayerPath = replaceResult.prime?.path;
-        let engineReloaded = false;
+      const willReloadEngineNow = !isBackground && shouldReloadEngine;
+      const result: RecordingSaveResult = {
+        memo: updated,
+        activeLayerId,
+        seekTime: wasStackMode || wasReplaceMode ? capturedStartTime : 0,
+        wasStackMode,
+        wasReplaceMode,
+        // Mark true when this path owns the reload so subscribeRecordingSave
+        // does not race a second loadMemoIntoEngine.
+        engineReloaded: willReloadEngineNow,
+      };
 
-        const result: RecordingSaveResult = {
-          memo: updated,
-          activeLayerId,
-          seekTime: capturedStartTime,
-          wasStackMode,
-          wasReplaceMode,
-          engineReloaded: false,
-        };
+      clearSession();
+      // Show the new layer immediately; graph restore continues below.
+      notifyListeners(result);
 
-        clearSession();
-
-        if (isBackground) {
-          engine.scheduleDeferredEngineReload(
-            updated,
-            result.seekTime,
-            replaceLayerPath ? [replaceLayerPath] : undefined
-          );
-        } else if (shouldReloadEngine) {
+      if (isBackground) {
+        engine.scheduleDeferredEngineReload(
+          updated,
+          result.seekTime,
+          replaceLayerPath ? [replaceLayerPath] : undefined
+        );
+      } else {
+        await engine.finishDeferredPlaybackSetup();
+        if (shouldReloadEngine) {
           if (replaceLayerPath) {
             engine.invalidateLayerBuffer(replaceLayerPath);
           }
@@ -342,43 +377,19 @@ export async function stopAndSave(
           // AudioContext and leaves the next replace arm fighting a dirty session.
           // Next play/arm decodes from the updated file after invalidate.
           await loadMemoIntoEngine(engine, updated, result.seekTime);
-          engineReloaded = true;
         }
-
-        result.engineReloaded = engineReloaded;
-        notifyListeners(result);
-        return result;
-      } else {
-        updated = await saveRecording(currentMemo.id, path, duration, peaks, {
-          softwareCue,
-          cueRoute,
-        });
-        activeLayerId = updated.layers[0]?.id ?? null;
       }
 
-      const result: RecordingSaveResult = {
-        memo: updated,
-        activeLayerId,
-        seekTime: wasStackMode || wasReplaceMode ? capturedStartTime : 0,
-        wasStackMode,
-        wasReplaceMode,
-        engineReloaded: false,
-      };
-
-      clearSession();
-
-      if (isBackground) {
-        engine.scheduleDeferredEngineReload(updated, result.seekTime);
-      } else if (shouldReloadEngine) {
-        await loadMemoIntoEngine(engine, updated, result.seekTime);
-        result.engineReloaded = true;
-      }
-
-      notifyListeners(result);
       return result;
     } catch (error) {
       if (__DEV__) {
         console.warn('[activeRecordingSession] stopAndSave failed', error);
+      }
+      // Ensure deferred playback setup is not left hanging after a failed save.
+      try {
+        await engine.finishDeferredPlaybackSetup();
+      } catch {
+        // Best-effort restore.
       }
       throw error;
     }
