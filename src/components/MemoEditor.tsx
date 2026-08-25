@@ -143,7 +143,8 @@ import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 import { formatDurationWithTenths } from '@/src/utils/format';
 
 const COMMIT_RECORDING_TIMEOUT_MS = 8000;
-const ARMED_UI_ABORT_DELAY_MS = 500;
+/** Backstop only after arming finishes — not a race with commit/wake. */
+const ARMED_UI_ABORT_DELAY_MS = COMMIT_RECORDING_TIMEOUT_MS + 500;
 
 type MemoEditorEngineSlice = {
   memoId: string | null;
@@ -470,6 +471,7 @@ export function MemoEditor({
   const autoRecordStarted = useRef(false);
   const loadGenerationRef = useRef(0);
   const beginRecordingInFlight = useRef(false);
+  const [isArmingRecording, setIsArmingRecording] = useState(false);
   const pendingLocationNamingRef = useRef(false);
   const recordingStartTime = useRef(0);
   const liveRecordingSnapshot = useRef<{
@@ -559,6 +561,8 @@ export function MemoEditor({
   const precountPreparingRef = useRef(false);
   const [isStoppingRecording, setIsStoppingRecording] = useState(false);
   const isStoppingRecordingRef = useRef(false);
+  const [isPersistingTake, setIsPersistingTake] = useState(false);
+  const isPersistingTakeRef = useRef(false);
   const lastLayoutHeightRef = useRef<number | null>(null);
   const settleRafRef = useRef<number | null>(null);
   const stackModeRef = useRef(false);
@@ -2412,6 +2416,7 @@ export function MemoEditor({
         return;
       }
       beginRecordingInFlight.current = true;
+      setIsArmingRecording(true);
       const memoId = refreshed.id;
       const memoTitle = refreshed.title;
       const precountMode = getMemoPrecountMode(refreshed);
@@ -2490,6 +2495,7 @@ export function MemoEditor({
         );
       } finally {
         beginRecordingInFlight.current = false;
+        setIsArmingRecording(false);
       }
     })();
   }, [
@@ -2505,19 +2511,30 @@ export function MemoEditor({
   ]);
 
   // Invariant: never leave armed/stack/replace chrome when capture is not live.
+  // Only schedule after arming finishes — during prepare/precount/commit,
+  // isArmingRecording shields this backstop.
   useEffect(() => {
-    if (engineState.isRecording) {
+    if (engineState.isRecording || isArmingRecording) {
       return;
     }
     if (!recordingArmed && !stackMode && !replaceMode) {
       return;
     }
     const timer = setTimeout(() => {
-      if (engine.getState().isRecording || beginRecordingInFlight.current) {
+      if (
+        engine.getState().isRecording ||
+        beginRecordingInFlight.current ||
+        isArmingRecording
+      ) {
         return;
       }
       if (precountOverlayActiveRef.current) {
         return;
+      }
+      if (__DEV__) {
+        console.warn(
+          '[MemoEditor] armed UI backstop: aborting stale armed chrome'
+        );
       }
       void abortPreparedArming();
     }, ARMED_UI_ABORT_DELAY_MS);
@@ -2526,6 +2543,7 @@ export function MemoEditor({
     abortPreparedArming,
     engine,
     engineState.isRecording,
+    isArmingRecording,
     recordingArmed,
     replaceMode,
     stackMode,
@@ -2557,6 +2575,8 @@ export function MemoEditor({
       isSavingRecordingOnExit.current = true;
       isStoppingRecordingRef.current = true;
       setIsStoppingRecording(true);
+      isPersistingTakeRef.current = true;
+      setIsPersistingTake(true);
       try {
         const state = engine.getState();
         liveRecordingSnapshot.current = {
@@ -2607,6 +2627,8 @@ export function MemoEditor({
       } finally {
         isSavingRecordingOnExit.current = false;
         clearStopping();
+        isPersistingTakeRef.current = false;
+        setIsPersistingTake(false);
       }
     },
     [engine]
@@ -3114,7 +3136,8 @@ export function MemoEditor({
     if (
       beginRecordingInFlight.current ||
       engine.getState().isRecording ||
-      isStoppingRecordingRef.current
+      isStoppingRecordingRef.current ||
+      isPersistingTakeRef.current
     ) {
       return;
     }
@@ -3123,7 +3146,8 @@ export function MemoEditor({
     if (
       beginRecordingInFlight.current ||
       engine.getState().isRecording ||
-      isStoppingRecordingRef.current
+      isStoppingRecordingRef.current ||
+      isPersistingTakeRef.current
     ) {
       return;
     }
@@ -3175,7 +3199,8 @@ export function MemoEditor({
     if (
       beginRecordingInFlight.current ||
       engine.getState().isRecording ||
-      isStoppingRecordingRef.current
+      isStoppingRecordingRef.current ||
+      isPersistingTakeRef.current
     ) {
       return;
     }
@@ -3184,12 +3209,14 @@ export function MemoEditor({
     if (
       beginRecordingInFlight.current ||
       engine.getState().isRecording ||
-      isStoppingRecordingRef.current
+      isStoppingRecordingRef.current ||
+      isPersistingTakeRef.current
     ) {
       return;
     }
 
     beginRecordingInFlight.current = true;
+    setIsArmingRecording(true);
     // Fresh arm — clear stale cancel from prior Modal dismiss / id mount.
     // Otherwise single-track replace (no preparing overlay) aborts before runPrecount.
     precountCancelledRef.current = false;
@@ -3307,28 +3334,55 @@ export function MemoEditor({
           nextBeatContextWhen,
           silentLayerId: mode === 'replace' ? activeLayerId ?? undefined : undefined,
         });
-        await Promise.race([
-          commitPromise,
-          new Promise<never>((_, reject) =>
-            setTimeout(
-              () => reject(new Error('Recording start timed out')),
-              COMMIT_RECORDING_TIMEOUT_MS
-            )
-          ),
-        ]);
+        // Cooperative timeout: abort then join the same promise — never orphan
+        // commit while tearing down the recorder (start→emit race).
+        let timedOut = false;
+        let timeoutId: ReturnType<typeof setTimeout> | null = null;
+        try {
+          await Promise.race([
+            commitPromise,
+            new Promise<never>((_, reject) => {
+              timeoutId = setTimeout(() => {
+                timedOut = true;
+                reject(new Error('Recording start timed out'));
+              }, COMMIT_RECORDING_TIMEOUT_MS);
+            }),
+          ]);
+        } catch (error) {
+          if (timedOut) {
+            engine.abortRecordingStartCommit();
+            await commitPromise.catch(() => {
+              // Joined — commit observed abort or finished.
+            });
+          }
+          throw error;
+        } finally {
+          if (timeoutId != null) {
+            clearTimeout(timeoutId);
+          }
+        }
         clearPrecountOverlay();
         void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {
           // Best-effort — never abort a live take for haptics failure.
         });
       } catch (error) {
         await abortArmedRecording();
-        if (error instanceof RecordingStartAbortedError || precountCancelledRef.current) {
+        if (precountCancelledRef.current) {
+          // Real user cancel during precount/preparing — silent.
           return;
         }
-        Alert.alert('Recording failed', error instanceof Error ? error.message : 'Unknown error');
+        if (engine.getState().isRecording) {
+          // Capture already live (e.g. abort raced after start) — leave it.
+          return;
+        }
+        Alert.alert(
+          'Recording failed',
+          error instanceof Error ? error.message : 'Unknown error'
+        );
       }
     } finally {
       beginRecordingInFlight.current = false;
+      setIsArmingRecording(false);
     }
   };
 
@@ -3347,7 +3401,7 @@ export function MemoEditor({
   }, [engine]);
 
   const showRecordOptions = () => {
-    if (!memo || !hasRecording(memo)) {
+    if (!memo || !hasRecording(memo) || isPersistingTakeRef.current) {
       return;
     }
 
@@ -3992,7 +4046,7 @@ export function MemoEditor({
               <ActivityIndicator color={colors.accent} />
             </View>
           )}
-          {metronomeGridProcessing && !metronomeSettingsVisible ? (
+          {(metronomeGridProcessing || isPersistingTake) && !metronomeSettingsVisible ? (
             <View pointerEvents="none" style={styles.gridProcessingOverlay}>
               <ActivityIndicator color={colors.accent} size="large" />
             </View>
@@ -4054,7 +4108,8 @@ export function MemoEditor({
                   !memo ||
                   !hasRecording(memo) ||
                   pendingRecordingLayout ||
-                  isStoppingRecording
+                  isStoppingRecording ||
+                  isPersistingTake
                 }
                 showProgressBar={false}
                 showTimeLabels={false}
@@ -4296,6 +4351,9 @@ function useMemoEditorStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           flex: 1,
           marginHorizontal: -20,
           paddingTop: 4,
+          // Clip WaveformView overflow so timeline markers cannot paint into the tool strip
+          // when TrackEditorShell mounts and shrinks this flex slot after stack save.
+          overflow: 'hidden',
         },
         tracksLoading: {
           flex: 1,

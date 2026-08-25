@@ -10,6 +10,7 @@ import {
   addStackedLayer,
   alignStackedLayer,
   deleteMemo,
+  ensureWaveformPeaks,
   getMemo,
   replaceLayerSegment,
   saveRecording,
@@ -237,8 +238,8 @@ export type StopAndSaveOptions = {
  * Always defers playback-session restore until after file persist so
  * `onCaptureComplete` can exit recording layout without waiting on graph reset
  * or stack PCM alignment. Stack path notifies after coarse persist, then
- * awaits fine-align (second notify) before graph restore — still inside
- * `saveInFlight` so the next record waits.
+ * awaits fine-align + peak reconcile (final notify) before graph restore —
+ * still inside `saveInFlight` so the next record waits.
  */
 export async function stopAndSave(
   engine: MemoAudioEngine,
@@ -361,21 +362,30 @@ export async function stopAndSave(
       };
 
       clearSession();
-      // Show the new layer immediately (before PCM align / graph restore).
-      notifyListeners(result);
 
-      // Fine-align after first paint so stop lag is not blocked on XCorr.
-      if (
-        wasStackMode &&
-        softwareCue === true &&
-        activeLayerId
-      ) {
-        const aligned = await alignStackedLayer(updated.id, activeLayerId);
-        if (aligned) {
-          updated = aligned;
-          result.memo = aligned;
-          notifyListeners(result);
+      if (wasStackMode) {
+        // Show the new layer immediately (before PCM align / peak reconcile).
+        notifyListeners(result);
+
+        // Fine-align after first paint so stop lag is not blocked on XCorr.
+        if (softwareCue === true && activeLayerId) {
+          const aligned = await alignStackedLayer(updated.id, activeLayerId);
+          if (aligned) {
+            updated = aligned;
+          }
         }
+
+        // Same peak/duration reconcile as loadMemo — fixes stretched live peaks
+        // without requiring close/reopen.
+        updated = await ensureWaveformPeaks(updated);
+        result.memo = updated;
+        notifyListeners(result);
+      } else {
+        // First take / replace: reconcile before the single notify so Track 1
+        // cannot ship stretched live peaks (same invariant as reopen).
+        updated = await ensureWaveformPeaks(updated);
+        result.memo = updated;
+        notifyListeners(result);
       }
 
       if (isBackground) {

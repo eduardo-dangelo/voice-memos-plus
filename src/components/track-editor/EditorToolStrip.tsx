@@ -95,6 +95,7 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           height: EDITOR_STRIP_HEIGHT,
           borderTopWidth: StyleSheet.hairlineWidth,
           borderTopColor: colors.separator,
+          backgroundColor: colors.sheetBackground,
         },
         row: {
           flexGrow: 1,

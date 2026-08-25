@@ -333,6 +333,14 @@ export class MemoAudioEngine {
   private monitorSilentLayerId: string | null = null;
   /** Set by abortRecordingStartCommit() to interrupt the precount downbeat wait. */
   private recordingStartAborted = false;
+  /**
+   * True from successful recorder.start() until stop/cancel clears the take.
+   * Closes the gap where cancelPreparedRecording tore down a started recorder
+   * before emit({ isRecording: true }).
+   */
+  private recordingCaptureStarted = false;
+  /** Bumped on each fresh prepare; abort is sticky until the next prepare. */
+  private recordingPrepareGeneration = 0;
   /** Cue-output route captured at prepareRecordingRoute (defaults to wired). */
   private recordingCueOutputRoute: CueOutputRoute = 'wired';
   /** Monitor path (headphones vs speakerBleed) captured at prepareRecordingRoute. */
@@ -1109,6 +1117,11 @@ export class MemoAudioEngine {
       this.playbackContextStartWhen = 0;
       this.monitorMixPlannedUntil = 0;
       this.resetPlaybackRateClock();
+      if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        console.log(
+          '[audio] monitorMix empty (inaudible layers); continuing to recorder.start'
+        );
+      }
       if (this.metronomeSettings.enabled) {
         this.armMetronomeForRecording(startAt, startWhen);
       }
@@ -2912,8 +2925,10 @@ export class MemoAudioEngine {
       await this.cancelPreparedRecording();
     }
 
-    // Fresh arm — clear abort left by a prior cancelPreparedRecording / abort.
+    // Fresh arm — new generation clears sticky abort from a prior cancel.
+    this.recordingPrepareGeneration += 1;
     this.recordingStartAborted = false;
+    this.recordingCaptureStarted = false;
 
     const monitorMix = options?.monitorMix ?? false;
     this.preparedMonitorMix = monitorMix;
@@ -3102,7 +3117,7 @@ export class MemoAudioEngine {
     nextBeatContextWhen?: number;
     silentLayerId?: string;
   }): Promise<void> {
-    if (this.state.isRecording) {
+    if (this.state.isRecording || this.recordingCaptureStarted) {
       return;
     }
 
@@ -3129,11 +3144,16 @@ export class MemoAudioEngine {
     nextBeatContextWhen?: number;
     silentLayerId?: string;
   }): Promise<void> {
-    if (this.state.isRecording) {
+    if (this.state.isRecording || this.recordingCaptureStarted) {
       return;
     }
 
-    this.recordingStartAborted = false;
+    // Do not clear recordingStartAborted here — abort is sticky until the next
+    // prepare generation so a cancel during precount cannot be wiped at commit.
+    if (this.recordingStartAborted) {
+      throw new RecordingStartAbortedError();
+    }
+
     this.recordingCueContextWhen = 0;
     this.recordingRecorderStartedAtContextWhen = 0;
 
@@ -3320,7 +3340,39 @@ export class MemoAudioEngine {
     }
 
     const startResult = this.recorder.start();
+
+    if (startResult.status === 'error') {
+      this.recorder.clearOnAudioReady();
+      this.recorder = null;
+      this.recordingPrepared = false;
+      this.recordingWarmupFinalized = false;
+      this.monitorSilentLayerId = null;
+      this.recordingCueContextWhen = 0;
+      this.recordingRecorderStartedAtContextWhen = 0;
+      this.recordingCaptureStarted = false;
+      this.invalidateAndStopSources();
+      throw new Error(startResult.message);
+    }
+
+    // Latch capture before any other work so cancelPreparedRecording cannot
+    // tear down a started recorder in the start→emit gap.
+    this.recordingCaptureStarted = true;
     this.recordingRecorderStartedAtContextWhen = context.currentTime;
+    this.recordingPrepared = false;
+    this.recordingWarmupFinalized = false;
+    this.recordingInterrupted = false;
+    this.refreshActiveRecordingSampleRate();
+    this.setRecordingInterruptionObservation(true);
+
+    this.emit({
+      isRecording: true,
+      recordingDuration: 0,
+      recordingPeaks: [],
+      monitorMixActive: monitorMix,
+      monitorMixReady: true,
+      isPlaying: false,
+      currentTime: monitorStartTime,
+    });
 
     if (
       typeof __DEV__ !== 'undefined' &&
@@ -3337,33 +3389,6 @@ export class MemoAudioEngine {
       );
     }
 
-    if (startResult.status === 'error') {
-      this.recorder.clearOnAudioReady();
-      this.recorder = null;
-      this.recordingPrepared = false;
-      this.recordingWarmupFinalized = false;
-      this.monitorSilentLayerId = null;
-      this.recordingCueContextWhen = 0;
-      this.recordingRecorderStartedAtContextWhen = 0;
-      this.invalidateAndStopSources();
-      throw new Error(startResult.message);
-    }
-
-    this.recordingPrepared = false;
-    this.recordingWarmupFinalized = false;
-    this.recordingInterrupted = false;
-    this.refreshActiveRecordingSampleRate();
-    this.setRecordingInterruptionObservation(true);
-
-    this.emit({
-      isRecording: true,
-      recordingDuration: 0,
-      recordingPeaks: [],
-      monitorMixActive: monitorMix,
-      monitorMixReady: true,
-      isPlaying: false,
-      currentTime: monitorStartTime,
-    });
     // 150ms balances live waveform growth vs JS wakeups on long stacked takes.
     this.recordingTimer = setInterval(() => {
       this.emitRecordingProgress();
@@ -3387,15 +3412,35 @@ export class MemoAudioEngine {
     }
   }
 
+  /**
+   * Tear down a prepared (not yet live) recording session.
+   * Sets abort so an in-flight commit exits; joins that commit before nulling
+   * the recorder so we never race recorder.start().
+   * No-op once capture has started — use {@link cancelRecording} for live takes.
+   */
   async cancelPreparedRecording(): Promise<void> {
     this.recordingStartAborted = true;
 
-    if (this.state.isRecording) {
+    if (this.state.isRecording || this.recordingCaptureStarted) {
       return;
     }
 
-    // Do not await recordingStartInFlight here — abort flag lets commit reject;
-    // awaiting can nest/deadlock when callers cancel from commit error paths.
+    // Join in-flight commit so it observes abort and exits before we null the
+    // recorder (avoids start→emit teardown race). Callers that cancel from
+    // outside the commit promise are safe; commit's own finally clears inFlight
+    // before UI catch runs abortArmedRecording.
+    const inFlight = this.recordingStartInFlight;
+    if (inFlight) {
+      try {
+        await inFlight;
+      } catch {
+        // Aborted or failed — continue cleanup.
+      }
+    }
+
+    if (this.state.isRecording || this.recordingCaptureStarted) {
+      return;
+    }
 
     if (this.recordingPrepareInFlight) {
       try {
@@ -3405,6 +3450,15 @@ export class MemoAudioEngine {
       }
     }
 
+    if (this.state.isRecording || this.recordingCaptureStarted) {
+      return;
+    }
+
+    this.clearPreparedRecordingState();
+  }
+
+  /** Clear prepared recorder/warmup without setting abort (internal helper). */
+  private clearPreparedRecordingState(): void {
     if (this.recorder) {
       try {
         this.recorder.clearOnAudioReady();
@@ -3427,12 +3481,13 @@ export class MemoAudioEngine {
     this.recordingMonitorPath = 'headphones';
     this.recordingCueContextWhen = 0;
     this.recordingRecorderStartedAtContextWhen = 0;
+    this.recordingCaptureStarted = false;
     this.clearRecordingSampleRateState();
     this.invalidateAndStopSources();
   }
 
   async cancelRecording(): Promise<void> {
-    if (this.state.isRecording) {
+    if (this.state.isRecording || this.recordingCaptureStarted) {
       this.clearRecordingTimer();
       this.setRecordingInterruptionObservation(false);
       if (this.recorder) {
@@ -3452,6 +3507,7 @@ export class MemoAudioEngine {
       this.recordingMonitorPath = 'headphones';
       this.recordingCueContextWhen = 0;
       this.recordingRecorderStartedAtContextWhen = 0;
+      this.recordingCaptureStarted = false;
       this.clearRecordingSampleRateState();
       await this.resetPlaybackGraph();
       await this.configureForPlayback();
@@ -3523,6 +3579,7 @@ export class MemoAudioEngine {
       this.recordingMonitorPath = 'headphones';
       this.recordingCueContextWhen = 0;
       this.recordingRecorderStartedAtContextWhen = 0;
+      this.recordingCaptureStarted = false;
       this.emit({
         isRecording: false,
         recordingDuration: 0,
