@@ -219,10 +219,21 @@ export function getRecordingLatencySkipSeconds(
     return wake + measuredOrZero;
   }
 
-  // Headphones: route constant is output latency; measured lead is commit
-  // jitter — add both (do not replace the constant with ~5–15ms measured).
+  // Headphones: route constant was tuned including typical commit lead —
+  // do not also add measuredCueLeadSec (over-trims). Measured is logged for DEV.
   const cueRoute = options.cueRoute ?? 'wired';
-  return wake + getSoftwareCueCompensationSec(cueRoute) + measuredOrZero;
+  if (
+    typeof __DEV__ !== 'undefined' &&
+    __DEV__ &&
+    measured != null &&
+    measured > 0.001
+  ) {
+    console.log(
+      `[audio] headphones measuredCueLead=${(measured * 1000).toFixed(1)}ms ` +
+        `(not added to wake+route trim)`
+    );
+  }
+  return wake + getSoftwareCueCompensationSec(cueRoute);
 }
 
 /** Seconds to skip at the start of a replace-splice replacement buffer. */

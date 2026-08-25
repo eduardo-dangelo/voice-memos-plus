@@ -8,6 +8,7 @@ import { getRecordingLatencySkipSeconds } from '@/src/audio/recordingLatency';
 import { notifyLibraryChanged } from '@/src/recording/memoUpdateEvents';
 import {
   addStackedLayer,
+  alignStackedLayer,
   deleteMemo,
   getMemo,
   replaceLayerSegment,
@@ -235,7 +236,9 @@ export type StopAndSaveOptions = {
  * Stop capture, persist the take, and reload the engine.
  * Always defers playback-session restore until after file persist so
  * `onCaptureComplete` can exit recording layout without waiting on graph reset
- * or stack PCM alignment.
+ * or stack PCM alignment. Stack path notifies after coarse persist, then
+ * awaits fine-align (second notify) before graph restore — still inside
+ * `saveInFlight` so the next record waits.
  */
 export async function stopAndSave(
   engine: MemoAudioEngine,
@@ -358,8 +361,22 @@ export async function stopAndSave(
       };
 
       clearSession();
-      // Show the new layer immediately; graph restore continues below.
+      // Show the new layer immediately (before PCM align / graph restore).
       notifyListeners(result);
+
+      // Fine-align after first paint so stop lag is not blocked on XCorr.
+      if (
+        wasStackMode &&
+        softwareCue === true &&
+        activeLayerId
+      ) {
+        const aligned = await alignStackedLayer(updated.id, activeLayerId);
+        if (aligned) {
+          updated = aligned;
+          result.memo = aligned;
+          notifyListeners(result);
+        }
+      }
 
       if (isBackground) {
         engine.scheduleDeferredEngineReload(

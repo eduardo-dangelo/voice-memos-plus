@@ -7,9 +7,12 @@ const DEFAULT_PEAK_COUNT = 150;
 
 /**
  * capturedPeaks must describe the ENTIRE file at design density (~16 bars/s).
- * Reject clearly under-dense captures (e.g. a replace segment stretched over a
- * full layer) so we decode the file instead of upsampling sparse bars.
+ * Reject captures that are more than ±2 bars off design density so we decode
+ * the file instead of upsampling sparse bars (which bakes temporal stretch).
  */
+export const CAPTURED_PEAKS_MAX_BAR_SKEW = 2;
+
+/** @deprecated Prefer CAPTURED_PEAKS_MAX_BAR_SKEW (±2 bars). Kept for callers/tests. */
 export const CAPTURED_PEAKS_MIN_DENSITY = 0.5;
 
 export function peakToAbsoluteScale(peak: number): number {
@@ -21,7 +24,7 @@ export function peakCountForDuration(duration: number): number {
   return Math.max(1, Math.floor(duration * WAVEFORM_PIXELS_PER_SECOND / barStep));
 }
 
-/** True when capturedPeaks look dense enough to represent the full file duration. */
+/** True when capturedPeaks match design density within ±2 bars. */
 export function shouldUseCapturedPeaks(
   capturedPeaks: number[] | undefined,
   duration?: number
@@ -33,7 +36,7 @@ export function shouldUseCapturedPeaks(
     return true;
   }
   const expected = peakCountForDuration(duration);
-  return capturedPeaks.length >= expected * CAPTURED_PEAKS_MIN_DENSITY;
+  return Math.abs(capturedPeaks.length - expected) <= CAPTURED_PEAKS_MAX_BAR_SKEW;
 }
 
 export { accumulatePeaksFromSamples, getBarIndexForTime } from './recordingWaveformPeaks';
@@ -123,7 +126,7 @@ export function waveformPeaksFromCaptured(
   const expected = peakCountForDuration(duration);
   // Never upsample under-dense captures — that bakes temporal stretch into
   // stored peaks (visual frog vs correct PCM). Decode the file instead.
-  if (Math.abs(capturedPeaks.length - expected) > 2) {
+  if (Math.abs(capturedPeaks.length - expected) > CAPTURED_PEAKS_MAX_BAR_SKEW) {
     return undefined;
   }
   if (capturedPeaks.length === expected) {

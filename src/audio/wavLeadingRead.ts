@@ -2,6 +2,7 @@ import { File } from 'expo-file-system';
 
 import {
   parseWavPcm16MonoLayout,
+  wavDurationSecFromLayout,
   type WavPcmLayout,
 } from '@/src/audio/wavPcmLayout';
 
@@ -10,7 +11,7 @@ export type WavMonoWindow = {
   sampleRate: number;
 };
 
-export { parseWavPcm16MonoLayout };
+export { parseWavPcm16MonoLayout, wavDurationSecFromLayout };
 export type { WavPcmLayout };
 
 function pcm16ToFloat32(pcmBytes: Uint8Array): Float32Array {
@@ -21,6 +22,36 @@ function pcm16ToFloat32(pcmBytes: Uint8Array): Float32Array {
     samples[i] = view.getInt16(i * 2, true) / 0x8000;
   }
   return samples;
+}
+
+/**
+ * Read WAV data-chunk duration from the header without decoding samples.
+ * Returns null for non-WAV / non-PCM16-mono / unreadable files.
+ */
+export async function readWavDurationSec(path: string): Promise<number | null> {
+  if (!path.toLowerCase().endsWith('.wav')) {
+    return null;
+  }
+  try {
+    const file = new File(path);
+    if (!file.exists) {
+      return null;
+    }
+    const fileSize = file.size ?? file.info().size ?? 0;
+    if (fileSize < 44) {
+      return null;
+    }
+    const probeLen = Math.min(fileSize, 64 * 1024);
+    const probe = new Uint8Array(await file.slice(0, probeLen).arrayBuffer());
+    const layout = parseWavPcm16MonoLayout(probe);
+    if (!layout || layout.sampleRate < 8000) {
+      return null;
+    }
+    const duration = wavDurationSecFromLayout(layout);
+    return duration > 0 ? duration : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

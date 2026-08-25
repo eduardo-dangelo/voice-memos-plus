@@ -1,7 +1,6 @@
 import { Directory, File, Paths } from 'expo-file-system';
 
 import {
-  computeWaveformPeaks,
   computeWaveformPeaksFromChannelData,
   peakCountForDuration,
   resolveWaveformPeaks,
@@ -54,6 +53,7 @@ import type { Layer, Memo, MetronomeSettings, PrecountMode } from './types';
 import {
   DEFAULT_PRECOUNT_MODE,
   getDefaultLayerLabel,
+  getLayerActiveStartTime,
   getLayerEffects,
   getMemoMetronomeSettings,
   getMemoTimelineDuration,
@@ -532,8 +532,17 @@ export async function ensureWaveformPeaks(memo: Memo): Promise<Memo> {
     }
 
     try {
-      const nextPeaks = await computeWaveformPeaks(
-        file.uri,
+      const { decodeAudioData } = await import('react-native-audio-api');
+      const buffer = await decodeAudioData(file.uri);
+      if (
+        buffer.duration > 0 &&
+        Math.abs(buffer.duration - layer.duration) > 0.05
+      ) {
+        layer.duration = buffer.duration;
+        changed = true;
+      }
+      const nextPeaks = computeWaveformPeaksFromChannelData(
+        buffer.getChannelData(0),
         peakCountForDuration(layer.duration)
       );
       const prevPeaks = layer.waveformPeaks;
@@ -732,28 +741,54 @@ export async function addStackedLayer(
     monitorPath: options?.monitorPath,
   });
 
-  // Phase E: sample-accurate PCM fine-trim vs an existing layer at the same
-  // stack point. Never runs on replace (different latency model).
-  if (options?.softwareCue === true) {
-    const reference = findStackAlignmentReference(memo, startTime, layer.id);
-    if (reference) {
-      const referenceFile = requireLayerFile(memoId, reference.fileName);
-      const estimate = await estimateStackAlignmentFromFiles(
-        referenceFile.uri,
-        dest.uri,
-        reference.id,
-        {
-          referenceTrimInSec: getLayerEffects(reference).trimIn,
-          candidateTrimInSec: getLayerEffects(layer).trimIn,
-        }
-      );
-      if (estimate) {
-        applyStackAlignmentTrimDelta(layer, estimate.deltaTrimSec);
-      }
-    }
+  memo.layers.push(layer);
+  updateMemoTimeline(memo);
+  memo.updatedAt = new Date().toISOString();
+  writeManifest(memo);
+  return memo;
+}
+
+/**
+ * Phase E: sample-accurate PCM fine-trim vs an existing layer at the same
+ * stack point. Call after {@link addStackedLayer} notify so the UI is not blocked.
+ * Never runs on replace (different latency model).
+ */
+export async function alignStackedLayer(
+  memoId: string,
+  layerId: string
+): Promise<Memo | null> {
+  const memo = await getMemo(memoId);
+  if (!memo) {
+    return null;
   }
 
-  memo.layers.push(layer);
+  const layer = memo.layers.find((entry) => entry.id === layerId);
+  if (!layer || layer.duration <= 0) {
+    return null;
+  }
+
+  const stackPoint = getLayerActiveStartTime(layer);
+  const reference = findStackAlignmentReference(memo, stackPoint, layer.id);
+  if (!reference) {
+    return null;
+  }
+
+  const referenceFile = requireLayerFile(memoId, reference.fileName);
+  const candidateFile = requireLayerFile(memoId, layer.fileName);
+  const estimate = await estimateStackAlignmentFromFiles(
+    referenceFile.uri,
+    candidateFile.uri,
+    reference.id,
+    {
+      referenceTrimInSec: getLayerEffects(reference).trimIn,
+      candidateTrimInSec: getLayerEffects(layer).trimIn,
+    }
+  );
+  if (!estimate) {
+    return null;
+  }
+
+  applyStackAlignmentTrimDelta(layer, estimate.deltaTrimSec);
   updateMemoTimeline(memo);
   memo.updatedAt = new Date().toISOString();
   writeManifest(memo);

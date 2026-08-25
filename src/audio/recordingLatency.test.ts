@@ -138,7 +138,7 @@ describe('getRecordingLatencySkipSeconds', () => {
     );
   });
 
-  it('adds measured cue lead on top of headphones route constant', () => {
+  it('uses wake+route only for headphones (measured lead not additive)', () => {
     assert.equal(
       getRecordingLatencySkipSeconds({
         softwareCue: true,
@@ -146,7 +146,16 @@ describe('getRecordingLatencySkipSeconds', () => {
         monitorPath: 'headphones',
         measuredCueLeadSec: 0.12,
       }),
-      RECORDING_WAKE_TRIM_SEC + SOFTWARE_CUE_COMPENSATION_BY_ROUTE.wired + 0.12
+      WIRED_SKIP
+    );
+    assert.equal(
+      getRecordingLatencySkipSeconds({
+        softwareCue: true,
+        cueRoute: 'bluetooth',
+        monitorPath: 'headphones',
+        measuredCueLeadSec: 0.08,
+      }),
+      BLUETOOTH_SKIP
     );
   });
 

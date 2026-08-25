@@ -75,3 +75,10 @@ export function parseWavPcm16MonoLayout(bytes: Uint8Array): WavPcmLayout | null 
 
   return { sampleRate, channels, bitsPerSample, dataOffset, dataSize };
 }
+
+/** Duration of a mono PCM16 data chunk from a parsed WAV layout. */
+export function wavDurationSecFromLayout(layout: WavPcmLayout): number {
+  const bytesPerFrame = 2;
+  const frames = Math.floor(layout.dataSize / bytesPerFrame);
+  return frames > 0 && layout.sampleRate > 0 ? frames / layout.sampleRate : 0;
+}

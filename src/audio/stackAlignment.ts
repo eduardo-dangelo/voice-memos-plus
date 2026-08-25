@@ -8,12 +8,12 @@ import {
 
 /** Leading window used for bleed / metronome alignment. */
 export const ALIGN_WINDOW_SEC = 1.5;
-/** Search window for residual commit jitter after measured-lead trim. */
-export const MAX_SHIFT_SEC = 0.12;
+/** Search window for residual acoustic / commit jitter after coarse trim. */
+export const MAX_SHIFT_SEC = 0.25;
 /** Active-start proximity to treat another layer as the stack reference. */
 const START_MATCH_EPSILON_SEC = 0.05;
 /** Minimum normalized correlation to accept a fine-trim (ducked bleed is weaker). */
-const MIN_CORRELATION = 0.38;
+const MIN_CORRELATION = 0.3;
 /** Ignore tiny shifts (measurement noise). */
 const MIN_APPLY_SEC = 0.002;
 /** Coarse search stride in samples (refine fills the gaps). */
@@ -207,15 +207,28 @@ export function estimatePcmAlignmentDeltaSec(
     COARSE_STRIDE
   );
 
+  const deltaTrimSec = lagSamples / sampleRate;
   if (correlation < MIN_CORRELATION) {
+    if (typeof __DEV__ !== 'undefined' && __DEV__) {
+      console.log(
+        `[audio] stack PCM align skipped corr=${correlation.toFixed(3)} ` +
+          `< min=${MIN_CORRELATION} maxShift=${MAX_SHIFT_SEC}s ` +
+          `delta=${(deltaTrimSec * 1000).toFixed(1)}ms`
+      );
+    }
     return null;
   }
 
-  const deltaTrimSec = lagSamples / sampleRate;
   if (Math.abs(deltaTrimSec) < MIN_APPLY_SEC) {
     return null;
   }
   if (Math.abs(deltaTrimSec) > MAX_SHIFT_SEC + 0.001) {
+    if (typeof __DEV__ !== 'undefined' && __DEV__) {
+      console.log(
+        `[audio] stack PCM align skipped |delta|=${(deltaTrimSec * 1000).toFixed(1)}ms ` +
+          `> maxShift=${MAX_SHIFT_SEC}s corr=${correlation.toFixed(3)}`
+      );
+    }
     return null;
   }
 

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { parseWavPcm16MonoLayout } from './wavPcmLayout';
+import { parseWavPcm16MonoLayout, wavDurationSecFromLayout } from './wavPcmLayout';
 
 function buildPcm16MonoWavBytes(
   sampleCount: number,
@@ -56,5 +56,16 @@ describe('parseWavPcm16MonoLayout', () => {
     bytes[22] = 2;
     bytes[23] = 0;
     assert.equal(parseWavPcm16MonoLayout(bytes), null);
+  });
+});
+
+describe('wavDurationSecFromLayout', () => {
+  it('returns sample-accurate duration for mono PCM16', () => {
+    const sampleRate = 44100;
+    const sampleCount = 88200; // 2.0s
+    const bytes = buildPcm16MonoWavBytes(sampleCount, sampleRate);
+    const layout = parseWavPcm16MonoLayout(bytes);
+    assert.ok(layout);
+    assert.equal(wavDurationSecFromLayout(layout!), 2);
   });
 });

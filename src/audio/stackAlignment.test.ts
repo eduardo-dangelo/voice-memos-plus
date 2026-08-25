@@ -131,6 +131,23 @@ describe('estimatePcmAlignmentDeltaSec', () => {
     assert.ok(estimate!.correlation >= 0.5);
   });
 
+  it('recovers residual speaker lag within the widened max shift window', () => {
+    const length = Math.floor(SAMPLE_RATE * 1.5);
+    const lagSec = 0.18; // beyond former 120ms cap, inside 250ms
+    assert.ok(lagSec > 0.12);
+    assert.ok(lagSec < MAX_SHIFT_SEC);
+    const lag = Math.floor(SAMPLE_RATE * lagSec);
+    const reference = makeClickTrain(length, 800);
+    const candidate = makeClickTrain(length, 800 + lag);
+    const estimate = estimatePcmAlignmentDeltaSec(
+      reference,
+      candidate,
+      SAMPLE_RATE
+    );
+    assert.ok(estimate, 'expected alignment for residual acoustic delay');
+    assert.ok(Math.abs(estimate!.deltaTrimSec - lagSec) < 0.005);
+  });
+
   it('returns null for uncorrelated noise', () => {
     const length = Math.floor(SAMPLE_RATE * 1.2);
     const reference = makeClickTrain(length, 800);

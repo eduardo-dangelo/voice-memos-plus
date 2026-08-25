@@ -67,6 +67,7 @@ import {
     recordingNeedsNormalize,
     resampleMonoBufferFromRateAsync,
 } from '@/src/audio/wavUtils';
+import { readWavDurationSec } from '@/src/audio/wavLeadingRead';
 import {
     awaitSaveInFlight,
     clearSession,
@@ -3574,13 +3575,36 @@ export class MemoAudioEngine {
 
     assertRecordingFilePresent(path);
 
-    // Happy path: our 44.1k WAV + dense live peaks — skip full-file decode.
+    // Prefer file duration over recorder-reported duration so peaks/timebase
+    // match PCM (Track 1 expansion vs later stacks).
+    const fileDurationSec = capture.usedWavFormat
+      ? await readWavDurationSec(path)
+      : null;
+    const durationSkewSec =
+      fileDurationSec != null && recorderDuration > 0.05
+        ? Math.abs(fileDurationSec - recorderDuration)
+        : 0;
+    const durationSkewRatio =
+      fileDurationSec != null && recorderDuration > 0.05
+        ? durationSkewSec / recorderDuration
+        : 0;
+    const durationMismatch =
+      fileDurationSec != null &&
+      (durationSkewSec > 0.05 || durationSkewRatio > 0.03);
+
+    // Happy path: our 44.1k WAV + dense live peaks matching file duration.
+    const peaksDuration = fileDurationSec ?? recorderDuration;
     const canSkipDecode =
       capture.usedWavFormat &&
       recorderDuration > 0.05 &&
-      shouldUseCapturedPeaks(capture.peaks, recorderDuration);
+      !durationMismatch &&
+      shouldUseCapturedPeaks(capture.peaks, peaksDuration);
 
-    if (!canSkipDecode) {
+    if (canSkipDecode) {
+      if (fileDurationSec != null && fileDurationSec > 0) {
+        duration = fileDurationSec;
+      }
+    } else {
       const decoded = await decodeAudioData(path);
       const needsNormalize = recordingNeedsNormalize(
         decoded.sampleRate,

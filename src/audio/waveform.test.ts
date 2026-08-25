@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
-  CAPTURED_PEAKS_MIN_DENSITY,
   computeWaveformPeaksFromChannelData,
   loopPeakIndex,
   normalizePeakAt,
@@ -110,16 +109,18 @@ test('shouldUseCapturedPeaks rejects replace-segment density on a long layer', (
   // 2s live replace (~32 bars) into a 30s layer (~480 bars) must not be trusted.
   const segmentPeaks = Array.from({ length: 32 }, () => 0.5);
   assert.equal(shouldUseCapturedPeaks(segmentPeaks, 30), false);
-  assert.ok(32 < peakCountForDuration(30) * CAPTURED_PEAKS_MIN_DENSITY);
 });
 
-test('shouldUseCapturedPeaks accepts full-file live peaks and mild duration skew', () => {
+test('shouldUseCapturedPeaks accepts full-file live peaks within ±2 bars', () => {
   const full = Array.from({ length: 480 }, () => 0.4);
   assert.equal(shouldUseCapturedPeaks(full, 30), true);
 
-  // Recorder duration slightly shorter than decoded file duration.
-  const slightlyShort = Array.from({ length: 460 }, () => 0.4);
+  const slightlyShort = Array.from({ length: 478 }, () => 0.4);
   assert.equal(shouldUseCapturedPeaks(slightlyShort, 30), true);
+
+  // Mild duration skew beyond ±2 bars must decode (not trust live peaks).
+  const tooShort = Array.from({ length: 460 }, () => 0.4);
+  assert.equal(shouldUseCapturedPeaks(tooShort, 30), false);
 
   assert.equal(shouldUseCapturedPeaks(undefined, 30), false);
   assert.equal(shouldUseCapturedPeaks([], 30), false);
