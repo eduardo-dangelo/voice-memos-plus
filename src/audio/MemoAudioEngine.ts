@@ -52,6 +52,15 @@ import {
   prewarmMetronomeClickBuffers,
   PRECOUNT_CLICK_LEAD_SEC,
 } from '@/src/audio/metronome';
+import {
+  canExtendMetronomeSchedule,
+  computeMetronomeScheduleTo,
+  getUnclampedRecordingTimelineNow,
+  METRONOME_RECORDING_CHUNK_SEC,
+  METRONOME_RECORDING_EXTEND_INTERVAL_MS,
+  METRONOME_RECORDING_EXTEND_LEAD_SEC,
+  shouldExtendMetronomeSchedule,
+} from '@/src/audio/metronomeRecordingSchedule';
 import { MemoMixGraph } from '@/src/audio/memoMixGraph';
 import { accumulatePeaksFromSamples } from '@/src/audio/recordingWaveformPeaks';
 import { appendAbsoluteRecordingPeaks } from '@/src/audio/recordingPeaksEmit';
@@ -115,9 +124,6 @@ const RECORDER_WAKE_STALL_MS = 50;
 const RECORDER_WAKE_MAX_RESUME_ATTEMPTS = 2;
 /** Stale Phase-B target vs wall downbeat — skip wait branch when both exceeded. */
 const STALE_CONTEXT_TARGET_SEC = 0.25;
-/** How far ahead to schedule metronome clicks while recording without monitor mix. */
-const METRONOME_SCHEDULE_CHUNK_SEC = 12;
-const METRONOME_SCHEDULE_EXTEND_LEAD_SEC = 2;
 /**
  * Cue (monitor mix + metronome) gain when stacking/replacing on speaker.
  * Quieter output reduces mic bleed into the new take (~−8 dB).
@@ -272,6 +278,7 @@ export class MemoAudioEngine {
   private activeRecordingSampleRate: number | null = null;
   private recordingUsedWavFormat = false;
   private recordingTimer: ReturnType<typeof setInterval> | null = null;
+  private recordingMetronomeExtendTimer: ReturnType<typeof setInterval> | null = null;
   private playbackRafId: number | null = null;
   private playbackEndTimeoutId: ReturnType<typeof setTimeout> | null = null;
   private playbackSessionId = 0;
@@ -1064,6 +1071,9 @@ export class MemoAudioEngine {
     this.playbackStartAt = startTime;
     this.playbackEndAt = startTime;
     this.playbackContextStartWhen = startWhen;
+    this.playbackRate = 1;
+    this.playbackRateAnchorContextTime = startWhen;
+    this.playbackRateAnchorPosition = startTime;
     this.extendMetronomeOnlySchedule(startTime);
   }
 
@@ -1495,16 +1505,14 @@ export class MemoAudioEngine {
     }
 
     const scheduleFrom = this.metronomeScheduledUntil;
-    let scheduleTo =
-      Math.max(scheduleFrom, timelineNow) + METRONOME_SCHEDULE_CHUNK_SEC;
-    // Cap at playback end for monitor-mix / normal playback so long loops
-    // do not schedule an unbounded click window past the segment.
-    const capAtPlaybackEnd =
-      this.hasLayerPlaybackScheduled() || !this.state.isRecording;
-    if (capAtPlaybackEnd && this.playbackEndAt > 0) {
-      scheduleTo = Math.min(scheduleTo, this.playbackEndAt);
-    }
-    if (scheduleTo <= scheduleFrom + 0.001) {
+    const scheduleTo = computeMetronomeScheduleTo(
+      scheduleFrom,
+      timelineNow,
+      METRONOME_RECORDING_CHUNK_SEC,
+      this.playbackEndAt,
+      this.state.isRecording
+    );
+    if (!canExtendMetronomeSchedule(scheduleFrom, scheduleTo)) {
       return;
     }
 
@@ -1531,10 +1539,6 @@ export class MemoAudioEngine {
       };
     }
     this.metronomeScheduledUntil = scheduleTo;
-    // Keep monitor-mix end intact — only metronome-only mode extends playbackEndAt.
-    if (!this.hasLayerPlaybackScheduled() && this.state.isRecording) {
-      this.playbackEndAt = scheduleTo;
-    }
   }
 
   private clearMetronomeOnlyState(): void {
@@ -1661,6 +1665,19 @@ export class MemoAudioEngine {
     return Math.max(this.playbackStartAt, Math.min(pos, this.playbackEndAt));
   }
 
+  /** Live recording timeline for metronome chunk extension (not clamped at playbackEndAt). */
+  private getRecordingMetronomeTimelineNow(context: AudioContext): number {
+    return getUnclampedRecordingTimelineNow(
+      this.playbackStartAt,
+      this.playbackContextStartWhen,
+      this.playbackRateAnchorContextTime,
+      this.playbackRateAnchorPosition,
+      this.playbackRate,
+      context.currentTime,
+      this.recorder?.getCurrentDuration() ?? 0
+    );
+  }
+
   private getPlaybackRemainingWallMs(context: AudioContext): number {
     const rate = Math.max(0.01, this.playbackRate);
     const remainingSec = Math.max(
@@ -1758,6 +1775,20 @@ export class MemoAudioEngine {
   private releaseMonitorMixPlayback(): void {
     this.stopActiveSources();
     this.recordingPlaybackBuffers.clear();
+    if (this.state.isRecording && this.metronomeOnlyActive && this.context) {
+      this.reanchorMetronomeForLiveRecording(this.context);
+    }
+  }
+
+  /** Re-sync metronome audio origin after monitor mix ends while recording continues. */
+  private reanchorMetronomeForLiveRecording(context: AudioContext): void {
+    const scheduleFrom = this.metronomeScheduledUntil;
+    const when = context.currentTime + PLAYBACK_SCHEDULE_LEAD;
+    this.metronomeTimelineOrigin = scheduleFrom;
+    this.metronomeAudioOrigin = when;
+    this.playbackRateAnchorContextTime = when;
+    this.playbackRateAnchorPosition = this.getRecordingMetronomeTimelineNow(context);
+    this.extendMetronomeOnlySchedule(this.playbackRateAnchorPosition);
   }
 
   private startPlaybackTimer(sessionId: number, context: AudioContext): void {
@@ -1814,7 +1845,11 @@ export class MemoAudioEngine {
 
       if (
         this.metronomeOnlyActive &&
-        nextTime >= this.metronomeScheduledUntil - METRONOME_SCHEDULE_EXTEND_LEAD_SEC
+        shouldExtendMetronomeSchedule(
+          nextTime,
+          this.metronomeScheduledUntil,
+          METRONOME_RECORDING_EXTEND_LEAD_SEC
+        )
       ) {
         this.extendMetronomeOnlySchedule(nextTime);
       }
@@ -2207,6 +2242,36 @@ export class MemoAudioEngine {
       clearInterval(this.recordingTimer);
       this.recordingTimer = null;
     }
+    this.clearRecordingMetronomeExtendTimer();
+  }
+
+  private clearRecordingMetronomeExtendTimer(): void {
+    if (this.recordingMetronomeExtendTimer) {
+      clearInterval(this.recordingMetronomeExtendTimer);
+      this.recordingMetronomeExtendTimer = null;
+    }
+  }
+
+  private startRecordingMetronomeExtendTimer(): void {
+    this.clearRecordingMetronomeExtendTimer();
+    if (!this.metronomeSettings.enabled) {
+      return;
+    }
+    this.recordingMetronomeExtendTimer = setInterval(() => {
+      if (!this.state.isRecording || !this.metronomeOnlyActive || !this.context) {
+        return;
+      }
+      const timelineNow = this.getRecordingMetronomeTimelineNow(this.context);
+      if (
+        shouldExtendMetronomeSchedule(
+          timelineNow,
+          this.metronomeScheduledUntil,
+          METRONOME_RECORDING_EXTEND_LEAD_SEC
+        )
+      ) {
+        this.extendMetronomeOnlySchedule(timelineNow);
+      }
+    }, METRONOME_RECORDING_EXTEND_INTERVAL_MS);
   }
 
   private invalidateLayerBuffers(): void {
@@ -2406,12 +2471,15 @@ export class MemoAudioEngine {
       return;
     }
     const duration = this.recorder.getCurrentDuration();
-    // Drive metro/monitor extension from AudioContext (same clock as arm),
-    // not recorder duration — avoids dual-clock drift on long stacked takes.
+    // Monitor mix uses clamped playback clock; metronome extension uses unclamped live time.
     const scheduleTimelineNow =
       this.context && this.playbackContextStartWhen > 0
         ? this.getElapsedPlaybackTime(this.context)
         : this.playbackStartAt + duration;
+    const metronomeTimelineNow =
+      this.context && this.metronomeOnlyActive
+        ? this.getRecordingMetronomeTimelineNow(this.context)
+        : scheduleTimelineNow;
 
     if (
       typeof __DEV__ !== 'undefined' &&
@@ -2433,13 +2501,15 @@ export class MemoAudioEngine {
       this.extendMonitorMixSchedule(scheduleTimelineNow);
     }
 
-    if (this.metronomeOnlyActive) {
-      if (
-        scheduleTimelineNow >=
-        this.metronomeScheduledUntil - METRONOME_SCHEDULE_EXTEND_LEAD_SEC
-      ) {
-        this.extendMetronomeOnlySchedule(scheduleTimelineNow);
-      }
+    if (
+      this.metronomeOnlyActive &&
+      shouldExtendMetronomeSchedule(
+        metronomeTimelineNow,
+        this.metronomeScheduledUntil,
+        METRONOME_RECORDING_EXTEND_LEAD_SEC
+      )
+    ) {
+      this.extendMetronomeOnlySchedule(metronomeTimelineNow);
     }
 
     const barCount = this.recordingPeakBarCount(duration);
@@ -3394,6 +3464,10 @@ export class MemoAudioEngine {
       this.emitRecordingProgress();
     }, 150);
 
+    if (this.metronomeSettings.enabled) {
+      this.startRecordingMetronomeExtendTimer();
+    }
+
     if (monitorMix && this.playbackContextStartWhen > 0) {
       const sessionId = this.activePlaybackSessionId;
       this.startPlaybackTimer(sessionId, context);
@@ -4133,7 +4207,7 @@ export class MemoAudioEngine {
 
     const timelineNow = (Date.now() - this.previewStartMs) / 1000;
     const scheduleFrom = this.previewScheduledUntil;
-    const scheduleTo = Math.max(scheduleFrom, timelineNow) + METRONOME_SCHEDULE_CHUNK_SEC;
+    const scheduleTo = Math.max(scheduleFrom, timelineNow) + METRONOME_RECORDING_CHUNK_SEC;
     if (scheduleTo <= scheduleFrom + 0.001) {
       return;
     }
