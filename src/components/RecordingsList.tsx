@@ -36,6 +36,7 @@ import {
   type RecordFabSettings,
 } from '@/src/components/RecordFabCluster';
 import { RecordingRow } from '@/src/components/RecordingRow';
+import { useFolders } from '@/src/hooks/useFolders';
 import { useMemos } from '@/src/hooks/useMemos';
 import { getSession } from '@/src/recording/activeRecordingSession';
 import { markAutoRecordIntent } from '@/src/recording/autoRecordIntent';
@@ -86,6 +87,7 @@ export function RecordingsList({
   const styles = useStyles(colors);
   const isRecording = useAudioEngineSelector((state) => state.isRecording);
   const { memos, refresh, removeMemo, removeMemos } = useMemos(scope);
+  const { folders } = useFolders();
   const [query, setQuery] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [selectionMode, setSelectionMode] = useState(false);
@@ -96,8 +98,16 @@ export function RecordingsList({
   const [isExporting, setIsExporting] = useState(false);
   const startingRecordRef = useRef(false);
   const isTrash = scope.kind === 'trash';
+  const isAllRecordings = scope.kind === 'all';
   const isSidebar = layoutMode === 'sidebar';
   const listTitle = title ?? backTitle;
+  const folderNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const folder of folders) {
+      map.set(folder.id, folder.name);
+    }
+    return map;
+  }, [folders]);
 
   const clearStartingRecord = useCallback(() => {
     startingRecordRef.current = false;
@@ -530,6 +540,11 @@ export function RecordingsList({
             active={selectedMemoId === item.id}
             allowMoveToFolder={allowMoveToFolder && !isTrash}
             expanded={layoutMode === 'stack' && expandedId === item.id}
+            folderName={
+              isAllRecordings && item.folderId
+                ? folderNameById.get(item.folderId)
+                : undefined
+            }
             isTrash={isTrash}
             memo={item}
             selectOnPress={layoutMode === 'sidebar'}

@@ -38,6 +38,8 @@ type Props = {
   /** When true, primary tap selects into the detail pane instead of expanding. */
   selectOnPress?: boolean;
   allowMoveToFolder?: boolean;
+  /** Folder name shown on All Recordings when the memo belongs to a folder. */
+  folderName?: string;
   isTrash?: boolean;
   onToggleExpand: () => void;
   onToggleSelect: () => void;
@@ -93,6 +95,7 @@ function RecordingRowComponent({
   active = false,
   selectOnPress = false,
   allowMoveToFolder = false,
+  folderName,
   isTrash = false,
   onToggleExpand,
   onToggleSelect,
@@ -304,6 +307,18 @@ function RecordingRowComponent({
             <Text style={styles.subtitle}>
               {formatDate(memo.updatedAt)} · {formatDuration(duration)}
             </Text>
+            {folderName ? (
+              <View style={styles.folderIndicator}>
+                <SymbolView
+                  name={{ ios: 'folder' }}
+                  size={13}
+                  tintColor={colors.secondaryText}
+                />
+                <Text numberOfLines={1} style={styles.folderName}>
+                  {folderName}
+                </Text>
+              </View>
+            ) : null}
           </View>
         </Pressable>
         {!selectionMode ? (
@@ -437,6 +452,17 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
         },
         subtitle: {
           fontSize: 14,
+          color: colors.secondaryText,
+        },
+        folderIndicator: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 4,
+          marginTop: 1,
+        },
+        folderName: {
+          flexShrink: 1,
+          fontSize: 13,
           color: colors.secondaryText,
         },
         expanded: {
