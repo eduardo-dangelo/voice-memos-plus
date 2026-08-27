@@ -94,6 +94,8 @@ import {
   getSession,
   stopAndSave,
   subscribeRecordingSave,
+  subscribeRecordingSaveProgress,
+  type RecordingSavePhase,
 } from '@/src/recording/activeRecordingSession';
 import { decideAutoRecord } from '@/src/recording/autoRecordGate';
 import { consumeAutoRecordIntent } from '@/src/recording/autoRecordIntent';
@@ -274,6 +276,52 @@ function injectLiveRecordingPeaks(
     return track;
   });
 }
+
+/** Preserve in-editor layer edits when a save notify arrives mid-persist. */
+function mergeRecordingSaveIntoMemo(incoming: Memo, current: Memo): Memo {
+  const currentById = new Map(current.layers.map((layer) => [layer.id, layer]));
+  const layers = incoming.layers.map((incomingLayer) => {
+    const edited = currentById.get(incomingLayer.id);
+    if (!edited) {
+      return incomingLayer;
+    }
+    return {
+      ...incomingLayer,
+      startTime: edited.startTime,
+      effects: edited.effects ?? incomingLayer.effects,
+      color: edited.color ?? incomingLayer.color,
+      label: edited.label,
+      loopUntil: edited.loopUntil ?? incomingLayer.loopUntil,
+    };
+  });
+  return {
+    ...incoming,
+    layers,
+    loopStart: current.loopStart ?? incoming.loopStart,
+    loopEnd: current.loopEnd ?? incoming.loopEnd,
+    loopEnabled: current.loopEnabled ?? incoming.loopEnabled,
+    loopSnapToGrid: current.loopSnapToGrid ?? incoming.loopSnapToGrid,
+  };
+}
+
+function resolveActiveLayerAfterSave(
+  saveActiveLayerId: string | null,
+  selectionAtSaveStart: string | null,
+  currentSelection: string | null
+): string | null {
+  // User changed selection during persist (including from cleared null) — keep it.
+  if (currentSelection !== selectionAtSaveStart) {
+    return currentSelection;
+  }
+  return saveActiveLayerId;
+}
+
+const SAVE_PHASE_LABELS: Record<RecordingSavePhase, string> = {
+  processing: 'Processing…',
+  saving: 'Saving…',
+  aligning: 'Aligning…',
+  finalizing: 'Finalizing…',
+};
 
 type LiveRecordingWaveformProps = {
   isRecording: boolean;
@@ -565,7 +613,9 @@ export function MemoEditor({
   const [isStoppingRecording, setIsStoppingRecording] = useState(false);
   const isStoppingRecordingRef = useRef(false);
   const [isPersistingTake, setIsPersistingTake] = useState(false);
+  const [savePhase, setSavePhase] = useState<RecordingSavePhase | null>(null);
   const isPersistingTakeRef = useRef(false);
+  const persistingSelectionRef = useRef<string | null>(null);
   const lastLayoutHeightRef = useRef<number | null>(null);
   const settleRafRef = useRef<number | null>(null);
   const stackModeRef = useRef(false);
@@ -2381,11 +2431,27 @@ export function MemoEditor({
         return;
       }
 
-      setMemo(result.memo);
+      const current = memoRef.current;
+      const merged =
+        current && current.id === result.memo.id
+          ? mergeRecordingSaveIntoMemo(result.memo, current)
+          : result.memo;
+      memoRef.current = merged;
+      setMemo(merged);
       if (!pendingMetronomePersist.current) {
-        setLiveMetronomeSettings(getMemoMetronomeSettings(result.memo));
+        setLiveMetronomeSettings(getMemoMetronomeSettings(merged));
       }
-      setActiveLayerId(result.activeLayerId);
+      // Defer new-track selection until stopAndSaveActiveRecording finishes;
+      // mid-save notifies would highlight the take while phases are still running.
+      if (!isPersistingTakeRef.current) {
+        setActiveLayerId(
+          resolveActiveLayerAfterSave(
+            result.activeLayerId,
+            persistingSelectionRef.current,
+            activeLayerIdRef.current
+          )
+        );
+      }
       setReplaceMode(false);
       setStackMode(false);
       setRecordingArmed(false);
@@ -2398,10 +2464,19 @@ export function MemoEditor({
         !result.engineReloaded &&
         (result.wasStackMode || result.wasReplaceMode)
       ) {
-        void loadMemoIntoEngine(engine, result.memo, result.seekTime);
+        void loadMemoIntoEngine(engine, merged, result.seekTime);
       }
     });
   }, [engine, id]);
+
+  useEffect(() => {
+    return subscribeRecordingSaveProgress((phase) => {
+      if (!isPersistingTakeRef.current) {
+        return;
+      }
+      setSavePhase(phase);
+    });
+  }, []);
 
   useEffect(() => {
     if (!id) {
@@ -2658,8 +2733,13 @@ export function MemoEditor({
       isSavingRecordingOnExit.current = true;
       isStoppingRecordingRef.current = true;
       setIsStoppingRecording(true);
+      // Clear selection for the whole save; new layer is selected only when done.
+      // Null baseline lets resolveActiveLayerAfterSave honor a mid-persist tap.
+      persistingSelectionRef.current = null;
+      setActiveLayerId(null);
       isPersistingTakeRef.current = true;
       setIsPersistingTake(true);
+      setSavePhase('processing');
       try {
         const state = engine.getState();
         liveRecordingSnapshot.current = {
@@ -2691,8 +2771,20 @@ export function MemoEditor({
           return false;
         }
 
-        setMemo(result.memo);
-        setActiveLayerId(result.activeLayerId);
+        const current = memoRef.current;
+        const merged =
+          current && current.id === result.memo.id
+            ? mergeRecordingSaveIntoMemo(result.memo, current)
+            : result.memo;
+        memoRef.current = merged;
+        setMemo(merged);
+        setActiveLayerId(
+          resolveActiveLayerAfterSave(
+            result.activeLayerId,
+            persistingSelectionRef.current,
+            activeLayerIdRef.current
+          )
+        );
         setReplaceMode(false);
         setStackMode(false);
         setRecordingArmed(false);
@@ -2712,6 +2804,8 @@ export function MemoEditor({
         clearStopping();
         isPersistingTakeRef.current = false;
         setIsPersistingTake(false);
+        setSavePhase(null);
+        persistingSelectionRef.current = null;
       }
     },
     [engine]
@@ -3130,7 +3224,11 @@ export function MemoEditor({
               {memo?.title ?? ''}
             </Text>
           </Pressable>
-          {showZoomSubtitle ? (
+          {isPersistingTake && savePhase ? (
+            <Text pointerEvents="none" style={styles.headerZoomCaption}>
+              {SAVE_PHASE_LABELS[savePhase]}
+            </Text>
+          ) : showZoomSubtitle ? (
             <Text pointerEvents="none" style={styles.headerZoomCaption}>
               {`x: ${formatTimelineZoomMultiplier(zoomControls.x)}  y: ${formatTimelineZoomMultiplier(zoomControls.y)}`}
             </Text>
@@ -3163,6 +3261,8 @@ export function MemoEditor({
       handleUnmuteTracksMenu,
       handleUnsoloTracksMenu,
       isPane,
+      isPersistingTake,
+      savePhase,
       memo,
       onToggleSidebar,
       sidebarCollapsed,
@@ -3226,6 +3326,9 @@ export function MemoEditor({
   }, [engine]);
 
   const handlePlaybackScrubEnd = useCallback(() => {
+    if (isPersistingTakeRef.current) {
+      return;
+    }
     void engine.play();
   }, [engine]);
 
@@ -3501,6 +3604,9 @@ export function MemoEditor({
   const handleStack = () => void beginRecording('stack');
 
   const handlePlayPause = useCallback(async () => {
+    if (isPersistingTakeRef.current) {
+      return;
+    }
     try {
       await engine.togglePlayback();
     } catch (error) {
@@ -4164,6 +4270,7 @@ export function MemoEditor({
               loopOverlay={loopOverlay}
               trackLoopOverlay={trackLoopOverlay}
               metronome={metronomeSettings}
+              saveProcessing={isPersistingTake}
               onSeek={handleWaveformSeek}
               onPlaybackScrubStart={handlePlaybackScrubStart}
               onPlaybackScrubEnd={handlePlaybackScrubEnd}
@@ -4180,7 +4287,7 @@ export function MemoEditor({
               <ActivityIndicator color={colors.accent} />
             </View>
           )}
-          {(metronomeGridProcessing || isPersistingTake) && !metronomeSettingsVisible ? (
+          {metronomeGridProcessing && !metronomeSettingsVisible ? (
             <View pointerEvents="none" style={styles.gridProcessingOverlay}>
               <ActivityIndicator color={colors.accent} size="large" />
             </View>
@@ -4245,6 +4352,7 @@ export function MemoEditor({
                   isStoppingRecording ||
                   isPersistingTake
                 }
+                playDisabled={isPersistingTake}
                 showProgressBar={false}
                 showTimeLabels={false}
                 stopRecordingDisabled={!isRecording}

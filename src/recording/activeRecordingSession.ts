@@ -42,6 +42,12 @@ export type RecordingSaveResult = {
   engineReloaded: boolean;
 };
 
+export type RecordingSavePhase =
+  | 'processing'
+  | 'saving'
+  | 'aligning'
+  | 'finalizing';
+
 export type DiscardUnfinishedResult = {
   memoId: string;
   mode: RecordingSessionMode;
@@ -49,6 +55,7 @@ export type DiscardUnfinishedResult = {
 };
 
 type SaveListener = (result: RecordingSaveResult) => void;
+type SaveProgressListener = (phase: RecordingSavePhase) => void;
 
 const SESSION_FILENAME = 'recording-session.json';
 
@@ -58,6 +65,7 @@ let discardInFlight: Promise<DiscardUnfinishedResult | null> | null = null;
 /** Memo id deleted by the most recent cold-start discard (new take). */
 let lastDiscardedMemoId: string | null = null;
 const listeners = new Set<SaveListener>();
+const progressListeners = new Set<SaveProgressListener>();
 
 function getSessionFile(): File {
   return new File(Paths.document, SESSION_FILENAME);
@@ -138,9 +146,24 @@ export function subscribeRecordingSave(listener: SaveListener): () => void {
   };
 }
 
+export function subscribeRecordingSaveProgress(
+  listener: SaveProgressListener
+): () => void {
+  progressListeners.add(listener);
+  return () => {
+    progressListeners.delete(listener);
+  };
+}
+
 function notifyListeners(result: RecordingSaveResult): void {
   for (const listener of listeners) {
     listener(result);
+  }
+}
+
+function notifySaveProgress(phase: RecordingSavePhase): void {
+  for (const listener of progressListeners) {
+    listener(phase);
   }
 }
 
@@ -272,6 +295,7 @@ export async function stopAndSave(
       const shouldReloadEngine =
         (options?.reloadEngine !== false) || wasStackMode || wasReplaceMode;
 
+      notifySaveProgress('processing');
       // Always defer AVAudioSession/graph restore past UI exit + file persist.
       const { path, duration, peaks } = await engine.finalizeRecordingAfterStop(capture, {
         deferPlaybackSetup: true,
@@ -301,6 +325,7 @@ export async function stopAndSave(
       // Single skip value for replace hole + PCM — never re-derive separately.
       const replacementSkipSeconds = getRecordingLatencySkipSeconds(latencyOptions);
 
+      notifySaveProgress('saving');
       if (wasStackMode) {
         updated = await addStackedLayer(
           currentMemo.id,
@@ -369,6 +394,7 @@ export async function stopAndSave(
 
         // Fine-align after first paint so stop lag is not blocked on XCorr.
         if (softwareCue === true && activeLayerId) {
+          notifySaveProgress('aligning');
           const aligned = await alignStackedLayer(updated.id, activeLayerId);
           if (aligned) {
             updated = aligned;
@@ -377,13 +403,19 @@ export async function stopAndSave(
 
         // Same peak/duration reconcile as loadMemo — fixes stretched live peaks
         // without requiring close/reopen.
-        updated = await ensureWaveformPeaks(updated);
+        notifySaveProgress('finalizing');
+        updated = await ensureWaveformPeaks(updated, {
+          onlyLayerIds: activeLayerId ? [activeLayerId] : undefined,
+        });
         result.memo = updated;
         notifyListeners(result);
       } else {
         // First take / replace: reconcile before the single notify so Track 1
         // cannot ship stretched live peaks (same invariant as reopen).
-        updated = await ensureWaveformPeaks(updated);
+        notifySaveProgress('finalizing');
+        updated = await ensureWaveformPeaks(updated, {
+          onlyLayerIds: activeLayerId ? [activeLayerId] : undefined,
+        });
         result.memo = updated;
         notifyListeners(result);
       }

@@ -39,6 +39,30 @@ export function shouldUseCapturedPeaks(
   return Math.abs(capturedPeaks.length - expected) <= CAPTURED_PEAKS_MAX_BAR_SKEW;
 }
 
+export const WAVEFORM_DURATION_TOLERANCE_SEC = 0.05;
+
+/** True when layer peaks already match design density and file duration agrees. */
+export function layerWaveformPeaksAreCurrent(
+  layer: { duration: number; waveformPeaks?: number[] },
+  fileDurationSec: number | null
+): boolean {
+  if (layer.duration <= 0) {
+    return false;
+  }
+  if (!layer.waveformPeaks || layer.waveformPeaks.length === 0) {
+    return false;
+  }
+  if (!shouldUseCapturedPeaks(layer.waveformPeaks, layer.duration)) {
+    return false;
+  }
+  if (fileDurationSec != null && fileDurationSec > 0) {
+    if (Math.abs(fileDurationSec - layer.duration) > WAVEFORM_DURATION_TOLERANCE_SEC) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export { accumulatePeaksFromSamples, getBarIndexForTime } from './recordingWaveformPeaks';
 
 export function computeWaveformPeaksFromChannelData(

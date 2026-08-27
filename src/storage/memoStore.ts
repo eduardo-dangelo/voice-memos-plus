@@ -2,10 +2,12 @@ import { Directory, File, Paths } from 'expo-file-system';
 
 import {
   computeWaveformPeaksFromChannelData,
+  layerWaveformPeaksAreCurrent,
   peakCountForDuration,
   resolveWaveformPeaks,
   waveformPeaksFromCaptured,
 } from '@/src/audio/waveform';
+import { readWavDurationSec } from '@/src/audio/wavLeadingRead';
 import {
   createDefaultLayerEffects,
   mergeLayerEffects,
@@ -518,11 +520,24 @@ export async function updateLayerLoopUntil(
   return memo;
 }
 
-export async function ensureWaveformPeaks(memo: Memo): Promise<Memo> {
+export type EnsureWaveformPeaksOptions = {
+  onlyLayerIds?: string[];
+};
+
+export async function ensureWaveformPeaks(
+  memo: Memo,
+  options?: EnsureWaveformPeaksOptions
+): Promise<Memo> {
   let changed = false;
+  const onlyLayerIds = options?.onlyLayerIds
+    ? new Set(options.onlyLayerIds)
+    : null;
 
   for (const layer of memo.layers) {
     if (layer.duration <= 0) {
+      continue;
+    }
+    if (onlyLayerIds && !onlyLayerIds.has(layer.id)) {
       continue;
     }
 
@@ -532,6 +547,11 @@ export async function ensureWaveformPeaks(memo: Memo): Promise<Memo> {
     }
 
     try {
+      const fileDurationSec = await readWavDurationSec(file.uri);
+      if (layerWaveformPeaksAreCurrent(layer, fileDurationSec)) {
+        continue;
+      }
+
       const { decodeAudioData } = await import('react-native-audio-api');
       const buffer = await decodeAudioData(file.uri);
       if (

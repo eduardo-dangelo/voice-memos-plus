@@ -61,6 +61,10 @@ import {
   type LoopPreviewState,
 } from '@/src/components/LoopRegionBar';
 import {
+  PROCESSING_BAR_HEIGHT,
+  ProcessingProgressBar,
+} from '@/src/components/ProcessingProgressBar';
+import {
   buildMetronomeGridLines,
   getFollowBarPaintTimeRange,
   getMetronomeGridBufferRange,
@@ -321,6 +325,8 @@ type Props = {
   onMetronomeGridSubdivisionSync?: (partial: Partial<MetronomeSettings>) => void;
   /** Fires while grid lines are rebuilding after grid-affecting metronome changes. */
   onMetronomeGridProcessingChange?: (processing: boolean) => void;
+  /** Post-recording save in progress — thin bar at top of loop row / viewport. */
+  saveProcessing?: boolean;
   trimOverlay?: TrimOverlayConfig;
   moveOverlay?: MoveOverlayConfig;
   fadeOverlay?: FadeOverlayConfig;
@@ -1746,6 +1752,7 @@ function WaveformViewComponent({
   onZoomControlsChange,
   onMetronomeGridSubdivisionSync,
   onMetronomeGridProcessingChange,
+  saveProcessing = false,
   trimOverlay,
   moveOverlay,
   fadeOverlay,
@@ -3172,6 +3179,11 @@ function WaveformViewComponent({
       {...timelineZoomResponder.panHandlers}
       onLayout={handleLayout}
       style={styles.container}>
+      {saveProcessing && viewportWidth > 0 ? (
+        <View pointerEvents="none" style={styles.processingBarOverlay}>
+          <ProcessingProgressBar width={viewportWidth} />
+        </View>
+      ) : null}
       <GHScrollView
         ref={scrollRef}
         horizontal
@@ -3389,7 +3401,8 @@ function areWaveformViewPropsEqual(prev: Props, next: Props): boolean {
     prev.onEditGestureActive !== next.onEditGestureActive ||
     prev.onZoomControlsChange !== next.onZoomControlsChange ||
     prev.onMetronomeGridSubdivisionSync !== next.onMetronomeGridSubdivisionSync ||
-    prev.onMetronomeGridProcessingChange !== next.onMetronomeGridProcessingChange
+    prev.onMetronomeGridProcessingChange !== next.onMetronomeGridProcessingChange ||
+    prev.saveProcessing !== next.saveProcessing
   ) {
     return false;
   }
@@ -3502,6 +3515,14 @@ function createWaveformStyles(colors: VoiceMemosColorScheme) {
     width: '100%',
     position: 'relative',
     overflow: 'visible',
+  },
+  processingBarOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: PROCESSING_BAR_HEIGHT,
+    zIndex: 25,
   },
   zoomButtonOverlay: {
     position: 'absolute',

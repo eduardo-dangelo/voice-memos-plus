@@ -21,6 +21,7 @@ type Props = {
   compact?: boolean;
   showProgressBar?: boolean;
   showTimeLabels?: boolean;
+  playDisabled?: boolean;
 };
 
 export function PlaybackControls({
@@ -39,6 +40,7 @@ export function PlaybackControls({
   compact = false,
   showProgressBar = true,
   showTimeLabels = true,
+  playDisabled = false,
 }: Props) {
   const colors = useVoiceMemosColors();
   const styles = useStyles(colors);
@@ -77,7 +79,11 @@ export function PlaybackControls({
             <Pressable accessibilityLabel="Skip back 15 seconds" onPress={onSkipBack} style={styles.iconButton}>
               <SymbolView name={{ ios: 'gobackward.15' }} size={compact ? 24 : 28} tintColor={colors.text} />
             </Pressable>
-            <Pressable accessibilityLabel={isPlaying ? 'Pause' : 'Play'} onPress={onPlayPause} style={styles.playButton}>
+            <Pressable
+              accessibilityLabel={isPlaying ? 'Pause' : 'Play'}
+              disabled={playDisabled}
+              onPress={onPlayPause}
+              style={[styles.playButton, playDisabled && styles.playDisabled]}>
               <SymbolView
                 name={{ ios: isPlaying ? 'pause.fill' : 'play.fill' }}
                 size={compact ? 28 : 34}
@@ -148,6 +154,9 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
         },
         playButton: {
           padding: 4,
+        },
+        playDisabled: {
+          opacity: 0.4,
         },
         recordButton: {
           width: 32,
