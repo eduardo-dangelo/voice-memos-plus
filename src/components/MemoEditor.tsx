@@ -304,24 +304,15 @@ function mergeRecordingSaveIntoMemo(incoming: Memo, current: Memo): Memo {
   };
 }
 
-function resolveActiveLayerAfterSave(
-  saveActiveLayerId: string | null,
-  selectionAtSaveStart: string | null,
-  currentSelection: string | null
-): string | null {
-  // User changed selection during persist (including from cleared null) — keep it.
-  if (currentSelection !== selectionAtSaveStart) {
-    return currentSelection;
-  }
-  return saveActiveLayerId;
-}
-
 const SAVE_PHASE_LABELS: Record<RecordingSavePhase, string> = {
   processing: 'Processing…',
   saving: 'Saving…',
   aligning: 'Aligning…',
   finalizing: 'Finalizing…',
 };
+
+/** Keep processing-track shimmer visible at least this long after the layer is set. */
+const PROCESSING_SHIMMER_MIN_MS = 400;
 
 type LiveRecordingWaveformProps = {
   isRecording: boolean;
@@ -614,8 +605,11 @@ export function MemoEditor({
   const isStoppingRecordingRef = useRef(false);
   const [isPersistingTake, setIsPersistingTake] = useState(false);
   const [savePhase, setSavePhase] = useState<RecordingSavePhase | null>(null);
+  const [processingLayerId, setProcessingLayerId] = useState<string | null>(null);
   const isPersistingTakeRef = useRef(false);
-  const persistingSelectionRef = useRef<string | null>(null);
+  const userSelectedDuringPersistRef = useRef(false);
+  const processingLayerSetAtRef = useRef<number | null>(null);
+  const processingClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastLayoutHeightRef = useRef<number | null>(null);
   const settleRafRef = useRef<number | null>(null);
   const stackModeRef = useRef(false);
@@ -674,6 +668,53 @@ export function MemoEditor({
       editDraftRef.current.generation === generation
     );
   }, []);
+
+  const cancelProcessingClearTimer = useCallback(() => {
+    if (processingClearTimerRef.current != null) {
+      clearTimeout(processingClearTimerRef.current);
+      processingClearTimerRef.current = null;
+    }
+  }, []);
+
+  const setProcessingLayerTarget = useCallback(
+    (layerId: string | null) => {
+      cancelProcessingClearTimer();
+      if (layerId) {
+        processingLayerSetAtRef.current = performance.now();
+      } else {
+        processingLayerSetAtRef.current = null;
+      }
+      setProcessingLayerId(layerId);
+    },
+    [cancelProcessingClearTimer]
+  );
+
+  /** Clear processing shimmer after a short minimum hold so fast saves still read. */
+  const clearProcessingLayerVisual = useCallback(() => {
+    cancelProcessingClearTimer();
+    const setAt = processingLayerSetAtRef.current;
+    if (setAt == null) {
+      setProcessingLayerId(null);
+      return;
+    }
+    const remaining = Math.max(0, PROCESSING_SHIMMER_MIN_MS - (performance.now() - setAt));
+    const clear = () => {
+      processingClearTimerRef.current = null;
+      processingLayerSetAtRef.current = null;
+      setProcessingLayerId(null);
+    };
+    if (remaining <= 0) {
+      clear();
+      return;
+    }
+    processingClearTimerRef.current = setTimeout(clear, remaining);
+  }, [cancelProcessingClearTimer]);
+
+  useEffect(() => {
+    return () => {
+      cancelProcessingClearTimer();
+    };
+  }, [cancelProcessingClearTimer]);
 
   const applyLayerEffectsChange = useCallback(
     (layerId: string, partial: LayerEffectsChange) => {
@@ -1628,11 +1669,19 @@ export function MemoEditor({
         return;
       }
 
+      if (isPersistingTakeRef.current) {
+        userSelectedDuringPersistRef.current = true;
+        activeLayerIdRef.current = trackId;
+        setActiveLayerId(trackId);
+      }
+
       void (async () => {
         await confirmEditDraft(false);
         flushEffectsPersist();
         flushStartTimePersist();
-        setActiveLayerId(trackId);
+        if (!isPersistingTakeRef.current) {
+          setActiveLayerId(trackId);
+        }
         setActiveEditor(null);
       })();
     },
@@ -1648,11 +1697,19 @@ export function MemoEditor({
       return;
     }
 
+    if (isPersistingTakeRef.current) {
+      userSelectedDuringPersistRef.current = true;
+      activeLayerIdRef.current = null;
+      setActiveLayerId(null);
+    }
+
     void (async () => {
       await confirmEditDraft(false);
       flushEffectsPersist();
       flushStartTimePersist();
-      setActiveLayerId(null);
+      if (!isPersistingTakeRef.current) {
+        setActiveLayerId(null);
+      }
       setActiveEditor(null);
     })();
   }, [confirmEditDraft, flushEffectsPersist, flushStartTimePersist]);
@@ -2024,13 +2081,19 @@ export function MemoEditor({
         !savingTrimRef.current &&
         isLayerSelectable(getLayerEffects(layer), anySoloActive);
 
+      if (isPersistingTakeRef.current && canSelect) {
+        userSelectedDuringPersistRef.current = true;
+        activeLayerIdRef.current = layerId;
+        setActiveLayerId(layerId);
+      }
+
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
       void (async () => {
         await confirmEditDraft(false);
         flushEffectsPersist();
         flushStartTimePersist();
-        if (canSelect) {
+        if (canSelect && !isPersistingTakeRef.current) {
           setActiveLayerId(layerId);
         }
         setActiveEditor(null);
@@ -2444,13 +2507,9 @@ export function MemoEditor({
       // Defer new-track selection until stopAndSaveActiveRecording finishes;
       // mid-save notifies would highlight the take while phases are still running.
       if (!isPersistingTakeRef.current) {
-        setActiveLayerId(
-          resolveActiveLayerAfterSave(
-            result.activeLayerId,
-            persistingSelectionRef.current,
-            activeLayerIdRef.current
-          )
-        );
+        setActiveLayerId(result.activeLayerId);
+      } else if (result.activeLayerId) {
+        setProcessingLayerTarget(result.activeLayerId);
       }
       setReplaceMode(false);
       setStackMode(false);
@@ -2467,7 +2526,7 @@ export function MemoEditor({
         void loadMemoIntoEngine(engine, merged, result.seekTime);
       }
     });
-  }, [engine, id]);
+  }, [engine, id, setProcessingLayerTarget]);
 
   useEffect(() => {
     return subscribeRecordingSaveProgress((phase) => {
@@ -2734,9 +2793,13 @@ export function MemoEditor({
       isStoppingRecordingRef.current = true;
       setIsStoppingRecording(true);
       // Clear selection for the whole save; new layer is selected only when done.
-      // Null baseline lets resolveActiveLayerAfterSave honor a mid-persist tap.
-      persistingSelectionRef.current = null;
+      userSelectedDuringPersistRef.current = false;
+      activeLayerIdRef.current = null;
       setActiveLayerId(null);
+      const session = getSession();
+      setProcessingLayerTarget(
+        session?.mode === 'replace' ? session.layerId : null
+      );
       isPersistingTakeRef.current = true;
       setIsPersistingTake(true);
       setSavePhase('processing');
@@ -2778,13 +2841,11 @@ export function MemoEditor({
             : result.memo;
         memoRef.current = merged;
         setMemo(merged);
-        setActiveLayerId(
-          resolveActiveLayerAfterSave(
-            result.activeLayerId,
-            persistingSelectionRef.current,
-            activeLayerIdRef.current
-          )
-        );
+        const nextActiveLayerId = userSelectedDuringPersistRef.current
+          ? activeLayerIdRef.current
+          : result.activeLayerId;
+        activeLayerIdRef.current = nextActiveLayerId;
+        setActiveLayerId(nextActiveLayerId);
         setReplaceMode(false);
         setStackMode(false);
         setRecordingArmed(false);
@@ -2805,10 +2866,11 @@ export function MemoEditor({
         isPersistingTakeRef.current = false;
         setIsPersistingTake(false);
         setSavePhase(null);
-        persistingSelectionRef.current = null;
+        // Hold shimmer briefly so fast saves still read as processing.
+        clearProcessingLayerVisual();
       }
     },
-    [engine]
+    [clearProcessingLayerVisual, engine, setProcessingLayerTarget]
   );
 
   const cancelActiveRecording = useCallback(async () => {
@@ -3849,11 +3911,12 @@ export function MemoEditor({
           isLooped: loopCount > 1,
           loopCount: loopCount > 1 ? loopCount : undefined,
           volumeDb: effects.volumeDb,
+          isProcessing: processingLayerId === layer.id,
           ...trackFadeFields(effects),
           ...trackMeta,
         };
       });
-  }, [activeLayerId, memo]);
+  }, [activeLayerId, memo, processingLayerId]);
 
   const inactivePlayableTracks = useMemo(
     () => playableTrackRows.map((track) => ({ ...track, isActive: false })),

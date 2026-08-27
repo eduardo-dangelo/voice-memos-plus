@@ -15,7 +15,16 @@ import {
   type PanResponderGestureState,
 } from 'react-native';
 import { ScrollView as GHScrollView } from 'react-native-gesture-handler';
-import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import Animated, {
+  cancelAnimation,
+  Easing,
+  interpolateColor,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withTiming,
+  type SharedValue,
+} from 'react-native-reanimated';
 
 import { colorWithAlpha, type VoiceMemosColorScheme } from '@/constants/VoiceMemosColors';
 import { fadeEnvelopeGain } from '@/src/audio/fadeCurve';
@@ -126,6 +135,11 @@ const REGION_HEADER_HEIGHT = 18;
 const TRACK_LOOP_EPSILON = 0.001;
 /** Min cycle segment width before drawing a per-loop header icon. */
 const LOOP_HEADER_ICON_MIN_WIDTH = 16;
+/** Soft falloff half-width for processing-track bar shimmer (fraction of visible span). */
+const PROCESSING_SHIMMER_BAND = 0.2;
+const PROCESSING_SHIMMER_PERIOD_MS = 1100;
+/** How far toward white to wash bars while processing. */
+const PROCESSING_DIM_MIX = 0.55;
 
 type ZoomGestureStart = {
   spanX: number;
@@ -284,6 +298,8 @@ export type TrackData = {
     duration: number;
   };
   replaceTailDimFrom?: number;
+  /** True while this track is the in-flight save target (shimmer paint). */
+  isProcessing?: boolean;
 };
 
 /** Per-track loop dialog entry from the region header long-press. */
@@ -337,6 +353,27 @@ type Props = {
 };
 
 function mixHexTowardWhite(hex: string, amount: number, alpha = 1): string {
+  const mixed = mixHexTowardWhiteChannels(hex, amount);
+  if (!mixed) {
+    return hex;
+  }
+  const a = Math.max(0, Math.min(1, alpha));
+  return `rgba(${mixed.r}, ${mixed.g}, ${mixed.b}, ${a})`;
+}
+
+/** Same wash as mixHexTowardWhite, but `#rrggbb` for Reanimated interpolateColor. */
+function mixHexTowardWhiteHex(hex: string, amount: number): string {
+  const mixed = mixHexTowardWhiteChannels(hex, amount);
+  if (!mixed) {
+    return hex.startsWith('#') ? hex : `#${hex}`;
+  }
+  return `#${toHexByte(mixed.r)}${toHexByte(mixed.g)}${toHexByte(mixed.b)}`;
+}
+
+function mixHexTowardWhiteChannels(
+  hex: string,
+  amount: number
+): { r: number; g: number; b: number } | null {
   const normalized = hex.replace('#', '');
   const value =
     normalized.length === 3
@@ -345,15 +382,176 @@ function mixHexTowardWhite(hex: string, amount: number, alpha = 1): string {
           .map((char) => char + char)
           .join('')
       : normalized;
-  if (value.length !== 6) {
-    return hex;
+  if (value.length !== 6 || !/^[0-9a-fA-F]{6}$/.test(value)) {
+    return null;
   }
   const t = Math.max(0, Math.min(1, amount));
-  const a = Math.max(0, Math.min(1, alpha));
-  const r = Math.round(parseInt(value.slice(0, 2), 16) + (255 - parseInt(value.slice(0, 2), 16)) * t);
-  const g = Math.round(parseInt(value.slice(2, 4), 16) + (255 - parseInt(value.slice(2, 4), 16)) * t);
-  const b = Math.round(parseInt(value.slice(4, 6), 16) + (255 - parseInt(value.slice(4, 6), 16)) * t);
-  return `rgba(${r}, ${g}, ${b}, ${a})`;
+  return {
+    r: Math.round(parseInt(value.slice(0, 2), 16) + (255 - parseInt(value.slice(0, 2), 16)) * t),
+    g: Math.round(parseInt(value.slice(2, 4), 16) + (255 - parseInt(value.slice(2, 4), 16)) * t),
+    b: Math.round(parseInt(value.slice(4, 6), 16) + (255 - parseInt(value.slice(4, 6), 16)) * t),
+  };
+}
+
+function toHexByte(value: number): string {
+  return Math.max(0, Math.min(255, value)).toString(16).padStart(2, '0');
+}
+
+function normalizeHexColor(color: string): string {
+  const normalized = color.replace('#', '');
+  if (/^[0-9a-fA-F]{3}$/.test(normalized)) {
+    return `#${normalized
+      .split('')
+      .map((char) => char + char)
+      .join('')}`;
+  }
+  if (/^[0-9a-fA-F]{6}$/.test(normalized)) {
+    return `#${normalized}`;
+  }
+  return color;
+}
+
+type ProcessingWaveBarProps = {
+  index: number;
+  visibleStart: number;
+  visibleCount: number;
+  phase: SharedValue<number>;
+  dimHex: string;
+  brightHex: string;
+  left: number;
+  top: number;
+  height: number;
+};
+
+const ProcessingWaveBar = memo(function ProcessingWaveBar({
+  index,
+  visibleStart,
+  visibleCount,
+  phase,
+  dimHex,
+  brightHex,
+  left,
+  top,
+  height,
+}: ProcessingWaveBarProps) {
+  const animatedStyle = useAnimatedStyle(() => {
+    const span = Math.max(1, visibleCount);
+    const pos = (index - visibleStart) / span;
+    const d = Math.abs(pos - phase.value);
+    const circ = Math.min(d, 1 - d);
+    const t = Math.max(0, 1 - circ / PROCESSING_SHIMMER_BAND);
+    return {
+      backgroundColor: interpolateColor(t, [0, 1], [dimHex, brightHex]),
+    };
+  });
+
+  return (
+    <Animated.View
+      style={[
+        {
+          position: 'absolute',
+          width: BAR_WIDTH,
+          borderRadius: 1,
+          left,
+          top,
+          height,
+        },
+        animatedStyle,
+      ]}
+    />
+  );
+});
+
+type ProcessingTrackBarsProps = {
+  peaks: number[] | undefined;
+  duration: number;
+  bodyHeight: number;
+  visibleStart: number;
+  visibleEnd: number;
+  barsPerCycle: number;
+  cycleBarCount: number;
+  pixelsPerSecond: number;
+  volumeScale: number;
+  fadeInSec: number;
+  fadeOutSec: number;
+  fadeInCurve: number;
+  fadeOutCurve: number;
+  dimHex: string;
+  brightHex: string;
+};
+
+function ProcessingTrackBars({
+  peaks,
+  duration,
+  bodyHeight,
+  visibleStart,
+  visibleEnd,
+  barsPerCycle,
+  cycleBarCount,
+  pixelsPerSecond,
+  volumeScale,
+  fadeInSec,
+  fadeOutSec,
+  fadeInCurve,
+  fadeOutCurve,
+  dimHex,
+  brightHex,
+}: ProcessingTrackBarsProps) {
+  const phase = useSharedValue(0);
+  const visibleCount = Math.max(0, visibleEnd - visibleStart);
+
+  useEffect(() => {
+    phase.value = 0;
+    phase.value = withRepeat(
+      withTiming(1, {
+        duration: PROCESSING_SHIMMER_PERIOD_MS,
+        easing: Easing.linear,
+      }),
+      -1,
+      false
+    );
+    return () => {
+      cancelAnimation(phase);
+    };
+  }, [phase]);
+
+  return (
+    <>
+      {Array.from({ length: visibleCount }, (_, offset) => {
+        const index = visibleStart + offset;
+        const peakIndex = loopPeakIndex(index, barsPerCycle, cycleBarCount);
+        const peak = normalizePeakAt(peaks, cycleBarCount, peakIndex);
+        const barTime = (index * BAR_STEP) / pixelsPerSecond;
+        let fadeScale = 1;
+        if (fadeInSec > 0 || fadeOutSec > 0) {
+          fadeScale = fadeEnvelopeGain(barTime, duration, {
+            fadeInSec,
+            fadeOutSec,
+            fadeInCurve,
+            fadeOutCurve,
+          });
+        }
+        const scaled = peakToAbsoluteScale(peak) * volumeScale * fadeScale;
+        const maxBar = Math.max(4, bodyHeight - 8);
+        const barHeight =
+          scaled <= 0.01 ? 2 : Math.max(4, Math.min(maxBar, scaled * maxBar));
+        return (
+          <ProcessingWaveBar
+            key={index}
+            brightHex={brightHex}
+            dimHex={dimHex}
+            height={barHeight}
+            index={index}
+            left={index * BAR_STEP}
+            phase={phase}
+            top={(bodyHeight - barHeight) / 2}
+            visibleCount={visibleCount}
+            visibleStart={visibleStart}
+          />
+        );
+      })}
+    </>
+  );
 }
 
 function getMarkerInterval(pixelsPerSecond: number): number {
@@ -955,6 +1153,9 @@ function areTrackDataEqual(a: TrackData, b: TrackData): boolean {
   if (a.replaceTailDimFrom !== b.replaceTailDimFrom) {
     return false;
   }
+  if ((a.isProcessing ?? false) !== (b.isProcessing ?? false)) {
+    return false;
+  }
   const aLive = a.liveRecording;
   const bLive = b.liveRecording;
   if (aLive !== bLive) {
@@ -1108,6 +1309,8 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
   const onLongPressRef = useRef(onLongPress);
   onLongPressRef.current = onLongPress;
 
+  const isProcessing = Boolean(track.isProcessing);
+
   const clearLongPressTimer = () => {
     if (longPressTimerRef.current) {
       clearTimeout(longPressTimerRef.current);
@@ -1206,6 +1409,9 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
     track.isMuted || track.isSoloedOut
       ? mutedBarColor
       : mixHexTowardWhite(track.color ?? colors.accent, 0.45);
+  // Processing shimmer always uses track color (ignore mute/soloed-out).
+  const processingBrightHex = normalizeHexColor(track.color ?? colors.accent);
+  const processingDimHex = mixHexTowardWhiteHex(processingBrightHex, PROCESSING_DIM_MIX);
   const bandBackground = getTrackBandBackground(track, colors);
   const trackColor = track.color ?? colors.accent;
   // Lighter, slightly translucent track color — stronger than the body tint.
@@ -1476,54 +1682,74 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
                   width: trackWidth,
                 },
               ]}>
-              {Array.from(
-                { length: Math.max(0, visibleBars.endIndex - visibleBars.startIndex) },
-                (_, offset) => {
-                  const index = visibleBars.startIndex + offset;
-                  const peakIndex = loopPeakIndex(index, barsPerCycle, cycleBarCount);
-                  // Sample one bar — never allocate a full-track resample on zoom.
-                  const peak = normalizePeakAt(track.peaks, cycleBarCount, peakIndex);
-                  const barTime = (index * BAR_STEP) / pixelsPerSecond;
-                  const trackFades = {
-                    fadeInSec: track.fadeInSec ?? 0,
-                    fadeOutSec: track.fadeOutSec ?? 0,
-                    fadeInCurve: track.fadeInCurve ?? 0,
-                    fadeOutCurve: track.fadeOutCurve ?? 0,
-                  };
-                  let fadeScale = 1;
-                  if (
-                    trackFades.fadeInSec > 0 ||
-                    trackFades.fadeOutSec > 0
-                  ) {
-                    fadeScale = fadeEnvelopeGain(
-                      barTime,
-                      track.duration,
-                      trackFades
+              {isProcessing ? (
+                <ProcessingTrackBars
+                  barsPerCycle={barsPerCycle}
+                  bodyHeight={bodyHeight}
+                  brightHex={processingBrightHex}
+                  cycleBarCount={cycleBarCount}
+                  dimHex={processingDimHex}
+                  duration={track.duration}
+                  fadeInCurve={track.fadeInCurve ?? 0}
+                  fadeInSec={track.fadeInSec ?? 0}
+                  fadeOutCurve={track.fadeOutCurve ?? 0}
+                  fadeOutSec={track.fadeOutSec ?? 0}
+                  peaks={track.peaks}
+                  pixelsPerSecond={pixelsPerSecond}
+                  visibleEnd={visibleBars.endIndex}
+                  visibleStart={visibleBars.startIndex}
+                  volumeScale={volumeScale}
+                />
+              ) : (
+                Array.from(
+                  { length: Math.max(0, visibleBars.endIndex - visibleBars.startIndex) },
+                  (_, offset) => {
+                    const index = visibleBars.startIndex + offset;
+                    const peakIndex = loopPeakIndex(index, barsPerCycle, cycleBarCount);
+                    // Sample one bar — never allocate a full-track resample on zoom.
+                    const peak = normalizePeakAt(track.peaks, cycleBarCount, peakIndex);
+                    const barTime = (index * BAR_STEP) / pixelsPerSecond;
+                    const trackFades = {
+                      fadeInSec: track.fadeInSec ?? 0,
+                      fadeOutSec: track.fadeOutSec ?? 0,
+                      fadeInCurve: track.fadeInCurve ?? 0,
+                      fadeOutCurve: track.fadeOutCurve ?? 0,
+                    };
+                    let fadeScale = 1;
+                    if (
+                      trackFades.fadeInSec > 0 ||
+                      trackFades.fadeOutSec > 0
+                    ) {
+                      fadeScale = fadeEnvelopeGain(
+                        barTime,
+                        track.duration,
+                        trackFades
+                      );
+                    }
+                    const scaled = peakToAbsoluteScale(peak) * volumeScale * fadeScale;
+                    const maxBar = Math.max(4, bodyHeight - 8);
+                    const barHeight =
+                      scaled <= 0.01
+                        ? 2
+                        : Math.max(4, Math.min(maxBar, scaled * maxBar));
+                    const isLoopedCycle = barTime >= cycleDuration - TRACK_LOOP_EPSILON;
+                    const fillColor = isLoopedCycle ? loopedBarColor : barColor;
+                    return (
+                      <View
+                        key={index}
+                        style={[
+                          styles.bar,
+                          {
+                            left: index * BAR_STEP,
+                            top: (bodyHeight - barHeight) / 2,
+                            height: barHeight,
+                            backgroundColor: fillColor,
+                          },
+                        ]}
+                      />
                     );
                   }
-                  const scaled = peakToAbsoluteScale(peak) * volumeScale * fadeScale;
-                  const maxBar = Math.max(4, bodyHeight - 8);
-                  const barHeight =
-                    scaled <= 0.01
-                      ? 2
-                      : Math.max(4, Math.min(maxBar, scaled * maxBar));
-                  const isLoopedCycle = barTime >= cycleDuration - TRACK_LOOP_EPSILON;
-                  const fillColor = isLoopedCycle ? loopedBarColor : barColor;
-                  return (
-                    <View
-                      key={index}
-                      style={[
-                        styles.bar,
-                        {
-                          left: index * BAR_STEP,
-                          top: (bodyHeight - barHeight) / 2,
-                          height: barHeight,
-                          backgroundColor: fillColor,
-                        },
-                      ]}
-                    />
-                  );
-                }
+                )
               )}
               {/* Cycle seams for looped footprints */}
               {cycleDuration + TRACK_LOOP_EPSILON < track.duration
