@@ -490,7 +490,17 @@ export type MemoEditorProps = {
   onToggleSidebar?: () => void;
 };
 
-export function MemoEditor({
+type MemoEditorInnerProps = MemoEditorProps & {
+  onReload: () => void;
+};
+
+export function MemoEditor(props: MemoEditorProps) {
+  const [reloadNonce, setReloadNonce] = useState(0);
+  const onReload = useCallback(() => setReloadNonce((n) => n + 1), []);
+  return <MemoEditorInner key={reloadNonce} {...props} onReload={onReload} />;
+}
+
+function MemoEditorInner({
   memoId: id,
   autoRecord = false,
   presentation = 'sheet',
@@ -500,7 +510,8 @@ export function MemoEditor({
   onAutoRecordConsumed,
   sidebarCollapsed = false,
   onToggleSidebar,
-}: MemoEditorProps) {
+  onReload,
+}: MemoEditorInnerProps) {
   const colors = useVoiceMemosColors();
   const styles = useMemoEditorStyles(colors);
   const isPane = presentation === 'pane';
@@ -3350,6 +3361,19 @@ export function MemoEditor({
     );
   }, [engine, flushEditorState, memo, onDismiss]);
 
+  const handleRefresh = useCallback(() => {
+    if (!memo) {
+      return;
+    }
+    void (async () => {
+      const ok = await flushEditorState();
+      if (!ok) {
+        return;
+      }
+      onReload();
+    })();
+  }, [flushEditorState, memo, onReload]);
+
   const renderHeaderBar = useCallback(
     () => {
       const showZoomSubtitle =
@@ -3399,6 +3423,7 @@ export function MemoEditor({
               : false
           }
           includeShare={memo ? hasRecording(memo) : false}
+          includeRefresh
           onShare={handleShare}
           onRename={handleRename}
           onMergeLayers={handleMergeAllLayers}
@@ -3409,6 +3434,7 @@ export function MemoEditor({
           onLockTracks={handleLockTracksMenu}
           onUnlockTracks={handleUnlockTracksMenu}
           onDuplicate={() => void handleDuplicate()}
+          onRefresh={handleRefresh}
           onDelete={confirmDelete}>
           <FloatingHeaderIconFace
             accessibilityLabel="More options"
@@ -3487,6 +3513,7 @@ export function MemoEditor({
       handleLockTracksMenu,
       handleMergeAllLayers,
       handleMuteTracksMenu,
+      handleRefresh,
       handleRename,
       handleSoloTracksMenu,
       handleTitleLongPress,

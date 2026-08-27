@@ -19,6 +19,7 @@ export type MemoOptionsMenuHandlers = {
   onLockTracks?: () => void;
   onUnlockTracks?: () => void;
   onDuplicate: () => void;
+  onRefresh?: () => void;
   onDelete: () => void;
 };
 
@@ -33,6 +34,7 @@ export type MemoOptionActionFlags = {
   includeUnsoloTracks?: boolean;
   includeLockTracks?: boolean;
   includeUnlockTracks?: boolean;
+  includeRefresh?: boolean;
 };
 
 export type MemoOptionAction = {
@@ -60,6 +62,7 @@ export function buildMemoOptionActions({
   includeUnsoloTracks = false,
   includeLockTracks = false,
   includeUnlockTracks = false,
+  includeRefresh = false,
 }: MemoOptionActionFlags = {}): MemoOptionAction[] {
   const items: MemoOptionAction[] = [];
   if (includeShare) {
@@ -98,6 +101,9 @@ export function buildMemoOptionActions({
     items.push({ id: 'unlockTracks', title: 'Unlock Tracks', systemImage: 'lock.open' });
   }
   items.push({ id: 'duplicate', title: 'Duplicate', systemImage: 'plus.square.on.square' });
+  if (includeRefresh) {
+    items.push({ id: 'refresh', title: 'Refresh', systemImage: 'arrow.clockwise' });
+  }
   items.push({
     id: 'delete',
     title: 'Delete',
@@ -128,6 +134,7 @@ export function MemoOptionsMenu({
   includeUnsoloTracks = false,
   includeLockTracks = false,
   includeUnlockTracks = false,
+  includeRefresh = false,
   onShare,
   onRename,
   onEditRecording,
@@ -140,6 +147,7 @@ export function MemoOptionsMenu({
   onLockTracks,
   onUnlockTracks,
   onDuplicate,
+  onRefresh,
   onDelete,
   style,
 }: MemoOptionsMenuProps) {
@@ -157,6 +165,7 @@ export function MemoOptionsMenu({
           includeUnsoloTracks,
           includeLockTracks,
           includeUnlockTracks,
+          includeRefresh,
         })
       ),
     [
@@ -165,6 +174,7 @@ export function MemoOptionsMenu({
       includeMergeLayers,
       includeMoveToFolder,
       includeMuteTracks,
+      includeRefresh,
       includeShare,
       includeSoloTracks,
       includeUnlockTracks,
@@ -214,6 +224,9 @@ export function MemoOptionsMenu({
             break;
           case 'duplicate':
             onDuplicate();
+            break;
+          case 'refresh':
+            onRefresh?.();
             break;
           case 'delete':
             onDelete();
