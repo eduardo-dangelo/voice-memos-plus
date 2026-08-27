@@ -147,6 +147,10 @@ import { formatDurationWithTenths } from '@/src/utils/format';
 const COMMIT_RECORDING_TIMEOUT_MS = 8000;
 /** Backstop only after arming finishes — not a race with commit/wake. */
 const ARMED_UI_ABORT_DELAY_MS = COMMIT_RECORDING_TIMEOUT_MS + 500;
+/** After precount/prepare, fail fast if capture never latches. */
+const POST_PRECOUNT_STUCK_MS = 3000;
+const RECORDING_START_STUCK_MESSAGE = 'Something went wrong, please try again';
+const RECORDING_START_ERROR_DISMISS_MS = 5000;
 
 type MemoEditorEngineSlice = {
   memoId: string | null;
@@ -511,6 +515,12 @@ export function MemoEditor({
   const loadGenerationRef = useRef(0);
   const beginRecordingInFlight = useRef(false);
   const [isArmingRecording, setIsArmingRecording] = useState(false);
+  const [recordingStartError, setRecordingStartError] = useState<string | null>(null);
+  /** True while stuck recovery is tearing down / reloading — catch paths must not Alert/deleteMemo. */
+  const stuckRecoveryRef = useRef(false);
+  const recoveringStuckRef = useRef(false);
+  const postPrecountWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const recordingStartErrorDismissRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingLocationNamingRef = useRef(false);
   const recordingStartTime = useRef(0);
   const liveRecordingSnapshot = useRef<{
@@ -2394,6 +2404,32 @@ export function MemoEditor({
     clearSession();
   }, [clearArmedRecordingUi, clearPrecountOverlay, engine]);
 
+  const clearPostPrecountWatchdog = useCallback(() => {
+    if (postPrecountWatchdogRef.current != null) {
+      clearTimeout(postPrecountWatchdogRef.current);
+      postPrecountWatchdogRef.current = null;
+    }
+  }, []);
+
+  const clearRecordingStartError = useCallback(() => {
+    if (recordingStartErrorDismissRef.current != null) {
+      clearTimeout(recordingStartErrorDismissRef.current);
+      recordingStartErrorDismissRef.current = null;
+    }
+    setRecordingStartError(null);
+  }, []);
+
+  const showRecordingStartError = useCallback(() => {
+    if (recordingStartErrorDismissRef.current != null) {
+      clearTimeout(recordingStartErrorDismissRef.current);
+    }
+    setRecordingStartError(RECORDING_START_STUCK_MESSAGE);
+    recordingStartErrorDismissRef.current = setTimeout(() => {
+      recordingStartErrorDismissRef.current = null;
+      setRecordingStartError(null);
+    }, RECORDING_START_ERROR_DISMISS_MS);
+  }, []);
+
   const loadMemo = useCallback(async (generation: number) => {
     if (!id) {
       return;
@@ -2476,6 +2512,77 @@ export function MemoEditor({
     }
     setLoading(false);
   }, [clearArmedRecordingUi, engine, id, onDismiss, record]);
+
+  const recoverStuckRecordingStart = useCallback(async () => {
+    if (recoveringStuckRef.current) {
+      return;
+    }
+    if (engine.getState().isRecording || engine.hasRecordingCaptureStarted()) {
+      return;
+    }
+    recoveringStuckRef.current = true;
+    stuckRecoveryRef.current = true;
+    clearPostPrecountWatchdog();
+    try {
+      engine.abortRecordingStartCommit();
+      clearPrecountOverlay();
+      // Never cancelRecording — only tear down prepared arming.
+      if (
+        !engine.getState().isRecording &&
+        !engine.hasRecordingCaptureStarted()
+      ) {
+        await engine.cancelPreparedRecording();
+      }
+      if (engine.getState().isRecording || engine.hasRecordingCaptureStarted()) {
+        return;
+      }
+      monitorMixRef.current = false;
+      clearArmedRecordingUi();
+      clearSession();
+      beginRecordingInFlight.current = false;
+      setIsArmingRecording(false);
+      showRecordingStartError();
+      if (id) {
+        const generation = ++loadGenerationRef.current;
+        await loadMemo(generation);
+      }
+    } finally {
+      recoveringStuckRef.current = false;
+      // Arming catch/finally still needs the flag; clear here only for backstop-only recovery.
+      if (!beginRecordingInFlight.current) {
+        stuckRecoveryRef.current = false;
+      }
+    }
+  }, [
+    clearArmedRecordingUi,
+    clearPostPrecountWatchdog,
+    clearPrecountOverlay,
+    engine,
+    id,
+    loadMemo,
+    showRecordingStartError,
+  ]);
+
+  const startPostPrecountWatchdog = useCallback(() => {
+    clearPostPrecountWatchdog();
+    postPrecountWatchdogRef.current = setTimeout(() => {
+      postPrecountWatchdogRef.current = null;
+      if (
+        engine.getState().isRecording ||
+        engine.hasRecordingCaptureStarted() ||
+        precountCancelledRef.current ||
+        precountOverlayActiveRef.current
+      ) {
+        return;
+      }
+      if (__DEV__) {
+        console.warn(
+          '[MemoEditor] post-precount watchdog: recovering stuck recording start'
+        );
+      }
+      void recoverStuckRecordingStart();
+    }, POST_PRECOUNT_STUCK_MS);
+  }, [clearPostPrecountWatchdog, engine, recoverStuckRecordingStart]);
 
   useEffect(() => {
     if (!memo || !hasRecording(memo)) {
@@ -2634,6 +2741,8 @@ export function MemoEditor({
       }
       beginRecordingInFlight.current = true;
       setIsArmingRecording(true);
+      clearRecordingStartError();
+      stuckRecoveryRef.current = false;
       const memoId = refreshed.id;
       const memoTitle = refreshed.title;
       const precountMode = getMemoPrecountMode(refreshed);
@@ -2663,6 +2772,7 @@ export function MemoEditor({
           await engine.finalizeRecordingWarmup();
           const precountResult = await runPrecount(precountMode, bpm);
           if (!precountResult.completed) {
+            clearPostPrecountWatchdog();
             await engine.cancelPreparedRecording();
             clearPrecountOverlay();
             setRecordingArmed(false);
@@ -2673,6 +2783,7 @@ export function MemoEditor({
             return;
           }
           if (engine.getState().isRecording) {
+            clearPostPrecountWatchdog();
             clearPrecountOverlay();
             return;
           }
@@ -2686,16 +2797,46 @@ export function MemoEditor({
           await engine.finalizeRecordingWarmup();
         }
 
-        await engine.commitRecordingStart({
+        startPostPrecountWatchdog();
+        const commitPromise = engine.commitRecordingStart({
           nextBeatDeadlineMs,
           nextBeatContextWhen,
         });
+        let timedOut = false;
+        let timeoutId: ReturnType<typeof setTimeout> | null = null;
+        try {
+          await Promise.race([
+            commitPromise,
+            new Promise<never>((_, reject) => {
+              timeoutId = setTimeout(() => {
+                timedOut = true;
+                reject(new Error('Recording start timed out'));
+              }, COMMIT_RECORDING_TIMEOUT_MS);
+            }),
+          ]);
+        } catch (error) {
+          if (timedOut && !stuckRecoveryRef.current) {
+            await recoverStuckRecordingStart();
+            return;
+          }
+          throw error;
+        } finally {
+          if (timeoutId != null) {
+            clearTimeout(timeoutId);
+          }
+        }
+        clearPostPrecountWatchdog();
         clearPrecountOverlay();
       } catch (error) {
+        clearPostPrecountWatchdog();
+        if (stuckRecoveryRef.current) {
+          // Watchdog/timeout already disarmed + refreshed — keep the memo.
+          return;
+        }
         await engine.cancelPreparedRecording();
         clearPrecountOverlay();
         // Capture may already be live (e.g. Live Activity start threw after recorder.start).
-        if (engine.getState().isRecording) {
+        if (engine.getState().isRecording || engine.hasRecordingCaptureStarted()) {
           return;
         }
         setRecordingArmed(false);
@@ -2713,18 +2854,23 @@ export function MemoEditor({
       } finally {
         beginRecordingInFlight.current = false;
         setIsArmingRecording(false);
+        stuckRecoveryRef.current = false;
       }
     })();
   }, [
     confirmEditDraft,
     clearArmedRecordingUi,
+    clearPostPrecountWatchdog,
     clearPrecountOverlay,
+    clearRecordingStartError,
     engine,
     id,
     onAutoRecordConsumed,
     onDismiss,
     record,
+    recoverStuckRecordingStart,
     runPrecount,
+    startPostPrecountWatchdog,
   ]);
 
   // Invariant: never leave armed/stack/replace chrome when capture is not live.
@@ -2740,6 +2886,7 @@ export function MemoEditor({
     const timer = setTimeout(() => {
       if (
         engine.getState().isRecording ||
+        engine.hasRecordingCaptureStarted() ||
         beginRecordingInFlight.current ||
         isArmingRecording
       ) {
@@ -2750,21 +2897,40 @@ export function MemoEditor({
       }
       if (__DEV__) {
         console.warn(
-          '[MemoEditor] armed UI backstop: aborting stale armed chrome'
+          '[MemoEditor] armed UI backstop: recovering stuck armed chrome'
         );
       }
-      void abortPreparedArming();
+      void recoverStuckRecordingStart();
     }, ARMED_UI_ABORT_DELAY_MS);
     return () => clearTimeout(timer);
   }, [
-    abortPreparedArming,
     engine,
     engineState.isRecording,
     isArmingRecording,
     recordingArmed,
+    recoverStuckRecordingStart,
     replaceMode,
     stackMode,
   ]);
+
+  useEffect(() => {
+    if (!engineState.isRecording) {
+      return;
+    }
+    clearPostPrecountWatchdog();
+    clearRecordingStartError();
+    stuckRecoveryRef.current = false;
+  }, [clearPostPrecountWatchdog, clearRecordingStartError, engineState.isRecording]);
+
+  useEffect(() => {
+    return () => {
+      clearPostPrecountWatchdog();
+      if (recordingStartErrorDismissRef.current != null) {
+        clearTimeout(recordingStartErrorDismissRef.current);
+        recordingStartErrorDismissRef.current = null;
+      }
+    };
+  }, [clearPostPrecountWatchdog]);
 
   const stopAndSaveActiveRecording = useCallback(
     async (options?: { reloadEngine?: boolean }): Promise<boolean> => {
@@ -3286,7 +3452,13 @@ export function MemoEditor({
               {memo?.title ?? ''}
             </Text>
           </Pressable>
-          {isPersistingTake && savePhase ? (
+          {recordingStartError ? (
+            <Text
+              pointerEvents="none"
+              style={[styles.headerZoomCaption, styles.headerRecordingStartError]}>
+              {recordingStartError}
+            </Text>
+          ) : isPersistingTake && savePhase ? (
             <Text pointerEvents="none" style={styles.headerZoomCaption}>
               {SAVE_PHASE_LABELS[savePhase]}
             </Text>
@@ -3324,6 +3496,7 @@ export function MemoEditor({
       handleUnsoloTracksMenu,
       isPane,
       isPersistingTake,
+      recordingStartError,
       savePhase,
       memo,
       onToggleSidebar,
@@ -3338,6 +3511,7 @@ export function MemoEditor({
       styles.headerTitlePressable,
       styles.headerTitleText,
       styles.headerZoomCaption,
+      styles.headerRecordingStartError,
       zoomControls.visible,
       zoomControls.x,
       zoomControls.y,
@@ -3493,6 +3667,8 @@ export function MemoEditor({
 
     beginRecordingInFlight.current = true;
     setIsArmingRecording(true);
+    clearRecordingStartError();
+    stuckRecoveryRef.current = false;
     // Fresh arm — clear stale cancel from prior Modal dismiss / id mount.
     // Otherwise single-track replace (no preparing overlay) aborts before runPrecount.
     precountCancelledRef.current = false;
@@ -3552,6 +3728,7 @@ export function MemoEditor({
       let nextBeatContextWhen: number | undefined;
       const precountMode = getMemoPrecountMode(memo);
       const abortArmedRecording = async () => {
+        clearPostPrecountWatchdog();
         await abortPreparedArming();
       };
       try {
@@ -3589,6 +3766,7 @@ export function MemoEditor({
           }
           if (engine.getState().isRecording) {
             // Unexpected — leave live capture alone; only clear overlay chrome.
+            clearPostPrecountWatchdog();
             clearPrecountOverlay();
             return;
           }
@@ -3602,6 +3780,7 @@ export function MemoEditor({
         // Dismiss teardown must not poison commit; only honor cancels after this point.
         precountCancelledRef.current = false;
 
+        startPostPrecountWatchdog();
         const commitPromise = engine.commitRecordingStart({
           monitorMix: useMonitorMix,
           duckMonitorMix: useMonitorMix && duckMonitorMix,
@@ -3610,8 +3789,7 @@ export function MemoEditor({
           nextBeatContextWhen,
           silentLayerId: mode === 'replace' ? activeLayerId ?? undefined : undefined,
         });
-        // Cooperative timeout: abort then join the same promise — never orphan
-        // commit while tearing down the recorder (start→emit race).
+        // Cooperative timeout: recover via stuck helper (subtitle + disarm + reload).
         let timedOut = false;
         let timeoutId: ReturnType<typeof setTimeout> | null = null;
         try {
@@ -3625,11 +3803,9 @@ export function MemoEditor({
             }),
           ]);
         } catch (error) {
-          if (timedOut) {
-            engine.abortRecordingStartCommit();
-            await commitPromise.catch(() => {
-              // Joined — commit observed abort or finished.
-            });
+          if (timedOut && !stuckRecoveryRef.current) {
+            await recoverStuckRecordingStart();
+            return;
           }
           throw error;
         } finally {
@@ -3637,17 +3813,23 @@ export function MemoEditor({
             clearTimeout(timeoutId);
           }
         }
+        clearPostPrecountWatchdog();
         clearPrecountOverlay();
         void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {
           // Best-effort — never abort a live take for haptics failure.
         });
       } catch (error) {
+        clearPostPrecountWatchdog();
+        if (stuckRecoveryRef.current) {
+          // Watchdog/timeout already recovered — no Alert, leave memo intact.
+          return;
+        }
         await abortArmedRecording();
         if (precountCancelledRef.current) {
           // Real user cancel during precount/preparing — silent.
           return;
         }
-        if (engine.getState().isRecording) {
+        if (engine.getState().isRecording || engine.hasRecordingCaptureStarted()) {
           // Capture already live (e.g. abort raced after start) — leave it.
           return;
         }
@@ -3659,6 +3841,7 @@ export function MemoEditor({
     } finally {
       beginRecordingInFlight.current = false;
       setIsArmingRecording(false);
+      stuckRecoveryRef.current = false;
     }
   };
 
@@ -4675,6 +4858,10 @@ function useMemoEditorStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           color: colors.secondaryText,
           fontVariant: ['tabular-nums'],
           textAlign: 'center',
+        },
+        headerRecordingStartError: {
+          color: colors.text,
+          fontVariant: [],
         },
         tracksArea: {
           flex: 1,

@@ -1,56 +1,46 @@
-import {
-    AudioContext,
-    AudioManager,
-    AudioRecorder,
-    decodeAudioData,
-    FileDirectory,
-    FileFormat,
-    FilePreset,
-    type AudioBuffer,
-    type AudioBufferSourceNode,
-    type GainNode,
-} from 'react-native-audio-api';
 import { AppState } from 'react-native';
+import {
+  AudioContext,
+  AudioManager,
+  AudioRecorder,
+  decodeAudioData,
+  FileDirectory,
+  FileFormat,
+  FilePreset,
+  type AudioBuffer,
+  type AudioBufferSourceNode,
+  type GainNode,
+} from 'react-native-audio-api';
 
 import { File } from 'expo-file-system';
 
 import {
-    assertRecordingRouteOk,
-    getActiveRouteSnapshot,
-    logRouteSnapshot,
-    pinBuiltInMicrophone,
+  assertRecordingRouteOk,
+  getActiveRouteSnapshot,
+  logRouteSnapshot,
+  pinBuiltInMicrophone,
 } from '@/src/audio/audioInputRouting';
-import {
-    classifyCueOutputRoute,
-    classifyMonitorPath,
-    type CueOutputRoute,
-    type MonitorPath,
-} from '@/src/audio/recordingLatency';
 import { schedulePathFades } from '@/src/audio/fadeCurve';
+import { isHeadphonesConnected } from '@/src/audio/headphoneDetection';
 import {
-    clearReverbIrCache,
-    isDelayPathActive,
-    isReverbPathActive,
-    type LayerEffectPathNodes,
+  getResampledCacheKeysForPath,
+  layersNeedingBufferInvalidation,
+} from '@/src/audio/layerBufferCache';
+import {
+  clearReverbIrCache,
+  isDelayPathActive,
+  isReverbPathActive,
+  type LayerEffectPathNodes,
 } from '@/src/audio/layerEffectChain';
-import {
-  buildLayerPlaybackPlans,
-  filterPlaybackPlansBySilentLayer,
-  getLayerEffectsForPlayback,
-  partitionPlansByHorizon,
-  playbackScheduleLeadSec,
-  PLAYBACK_END_TOLERANCE,
-  PLAYBACK_SCHEDULE_CHUNK_SEC,
-  PLAYBACK_SCHEDULE_EXTEND_LEAD_SEC,
-  resolvePlanAgainstBuffer,
-} from '@/src/audio/playbackPlans';
 import { hasAnySoloActive, isLayerAudible, mergeLayerEffects, type LayerEffects, type LayerEffectsChange } from '@/src/audio/layerEffects';
+import { loadMemoIntoEngine } from '@/src/audio/loadMemoIntoEngine';
+import { MemoMixGraph } from '@/src/audio/memoMixGraph';
 import {
+  playSilentMetronomePrime,
+  PRECOUNT_CLICK_LEAD_SEC,
+  prewarmMetronomeClickBuffers,
   scheduleMetronomeClicks,
   playMetronomeClick as scheduleOneMetronomeClick,
-  playSilentMetronomePrime,
-  prewarmMetronomeClickBuffers,
-  PRECOUNT_CLICK_LEAD_SEC,
 } from '@/src/audio/metronome';
 import {
   canExtendMetronomeSchedule,
@@ -61,44 +51,54 @@ import {
   METRONOME_RECORDING_EXTEND_LEAD_SEC,
   shouldExtendMetronomeSchedule,
 } from '@/src/audio/metronomeRecordingSchedule';
-import { MemoMixGraph } from '@/src/audio/memoMixGraph';
-import { accumulatePeaksFromSamples } from '@/src/audio/recordingWaveformPeaks';
+import {
+  buildLayerPlaybackPlans,
+  filterPlaybackPlansBySilentLayer,
+  getLayerEffectsForPlayback,
+  partitionPlansByHorizon,
+  PLAYBACK_END_TOLERANCE,
+  PLAYBACK_SCHEDULE_CHUNK_SEC,
+  PLAYBACK_SCHEDULE_EXTEND_LEAD_SEC,
+  playbackScheduleLeadSec,
+  resolvePlanAgainstBuffer,
+} from '@/src/audio/playbackPlans';
+import {
+  classifyCueOutputRoute,
+  classifyMonitorPath,
+  type CueOutputRoute,
+  type MonitorPath,
+} from '@/src/audio/recordingLatency';
 import { appendAbsoluteRecordingPeaks } from '@/src/audio/recordingPeaksEmit';
+import { accumulatePeaksFromSamples } from '@/src/audio/recordingWaveformPeaks';
 import {
-    peakToAbsoluteScale,
-    shouldUseCapturedPeaks,
-    WAVEFORM_BAR_GAP,
-    WAVEFORM_BAR_WIDTH,
-    WAVEFORM_PIXELS_PER_SECOND,
+  peakToAbsoluteScale,
+  shouldUseCapturedPeaks,
+  WAVEFORM_BAR_GAP,
+  WAVEFORM_BAR_WIDTH,
+  WAVEFORM_PIXELS_PER_SECOND,
 } from '@/src/audio/waveform';
-import {
-    normalizeRecordingFile,
-    recordingNeedsNormalize,
-    resampleMonoBufferFromRateAsync,
-} from '@/src/audio/wavUtils';
 import { readWavDurationSec } from '@/src/audio/wavLeadingRead';
 import {
-    awaitSaveInFlight,
-    clearSession,
-    getSession,
+  normalizeRecordingFile,
+  recordingNeedsNormalize,
+  resampleMonoBufferFromRateAsync,
+} from '@/src/audio/wavUtils';
+import {
+  awaitSaveInFlight,
+  clearSession,
+  getSession,
 } from '@/src/recording/activeRecordingSession';
 import {
-    endMemoLiveActivity,
-    ensurePlaybackLiveActivity,
-    startRecordingLiveActivity,
-} from '@/src/widgets/recordingLiveActivityController';
-import {
-    DEFAULT_METRONOME_SETTINGS,
-    normalizeMetronomeSettings,
-    type MetronomeSettings,
-    type Memo,
+  DEFAULT_METRONOME_SETTINGS,
+  normalizeMetronomeSettings,
+  type Memo,
+  type MetronomeSettings,
 } from '@/src/storage/types';
-import { isHeadphonesConnected } from '@/src/audio/headphoneDetection';
-import { loadMemoIntoEngine } from '@/src/audio/loadMemoIntoEngine';
 import {
-  getResampledCacheKeysForPath,
-  layersNeedingBufferInvalidation,
-} from '@/src/audio/layerBufferCache';
+  endMemoLiveActivity,
+  ensurePlaybackLiveActivity,
+  startRecordingLiveActivity,
+} from '@/src/widgets/recordingLiveActivityController';
 
 type SessionMode = 'recording' | 'playback' | null;
 
@@ -131,6 +131,13 @@ const STALE_CONTEXT_TARGET_SEC = 0.25;
 const SPEAKER_MONITOR_MIX_GAIN = 0.4;
 /** Ignore routeChange callbacks caused by our own setAudioSessionOptions. */
 const ROUTE_CHANGE_IGNORE_MS = 400;
+/** Bound cancelPreparedRecording's join of an in-flight commit so UI recovery cannot hang forever. */
+const CANCEL_PREPARED_JOIN_TIMEOUT_MS = 1000;
+/**
+ * DEV ONLY — flip to true to verify stuck-after-counter recovery.
+ * Hang is abort-aware so watchdog/cancel can unblock commit.
+ */
+const FORCE_COMMIT_HANG = false;
 
 /** Thrown when precount cancel aborts commit during the downbeat wait. */
 export class RecordingStartAbortedError extends Error {
@@ -651,6 +658,14 @@ export class MemoAudioEngine {
       !this.state.isRecording &&
       (this.recordingPrepared || this.recordingWarmupFinalized)
     );
+  }
+
+  /**
+   * True after recorder.start latched but before/while isRecording is emitted.
+   * Stuck-recovery must no-op when this is set — never tear down a live take.
+   */
+  hasRecordingCaptureStarted(): boolean {
+    return this.recordingCaptureStarted;
   }
 
   /**
@@ -3224,6 +3239,13 @@ export class MemoAudioEngine {
       throw new RecordingStartAbortedError();
     }
 
+    if (__DEV__ && FORCE_COMMIT_HANG) {
+      while (!this.recordingStartAborted) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 100));
+      }
+      throw new RecordingStartAbortedError();
+    }
+
     this.recordingCueContextWhen = 0;
     this.recordingRecorderStartedAtContextWhen = 0;
 
@@ -3500,15 +3522,22 @@ export class MemoAudioEngine {
     }
 
     // Join in-flight commit so it observes abort and exits before we null the
-    // recorder (avoids start→emit teardown race). Callers that cancel from
-    // outside the commit promise are safe; commit's own finally clears inFlight
-    // before UI catch runs abortArmedRecording.
+    // recorder (avoids start→emit teardown race). Bound the join so stuck
+    // recovery cannot hang forever if commit never observes abort.
     const inFlight = this.recordingStartInFlight;
     if (inFlight) {
       try {
-        await inFlight;
+        await Promise.race([
+          inFlight,
+          new Promise<void>((_, reject) => {
+            setTimeout(
+              () => reject(new Error('cancelPreparedRecording join timed out')),
+              CANCEL_PREPARED_JOIN_TIMEOUT_MS
+            );
+          }),
+        ]);
       } catch {
-        // Aborted or failed — continue cleanup.
+        // Aborted, failed, or join timed out — continue cleanup if still safe.
       }
     }
 
