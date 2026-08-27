@@ -289,6 +289,15 @@ function mergeRecordingSaveIntoMemo(incoming: Memo, current: Memo): Memo {
     if (!edited) {
       return incomingLayer;
     }
+    // Empty pre-record shell shares the first-take layer id — do not clobber
+    // saved effects/startTime with trimOut:0 defaults (hollow ~0.5s track UI).
+    if (edited.duration <= 0) {
+      return {
+        ...incomingLayer,
+        color: edited.color ?? incomingLayer.color,
+        label: edited.label || incomingLayer.label,
+      };
+    }
     return {
       ...incomingLayer,
       startTime: edited.startTime,
