@@ -4,6 +4,7 @@ import {
   assessMemoPerformance,
   getPerformanceWarningMessage,
 } from '@/src/audio/performanceBudget';
+import { setTrackAccordionEnabled } from '@/src/settings/appSettings';
 import type { Memo } from '@/src/storage/types';
 
 type WarnState = {
@@ -18,7 +19,12 @@ const warnState: WarnState = {
   nodes: false,
 };
 
-export function maybeShowPerformanceWarning(memo: Memo): void {
+export type PerformanceWarningResult = {
+  shown: boolean;
+  accordionEnabled: boolean;
+};
+
+export function maybeShowPerformanceWarning(memo: Memo): PerformanceWarningResult {
   const assessment = assessMemoPerformance(memo);
 
   if (warnState.memoId !== memo.id) {
@@ -31,7 +37,7 @@ export function maybeShowPerformanceWarning(memo: Memo): void {
   const showNodes = assessment.shouldWarnNodes && !warnState.nodes;
 
   if (!showLayers && !showNodes) {
-    return;
+    return { shown: false, accordionEnabled: false };
   }
 
   if (showLayers) {
@@ -41,11 +47,15 @@ export function maybeShowPerformanceWarning(memo: Memo): void {
     warnState.nodes = true;
   }
 
+  void setTrackAccordionEnabled(true);
+
   Alert.alert(
     'Performance may be reduced',
     getPerformanceWarningMessage(showLayers, showNodes),
     [{ text: 'OK' }]
   );
+
+  return { shown: true, accordionEnabled: true };
 }
 
 export function resetPerformanceWarningState(): void {

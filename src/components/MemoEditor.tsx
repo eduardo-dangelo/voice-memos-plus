@@ -48,6 +48,9 @@ import {
 } from '@/src/audio/mergeLayersLogic';
 import { getGridSnapIntervalSec, getQuarterIntervalSec } from '@/src/audio/metronome';
 import {
+  computeAccordionCollapsedIds,
+} from '@/src/audio/trackCollapse';
+import {
   maybeShowPerformanceWarning,
   resetPerformanceWarningState,
 } from '@/src/audio/performanceWarning';
@@ -122,6 +125,10 @@ import {
   updateTitle,
 } from '@/src/storage/memoStore';
 import { getLayerFile, isMemoInTrash } from '@/src/storage/paths';
+import {
+  getAppSettings,
+  setTrackAccordionEnabled,
+} from '@/src/settings/appSettings';
 import type { Layer, Memo, MetronomeSettings, PrecountMode } from '@/src/storage/types';
 import {
   clampLayerStartTime,
@@ -636,6 +643,8 @@ function MemoEditorInner({
   const [isPersistingTake, setIsPersistingTake] = useState(false);
   const [savePhase, setSavePhase] = useState<RecordingSavePhase | null>(null);
   const [processingLayerId, setProcessingLayerId] = useState<string | null>(null);
+  const [trackAccordionEnabled, setTrackAccordionEnabledState] = useState(false);
+  const [collapsedLayerIds, setCollapsedLayerIds] = useState<Set<string>>(() => new Set());
   const isPersistingTakeRef = useRef(false);
   const userSelectedDuringPersistRef = useRef(false);
   const processingLayerSetAtRef = useRef<number | null>(null);
@@ -1699,6 +1708,15 @@ function MemoEditorInner({
         return;
       }
 
+      setCollapsedLayerIds((collapsed) => {
+        if (!collapsed.has(trackId)) {
+          return collapsed;
+        }
+        const next = new Set(collapsed);
+        next.delete(trackId);
+        return next;
+      });
+
       if (isPersistingTakeRef.current) {
         userSelectedDuringPersistRef.current = true;
         activeLayerIdRef.current = trackId;
@@ -2027,6 +2045,21 @@ function MemoEditorInner({
       }
 
       const effects = getLayerEffects(layer);
+      const isCollapsed = collapsedLayerIds.has(layerId);
+      const showCollapseMenu =
+        !trackAccordionEnabled && layerId !== processingLayerId;
+      const collapseMenuItem = showCollapseMenu
+        ? ([
+            {
+              id: isCollapsed ? 'expand' : 'collapse',
+              title: isCollapsed ? 'Expand Track' : 'Collapse Track',
+              systemImage: isCollapsed
+                ? 'rectangle.expand.vertical'
+                : 'rectangle.compress.vertical',
+            } as IconActionSheetItem,
+          ] as const)
+        : [];
+
       if (isLayerLocked(effects)) {
         return [
           {
@@ -2034,6 +2067,7 @@ function MemoEditorInner({
             title: 'Unlock',
             systemImage: 'lock.open',
           },
+          ...collapseMenuItem,
           {
             id: 'mute',
             title: effects.muted ? 'Unmute' : 'Mute',
@@ -2057,6 +2091,7 @@ function MemoEditorInner({
         { id: 'rename', title: 'Rename Track', systemImage: 'pencil' },
         { id: 'duplicate', title: 'Duplicate Track', systemImage: 'plus.square.on.square' },
         { id: 'changeColor', title: 'Change Color', systemImage: 'paintpalette' },
+        ...collapseMenuItem,
         { id: 'loop', title: 'Loop Track', systemImage: 'repeat' },
         {
           id: 'mute',
@@ -2091,7 +2126,7 @@ function MemoEditorInner({
       }
       return actions;
     },
-    [memo]
+    [collapsedLayerIds, memo, processingLayerId, trackAccordionEnabled]
   );
 
   const handleTrackLongPress = useCallback(
@@ -2207,6 +2242,29 @@ function MemoEditorInner({
           selectLayerIfNeeded();
           setColorPickerLayerId(layerId);
           break;
+        case 'collapse':
+          if (trackAccordionEnabled || layerId === processingLayerId) {
+            break;
+          }
+          setCollapsedLayerIds((current) => {
+            const next = new Set(current);
+            next.add(layerId);
+            return next;
+          });
+          break;
+        case 'expand':
+          if (trackAccordionEnabled) {
+            break;
+          }
+          setCollapsedLayerIds((current) => {
+            if (!current.has(layerId)) {
+              return current;
+            }
+            const next = new Set(current);
+            next.delete(layerId);
+            return next;
+          });
+          break;
         case 'loop':
           if (isLayerLocked(effects)) {
             break;
@@ -2269,6 +2327,7 @@ function MemoEditorInner({
       }
     },
     [
+      activeEditor,
       activeLayerId,
       applyLayerEffectsChange,
       engineState.isPlaying,
@@ -2276,6 +2335,8 @@ function MemoEditorInner({
       handleDeleteTrack,
       handleDuplicateTrack,
       memo,
+      processingLayerId,
+      trackAccordionEnabled,
     ]
   );
 
@@ -2608,8 +2669,17 @@ function MemoEditorInner({
     if (!memo || !hasRecording(memo)) {
       return;
     }
-    maybeShowPerformanceWarning(memo);
+    const result = maybeShowPerformanceWarning(memo);
+    if (result.accordionEnabled) {
+      setTrackAccordionEnabledState(true);
+    }
   }, [memo]);
+
+  useEffect(() => {
+    void getAppSettings().then((settings) => {
+      setTrackAccordionEnabledState(settings.trackAccordionEnabled);
+    });
+  }, []);
 
   useEffect(() => {
     if (!id) {
@@ -3383,6 +3453,17 @@ function MemoEditorInner({
     })();
   }, [flushEditorState, memo, onReload]);
 
+  const handleToggleTrackAccordion = useCallback(() => {
+    void (async () => {
+      const next = !trackAccordionEnabled;
+      await setTrackAccordionEnabled(next);
+      setTrackAccordionEnabledState(next);
+      if (!next) {
+        setCollapsedLayerIds(new Set());
+      }
+    })();
+  }, [trackAccordionEnabled]);
+
   const renderHeaderBar = useCallback(
     () => {
       const showZoomSubtitle =
@@ -3432,6 +3513,8 @@ function MemoEditorInner({
               : false
           }
           includeShare={memo ? hasRecording(memo) : false}
+          includeTrackAccordion={Boolean(memo && hasRecording(memo))}
+          trackAccordionEnabled={trackAccordionEnabled}
           includeRefresh
           onShare={handleShare}
           onRename={handleRename}
@@ -3442,6 +3525,7 @@ function MemoEditorInner({
           onUnsoloTracks={handleUnsoloTracksMenu}
           onLockTracks={handleLockTracksMenu}
           onUnlockTracks={handleUnlockTracksMenu}
+          onToggleTrackAccordion={handleToggleTrackAccordion}
           onDuplicate={() => void handleDuplicate()}
           onRefresh={handleRefresh}
           onDelete={confirmDelete}>
@@ -3551,6 +3635,8 @@ function MemoEditorInner({
       zoomControls.visible,
       zoomControls.x,
       zoomControls.y,
+      trackAccordionEnabled,
+      handleToggleTrackAccordion,
     ],
   );
 
@@ -3968,6 +4054,43 @@ function MemoEditorInner({
   }, [confirmEditDraft, pendingRecordingLayout]);
 
   useEffect(() => {
+    const playableIds = memo ? getPlayableLayers(memo).map((layer) => layer.id) : [];
+    const validIds = new Set(playableIds);
+
+    if (pendingRecordingLayout || isRecording) {
+      setCollapsedLayerIds((current) => (current.size === 0 ? current : new Set()));
+      return;
+    }
+
+    if (!trackAccordionEnabled) {
+      setCollapsedLayerIds((current) => {
+        const next = new Set([...current].filter((id) => validIds.has(id)));
+        return next.size === current.size ? current : next;
+      });
+      return;
+    }
+
+    const nonCollapsible = new Set<string>();
+    if (processingLayerId) {
+      nonCollapsible.add(processingLayerId);
+    }
+
+    const nextCollapsed = computeAccordionCollapsedIds({
+      playableLayerIds: playableIds,
+      activeLayerId,
+      nonCollapsibleIds: nonCollapsible,
+    });
+    setCollapsedLayerIds(nextCollapsed);
+  }, [
+    activeLayerId,
+    isRecording,
+    memo,
+    pendingRecordingLayout,
+    processingLayerId,
+    trackAccordionEnabled,
+  ]);
+
+  useEffect(() => {
     if (isRecording) {
       setMetronomeSettingsVisible(false);
     }
@@ -4131,11 +4254,22 @@ function MemoEditorInner({
           loopCount: loopCount > 1 ? loopCount : undefined,
           volumeDb: effects.volumeDb,
           isProcessing: processingLayerId === layer.id,
+          isCollapsed:
+            !pendingRecordingLayout &&
+            !isRecording &&
+            collapsedLayerIds.has(layer.id),
           ...trackFadeFields(effects),
           ...trackMeta,
         };
       });
-  }, [activeLayerId, memo, processingLayerId]);
+  }, [
+    activeLayerId,
+    collapsedLayerIds,
+    isRecording,
+    memo,
+    pendingRecordingLayout,
+    processingLayerId,
+  ]);
 
   const inactivePlayableTracks = useMemo(
     () => playableTrackRows.map((track) => ({ ...track, isActive: false })),

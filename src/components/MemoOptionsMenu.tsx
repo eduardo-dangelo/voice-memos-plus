@@ -18,6 +18,7 @@ export type MemoOptionsMenuHandlers = {
   onUnsoloTracks?: () => void;
   onLockTracks?: () => void;
   onUnlockTracks?: () => void;
+  onToggleTrackAccordion?: () => void;
   onDuplicate: () => void;
   onRefresh?: () => void;
   onDelete: () => void;
@@ -34,6 +35,8 @@ export type MemoOptionActionFlags = {
   includeUnsoloTracks?: boolean;
   includeLockTracks?: boolean;
   includeUnlockTracks?: boolean;
+  includeTrackAccordion?: boolean;
+  trackAccordionEnabled?: boolean;
   includeRefresh?: boolean;
 };
 
@@ -42,6 +45,7 @@ export type MemoOptionAction = {
   title: string;
   systemImage: string;
   destructive?: boolean;
+  toggled?: boolean;
 };
 
 export type MemoOptionsMenuProps = MemoOptionsMenuHandlers &
@@ -62,6 +66,8 @@ export function buildMemoOptionActions({
   includeUnsoloTracks = false,
   includeLockTracks = false,
   includeUnlockTracks = false,
+  includeTrackAccordion = false,
+  trackAccordionEnabled = false,
   includeRefresh = false,
 }: MemoOptionActionFlags = {}): MemoOptionAction[] {
   const items: MemoOptionAction[] = [];
@@ -100,6 +106,16 @@ export function buildMemoOptionActions({
   if (includeUnlockTracks) {
     items.push({ id: 'unlockTracks', title: 'Unlock Tracks', systemImage: 'lock.open' });
   }
+  if (includeTrackAccordion) {
+    items.push({
+      id: 'toggleTrackAccordion',
+      title: trackAccordionEnabled ? 'Expand All Tracks' : 'Collapse Unselected Tracks',
+      systemImage: trackAccordionEnabled
+        ? 'rectangle.expand.vertical'
+        : 'rectangle.compress.vertical',
+      toggled: trackAccordionEnabled,
+    });
+  }
   items.push({ id: 'duplicate', title: 'Duplicate', systemImage: 'plus.square.on.square' });
   if (includeRefresh) {
     items.push({ id: 'refresh', title: 'Refresh', systemImage: 'arrow.clockwise' });
@@ -114,12 +130,18 @@ export function buildMemoOptionActions({
 }
 
 function toMenuActions(items: MemoOptionAction[]): MenuAction[] {
-  return items.map((item) => ({
-    id: item.id,
-    title: item.title,
-    image: item.systemImage,
-    attributes: item.destructive ? { destructive: true } : undefined,
-  }));
+  return items.map((item) => {
+    const action: MenuAction = {
+      id: item.id,
+      title: item.title,
+      image: item.systemImage as MenuAction['image'],
+      attributes: item.destructive ? { destructive: true } : undefined,
+    };
+    if (item.toggled != null) {
+      action.state = item.toggled ? 'on' : 'off';
+    }
+    return action;
+  });
 }
 
 export function MemoOptionsMenu({
@@ -134,6 +156,8 @@ export function MemoOptionsMenu({
   includeUnsoloTracks = false,
   includeLockTracks = false,
   includeUnlockTracks = false,
+  includeTrackAccordion = false,
+  trackAccordionEnabled = false,
   includeRefresh = false,
   onShare,
   onRename,
@@ -146,6 +170,7 @@ export function MemoOptionsMenu({
   onUnsoloTracks,
   onLockTracks,
   onUnlockTracks,
+  onToggleTrackAccordion,
   onDuplicate,
   onRefresh,
   onDelete,
@@ -165,6 +190,8 @@ export function MemoOptionsMenu({
           includeUnsoloTracks,
           includeLockTracks,
           includeUnlockTracks,
+          includeTrackAccordion,
+          trackAccordionEnabled,
           includeRefresh,
         })
       ),
@@ -177,9 +204,11 @@ export function MemoOptionsMenu({
       includeRefresh,
       includeShare,
       includeSoloTracks,
+      includeTrackAccordion,
       includeUnlockTracks,
       includeUnmuteTracks,
       includeUnsoloTracks,
+      trackAccordionEnabled,
     ]
   );
 
@@ -221,6 +250,9 @@ export function MemoOptionsMenu({
             break;
           case 'unlockTracks':
             onUnlockTracks?.();
+            break;
+          case 'toggleTrackAccordion':
+            onToggleTrackAccordion?.();
             break;
           case 'duplicate':
             onDuplicate();

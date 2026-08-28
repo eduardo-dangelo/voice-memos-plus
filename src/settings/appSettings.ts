@@ -24,6 +24,8 @@ export type AppSettings = {
   locationBasedNaming: boolean;
   themePreference: ThemePreference;
   recordingDefaults: RecordingDefaults;
+  /** When true, selecting tracks collapses unselected lanes in the memo editor. */
+  trackAccordionEnabled: boolean;
 };
 
 const THEME_PREFERENCES: readonly ThemePreference[] = ['system', 'light', 'dark'];
@@ -42,6 +44,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   locationBasedNaming: true,
   themePreference: 'system',
   recordingDefaults: DEFAULT_RECORDING_DEFAULTS,
+  trackAccordionEnabled: false,
 };
 
 function isThemePreference(value: unknown): value is ThemePreference {
@@ -89,6 +92,10 @@ function readSettings(): AppSettings {
         ? parsed.themePreference
         : DEFAULT_SETTINGS.themePreference,
       recordingDefaults: normalizeRecordingDefaults(parsed.recordingDefaults),
+      trackAccordionEnabled:
+        typeof parsed.trackAccordionEnabled === 'boolean'
+          ? parsed.trackAccordionEnabled
+          : DEFAULT_SETTINGS.trackAccordionEnabled,
     };
   } catch {
     return {
@@ -134,6 +141,16 @@ export async function setRecordingDefaults(
     ...readSettings(),
     recordingDefaults: normalizeRecordingDefaults(defaults),
   };
+  writeSettings(next);
+  return next;
+}
+
+export function getTrackAccordionEnabledSync(): boolean {
+  return readSettings().trackAccordionEnabled;
+}
+
+export async function setTrackAccordionEnabled(enabled: boolean): Promise<AppSettings> {
+  const next = { ...readSettings(), trackAccordionEnabled: enabled };
   writeSettings(next);
   return next;
 }

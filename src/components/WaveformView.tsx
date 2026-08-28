@@ -49,6 +49,13 @@ import {
   TIMELINE_DEFAULT_PIXELS_PER_SECOND,
 } from '@/src/audio/timelineZoom';
 import {
+  COLLAPSED_TRACK_HEIGHT,
+  computeTrackHeights,
+  focalTrackIndexFromScrollY,
+  scrollYForFocalTrackIndex,
+  trackYOffset,
+} from '@/src/audio/trackCollapse';
+import {
   barsPerCycleAtPps,
   loopPeakIndex,
   normalizePeakAt,
@@ -131,7 +138,7 @@ const TRACK_ZOOM_SCROLL_THRESHOLD = 1.01;
 /** Keep zoom readout + Reset visible this long after a pinch ends. */
 const ZOOM_CONTROLS_LINGER_MS = 5000;
 /** Logic-style region header strip above the waveform body. */
-const REGION_HEADER_HEIGHT = 18;
+const REGION_HEADER_HEIGHT = COLLAPSED_TRACK_HEIGHT;
 const TRACK_LOOP_EPSILON = 0.001;
 /** Min cycle segment width before drawing a per-loop header icon. */
 const LOOP_HEADER_ICON_MIN_WIDTH = 16;
@@ -151,6 +158,7 @@ type ZoomGestureStart = {
   focalX: number;
   focalY: number;
   tracksTop: number;
+  collapsedFlags: boolean[];
 };
 
 type FrozenTimelineZoom = {
@@ -300,6 +308,8 @@ export type TrackData = {
   replaceTailDimFrom?: number;
   /** True while this track is the in-flight save target (shimmer paint). */
   isProcessing?: boolean;
+  /** Header-only lane; waveform bars are not rendered. */
+  isCollapsed?: boolean;
 };
 
 /** Per-track loop dialog entry from the region header long-press. */
@@ -1156,6 +1166,9 @@ function areTrackDataEqual(a: TrackData, b: TrackData): boolean {
   if ((a.isProcessing ?? false) !== (b.isProcessing ?? false)) {
     return false;
   }
+  if (Boolean(a.isCollapsed) !== Boolean(b.isCollapsed)) {
+    return false;
+  }
   const aLive = a.liveRecording;
   const bLive = b.liveRecording;
   if (aLive !== bLive) {
@@ -1204,10 +1217,21 @@ function areTrackWaveformRowPropsEqual(
     prev.trackHeight !== next.trackHeight ||
     prev.pixelsPerSecond !== next.pixelsPerSecond ||
     prev.layoutDuration !== next.layoutDuration ||
-    prev.visibleTimeStart !== next.visibleTimeStart ||
-    prev.visibleTimeEnd !== next.visibleTimeEnd ||
     prev.showBottomDivider !== next.showBottomDivider ||
     prev.trimScrollHelpers !== next.trimScrollHelpers
+  ) {
+    return false;
+  }
+  const prevCollapsed = Boolean(prev.track.isCollapsed);
+  const nextCollapsed = Boolean(next.track.isCollapsed);
+  if (prevCollapsed !== nextCollapsed) {
+    return false;
+  }
+  if (
+    !prevCollapsed &&
+    !nextCollapsed &&
+    (prev.visibleTimeStart !== next.visibleTimeStart ||
+      prev.visibleTimeEnd !== next.visibleTimeEnd)
   ) {
     return false;
   }
@@ -1280,7 +1304,152 @@ function areTrackWaveformRowPropsEqual(
   return areTrackDataEqual(prev.track, next.track);
 }
 
-const TrackWaveformRow = memo(function TrackWaveformRow({
+function CollapsedTrackWaveformRow({
+  track,
+  bandWidth,
+  contentWidth,
+  sidePadding,
+  trackHeight,
+  pixelsPerSecond,
+  onPress,
+  onLongPress,
+  showBottomDivider = false,
+}: TrackWaveformRowProps) {
+  const { styles, colors } = useWaveformTheme();
+  const touchStartRef = useRef({ x: 0, y: 0 });
+  const touchDraggedRef = useRef(false);
+  const longPressTriggeredRef = useRef(false);
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onPressRef = useRef(onPress);
+  onPressRef.current = onPress;
+  const onLongPressRef = useRef(onLongPress);
+  onLongPressRef.current = onLongPress;
+
+  const clearLongPressTimer = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  };
+
+  const barCount = getTrackBarCount(track.duration, contentWidth, pixelsPerSecond);
+  const trackOffset = track.startTime * pixelsPerSecond;
+  const trackWidth = barCount * BAR_STEP;
+  const trackColor = track.color ?? colors.accent;
+  const headerColor = mixHexTowardWhite(trackColor, 0.35, 0.52);
+  const statusIconTint = '#FFFFFF';
+  const bottomDivider = showBottomDivider ? (
+    <View pointerEvents="none" style={[styles.trackDivider, { width: bandWidth }]} />
+  ) : null;
+  const rowSizeStyle = { width: bandWidth, height: trackHeight };
+
+  return (
+    <View
+      style={[styles.trackRow, rowSizeStyle]}
+      onTouchStart={(event) => {
+        touchDraggedRef.current = false;
+        longPressTriggeredRef.current = false;
+        touchStartRef.current = {
+          x: event.nativeEvent.pageX,
+          y: event.nativeEvent.pageY,
+        };
+        clearLongPressTimer();
+        if (onLongPressRef.current) {
+          longPressTimerRef.current = setTimeout(() => {
+            longPressTriggeredRef.current = true;
+            onLongPressRef.current?.();
+          }, LONG_PRESS_DELAY_MS);
+        }
+      }}
+      onTouchMove={(event) => {
+        const dx = Math.abs(event.nativeEvent.pageX - touchStartRef.current.x);
+        const dy = Math.abs(event.nativeEvent.pageY - touchStartRef.current.y);
+        if (dx > TAP_DRAG_THRESHOLD || dy > TAP_DRAG_THRESHOLD) {
+          touchDraggedRef.current = true;
+          clearLongPressTimer();
+        }
+      }}
+      onTouchEnd={(event) => {
+        clearLongPressTimer();
+        if (!touchDraggedRef.current && !longPressTriggeredRef.current) {
+          onPressRef.current(event.nativeEvent.locationX);
+        }
+      }}>
+      <View
+        style={[
+          styles.waveformBand,
+          styles.collapsedTrackBand,
+          { width: bandWidth, height: trackHeight },
+        ]}>
+        {trackWidth > 0 ? (
+          <View
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              left: sidePadding + trackOffset,
+              width: trackWidth,
+              height: trackHeight,
+              backgroundColor: headerColor,
+              borderTopLeftRadius: 3,
+              borderTopRightRadius: 3,
+            }}
+          />
+        ) : null}
+        <View
+          pointerEvents="none"
+          style={[
+            styles.regionHeader,
+            styles.collapsedTrackHeader,
+            trackWidth > 0
+              ? {
+                  left: sidePadding + trackOffset,
+                  width: trackWidth,
+                  height: trackHeight,
+                }
+              : {
+                  left: sidePadding,
+                  right: sidePadding,
+                  height: trackHeight,
+                },
+          ]}>
+          {track.showLabel && track.label ? (
+            <Text numberOfLines={1} style={styles.regionHeaderLabel}>
+              {track.label}
+            </Text>
+          ) : null}
+          {track.isMuted ? (
+            <View style={[styles.regionHeaderBadge, styles.mutedBadge]}>
+              <Text style={styles.mutedBadgeText}>M</Text>
+            </View>
+          ) : null}
+          {track.isSoloed ? (
+            <View style={[styles.regionHeaderBadge, styles.soloBadge]}>
+              <Text style={styles.soloBadgeText}>S</Text>
+            </View>
+          ) : null}
+          {track.isLocked ? (
+            <View style={styles.regionHeaderLock}>
+              <SymbolView name={{ ios: 'lock.fill' }} size={11} tintColor={statusIconTint} />
+            </View>
+          ) : null}
+          {track.isLooped ? (
+            <View style={[styles.regionHeaderLock, styles.regionHeaderLoop]}>
+              <SymbolView name={{ ios: 'repeat' }} size={11} tintColor={statusIconTint} />
+              {track.loopCount != null && track.loopCount > 1 ? (
+                <Text style={[styles.loopCountText, { color: statusIconTint }]}>
+                  {track.loopCount}×
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
+        </View>
+      </View>
+      {bottomDivider}
+    </View>
+  );
+}
+
+const ExpandedTrackWaveformRow = memo(function ExpandedTrackWaveformRow({
   track,
   bandWidth,
   contentWidth,
@@ -1309,14 +1478,14 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
   const onLongPressRef = useRef(onLongPress);
   onLongPressRef.current = onLongPress;
 
-  const isProcessing = Boolean(track.isProcessing);
-
   const clearLongPressTimer = () => {
     if (longPressTimerRef.current) {
       clearTimeout(longPressTimerRef.current);
       longPressTimerRef.current = null;
     }
   };
+
+  const isProcessing = Boolean(track.isProcessing);
 
   const cycleDuration = Math.max(
     TRACK_LOOP_EPSILON,
@@ -1958,6 +2127,15 @@ const TrackWaveformRow = memo(function TrackWaveformRow({
   );
 }, areTrackWaveformRowPropsEqual);
 
+function TrackWaveformRowRouter(props: TrackWaveformRowProps) {
+  if (props.track.isCollapsed) {
+    return <CollapsedTrackWaveformRow {...props} />;
+  }
+  return <ExpandedTrackWaveformRow {...props} />;
+}
+
+const TrackWaveformRow = memo(TrackWaveformRowRouter, areTrackWaveformRowPropsEqual);
+
 function WaveformViewComponent({
   tracks,
   currentTime,
@@ -2037,6 +2215,8 @@ function WaveformViewComponent({
   onEditGestureActiveRef.current = onEditGestureActive;
   const [viewportWidth, setViewportWidth] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
+  const [userScrollX, setUserScrollX] = useState(0);
+  const [isUserScrolling, setIsUserScrolling] = useState(false);
   const [pixelsPerSecond, setPixelsPerSecond] = useState(TIMELINE_DEFAULT_PIXELS_PER_SECOND);
   const [trackZoom, setTrackZoom] = useState(1);
   const pixelsPerSecondRef = useRef(pixelsPerSecond);
@@ -2131,11 +2311,33 @@ function WaveformViewComponent({
   const tracksLengthRef = useRef(tracks.length);
   tracksLengthRef.current = tracks.length;
   const playheadHeight = waveformAreaHeight + loopRowHeight;
-  const baseTrackHeight = waveformAreaHeight / Math.max(1, tracks.length);
-  const trackHeight = baseTrackHeight * layoutTrackZoom;
-  const tracksContentHeight = trackHeight * Math.max(1, tracks.length);
-  const verticalScrollEnabled = layoutTrackZoom > TRACK_ZOOM_SCROLL_THRESHOLD;
+  const collapsedFlags = useMemo(
+    () => tracks.map((track) => Boolean(track.isCollapsed)),
+    [tracks]
+  );
+  const collapsedFlagsRef = useRef(collapsedFlags);
+  collapsedFlagsRef.current = collapsedFlags;
+  const trackHeights = useMemo(
+    () => computeTrackHeights(collapsedFlags, waveformAreaHeight, layoutTrackZoom),
+    [collapsedFlags, layoutTrackZoom, waveformAreaHeight]
+  );
+  const tracksContentHeight = useMemo(
+    () => trackHeights.reduce((total, height) => total + height, 0),
+    [trackHeights]
+  );
+  const verticalScrollEnabled =
+    layoutTrackZoom > TRACK_ZOOM_SCROLL_THRESHOLD ||
+    tracksContentHeight > waveformAreaHeight + 1;
   maxScrollYRef.current = Math.max(0, tracksContentHeight - waveformAreaHeight);
+
+  useLayoutEffect(() => {
+    const maxY = Math.max(0, tracksContentHeight - waveformAreaHeight);
+    const y = verticalScrollOffsetRef.current;
+    if (y > maxY + 0.5) {
+      verticalScrollOffsetRef.current = maxY;
+      verticalScrollRef.current?.scrollTo({ y: maxY, animated: false });
+    }
+  }, [tracksContentHeight, waveformAreaHeight]);
 
   const scrollX = timeToScrollX(currentTime, contentWidth, layoutPixelsPerSecond);
 
@@ -2597,15 +2799,34 @@ function WaveformViewComponent({
       Math.min(nextMaxScrollX, padding + timeAtFocal * nextPixelsPerSecond - start.focalX)
     );
 
-    const oldTrackHeight = (waveformAreaHeight / Math.max(1, tracks.length)) * start.trackZoom;
-    const nextTrackHeight = (waveformAreaHeight / Math.max(1, tracks.length)) * nextTrackZoom;
+    const wah = waveformAreaHeightRef.current;
+    const oldTrackHeights = computeTrackHeights(
+      start.collapsedFlags,
+      wah,
+      start.trackZoom
+    );
+    const nextTrackHeights = computeTrackHeights(
+      start.collapsedFlags,
+      wah,
+      nextTrackZoom
+    );
     const focalYInTracks = Math.max(0, start.focalY - start.tracksTop);
-    const trackIndex = oldTrackHeight > 0 ? (start.scrollY + focalYInTracks) / oldTrackHeight : 0;
-    const nextTracksContentHeight = nextTrackHeight * Math.max(1, tracks.length);
-    const nextMaxScrollY = Math.max(0, nextTracksContentHeight - waveformAreaHeight);
+    const trackIndex = focalTrackIndexFromScrollY(
+      start.scrollY,
+      focalYInTracks,
+      oldTrackHeights
+    );
+    const nextTracksContentHeight = nextTrackHeights.reduce(
+      (total, height) => total + height,
+      0
+    );
+    const nextMaxScrollY = Math.max(0, nextTracksContentHeight - wah);
     const nextScrollY = Math.max(
       0,
-      Math.min(nextMaxScrollY, trackIndex * nextTrackHeight - focalYInTracks)
+      Math.min(
+        nextMaxScrollY,
+        scrollYForFocalTrackIndex(trackIndex, focalYInTracks, nextTrackHeights)
+      )
     );
 
     pendingZoomRef.current = {
@@ -2616,7 +2837,7 @@ function WaveformViewComponent({
       maxScrollX: nextMaxScrollX,
     };
     scheduleZoomCommitRef.current();
-  }, [tracks.length, viewportWidth, waveformAreaHeight]);
+  }, [viewportWidth]);
 
   const syncSubdivisionFromZoomRef = useRef((_pps: number) => {});
   syncSubdivisionFromZoomRef.current = (pps: number) => {
@@ -2738,7 +2959,6 @@ function WaveformViewComponent({
     );
 
     const wah = waveformAreaHeightRef.current;
-    const trackCount = Math.max(1, tracksLengthRef.current);
     const nextLayoutDuration = Math.max(durationRef.current, layoutDurationRef.current);
     const nextTargetWidth =
       nextLayoutDuration > 0 ? nextLayoutDuration * nextPixelsPerSecond : 0;
@@ -2753,18 +2973,33 @@ function WaveformViewComponent({
     const nextMaxScrollX = Math.max(0, nextContentWidth);
     const nextScrollX = timeToScrollX(playheadTime, nextContentWidth, nextPixelsPerSecond);
 
-    const oldTrackHeight = (wah / trackCount) * trackZoomRef.current;
-    const nextTrackHeight = (wah / trackCount) * nextTrackZoom;
+    const oldTrackHeights = computeTrackHeights(
+      collapsedFlagsRef.current,
+      wah,
+      trackZoomRef.current
+    );
+    const nextTrackHeights = computeTrackHeights(
+      collapsedFlagsRef.current,
+      wah,
+      nextTrackZoom
+    );
     const focalYInTracks = wah / 2;
-    const trackIndex =
-      oldTrackHeight > 0
-        ? (verticalScrollOffsetRef.current + focalYInTracks) / oldTrackHeight
-        : 0;
-    const nextTracksContentHeight = nextTrackHeight * trackCount;
+    const trackIndex = focalTrackIndexFromScrollY(
+      verticalScrollOffsetRef.current,
+      focalYInTracks,
+      oldTrackHeights
+    );
+    const nextTracksContentHeight = nextTrackHeights.reduce(
+      (total, height) => total + height,
+      0
+    );
     const nextMaxScrollY = Math.max(0, nextTracksContentHeight - wah);
     const nextScrollY = Math.max(
       0,
-      Math.min(nextMaxScrollY, trackIndex * nextTrackHeight - focalYInTracks)
+      Math.min(
+        nextMaxScrollY,
+        scrollYForFocalTrackIndex(trackIndex, focalYInTracks, nextTrackHeights)
+      )
     );
 
     pendingZoomRef.current = {
@@ -2900,6 +3135,7 @@ function WaveformViewComponent({
       scrollX: scrollOffsetRef.current,
       scrollY: verticalScrollOffsetRef.current,
       tracksTop: loopOffset,
+      collapsedFlags: collapsedFlagsRef.current,
     };
     hitZoomBoundRef.current = false;
     setZoomGestureActiveOnJs(true);
@@ -2990,11 +3226,18 @@ function WaveformViewComponent({
     onPlaybackScrubEndRef.current?.();
   };
 
+  const endUserScroll = () => {
+    isUserScrollingRef.current = false;
+    setIsUserScrolling(false);
+    finishPlaybackScrubIfNeeded();
+  };
+
   const handleScrollBeginDrag = () => {
     if (trimGestureActiveRef.current) {
       return;
     }
     isUserScrollingRef.current = true;
+    setIsUserScrolling(true);
     if (isPlayingRef.current) {
       resumeAfterScrubRef.current = true;
       onPlaybackScrubStartRef.current?.();
@@ -3006,7 +3249,10 @@ function WaveformViewComponent({
     scrollOffsetRef.current = x;
     // RAF already syncs viewport buffers while auto-following; skip duplicate setState.
     if (!autoScrollingRef.current) {
-      syncMetronomeGridRef.current(x);
+      syncMetronomeGridRef.current(x, isUserScrollingRef.current);
+      if (isUserScrollingRef.current) {
+        setUserScrollX(x);
+      }
     }
     if (trimGestureActiveRef.current) {
       return;
@@ -3123,14 +3369,12 @@ function WaveformViewComponent({
   const handleScrollEndDrag = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const velocity = event.nativeEvent.velocity?.x ?? 0;
     if (Math.abs(velocity) < 0.1) {
-      isUserScrollingRef.current = false;
-      finishPlaybackScrubIfNeeded();
+      endUserScroll();
     }
   };
 
   const handleMomentumScrollEnd = () => {
-    isUserScrollingRef.current = false;
-    finishPlaybackScrubIfNeeded();
+    endUserScroll();
   };
 
   useEffect(() => {
@@ -3376,13 +3620,21 @@ function WaveformViewComponent({
           viewportWidth,
           layoutPixelsPerSecond
         )
-      : resolvePlaybackBarPaintRange(
-          viewportTimeBuffer,
-          scrollX,
-          viewportWidth,
-          layoutPixelsPerSecond,
-          Math.max(duration, layoutDuration)
-        );
+      : isUserScrolling && viewportWidth > 0 && layoutPixelsPerSecond > 0
+        ? getMetronomeGridBufferRange(
+            userScrollX,
+            viewportWidth,
+            layoutPixelsPerSecond,
+            Math.max(duration, layoutDuration),
+            METRONOME_GRID_BUFFER_VIEWPORTS
+          )
+        : resolvePlaybackBarPaintRange(
+            viewportTimeBuffer,
+            scrollX,
+            viewportWidth,
+            layoutPixelsPerSecond,
+            Math.max(duration, layoutDuration)
+          );
 
   const zoomMultipliers = getTimelineZoomDisplayMultipliers(
     layoutPixelsPerSecond,
@@ -3454,6 +3706,7 @@ function WaveformViewComponent({
               onScroll={handleVerticalScroll}>
               <View style={{ height: tracksContentHeight, position: 'relative' }}>
                 {tracks.map((track, index) => {
+                  const rowHeight = trackHeights[index] ?? trackHeights[0] ?? 1;
                   const animateTrackTransition =
                     trackTransitionsReady &&
                     !isRecording &&
@@ -3468,7 +3721,13 @@ function WaveformViewComponent({
                       needsOffscreenAlphaCompositing={
                         !isRecording && !recordingLayoutActive && !isPlaying
                       }
-                      style={{ width: bandWidth, height: trackHeight }}>
+                      style={{
+                        position: 'absolute',
+                        left: 0,
+                        top: trackYOffset(index, trackHeights),
+                        width: bandWidth,
+                        height: rowHeight,
+                      }}>
                       <TrackWaveformRow
                         bandWidth={bandWidth}
                         contentWidth={contentWidth}
@@ -3477,7 +3736,7 @@ function WaveformViewComponent({
                         showBottomDivider={index < tracks.length - 1}
                         sidePadding={sidePadding}
                         track={track}
-                        trackHeight={trackHeight}
+                        trackHeight={rowHeight}
                         visibleTimeEnd={barPaintTimeRange.end}
                         visibleTimeStart={barPaintTimeRange.start}
                         fadeOverlay={fadeOverlay}
@@ -3775,6 +4034,14 @@ function createWaveformStyles(colors: VoiceMemosColorScheme) {
   waveformBand: {
     position: 'relative',
     justifyContent: 'center',
+  },
+  collapsedTrackBand: {
+    justifyContent: 'center',
+  },
+  collapsedTrackHeader: {
+    top: 0,
+    bottom: undefined,
+    backgroundColor: 'transparent',
   },
   trackContentBackground: {
     position: 'absolute',
