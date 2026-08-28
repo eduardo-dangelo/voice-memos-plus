@@ -353,6 +353,8 @@ type Props = {
   onMetronomeGridProcessingChange?: (processing: boolean) => void;
   /** Post-recording save in progress — thin bar at top of loop row / viewport. */
   saveProcessing?: boolean;
+  /** When false, vertical track zoom (pinch-Y / zoom dialog) is locked to 1×. */
+  verticalZoomEnabled?: boolean;
   trimOverlay?: TrimOverlayConfig;
   moveOverlay?: MoveOverlayConfig;
   fadeOverlay?: FadeOverlayConfig;
@@ -2157,6 +2159,7 @@ function WaveformViewComponent({
   onMetronomeGridSubdivisionSync,
   onMetronomeGridProcessingChange,
   saveProcessing = false,
+  verticalZoomEnabled = true,
   trimOverlay,
   moveOverlay,
   fadeOverlay,
@@ -2182,6 +2185,8 @@ function WaveformViewComponent({
   const [zoomDialogVisible, setZoomDialogVisible] = useState(false);
   const zoomDialogVisibleRef = useRef(false);
   zoomDialogVisibleRef.current = zoomDialogVisible;
+  const verticalZoomEnabledRef = useRef(verticalZoomEnabled);
+  verticalZoomEnabledRef.current = verticalZoomEnabled;
   /** Skip enter on first paint so opening a memo does not fade every row. */
   const [trackTransitionsReady, setTrackTransitionsReady] = useState(false);
   useEffect(() => {
@@ -2275,7 +2280,9 @@ function WaveformViewComponent({
   // recompute pps mid-record (headroom still uses the new viewportWidth).
   const frozenZoom = followRecordingScroll ? frozenZoomRef.current : null;
   const layoutPixelsPerSecond = frozenZoom?.pixelsPerSecond ?? pixelsPerSecond;
-  const layoutTrackZoom = frozenZoom?.trackZoom ?? trackZoom;
+  const layoutTrackZoom = verticalZoomEnabled
+    ? frozenZoom?.trackZoom ?? trackZoom
+    : 1;
 
   const baseLayoutDuration = getLayoutDuration(
     duration,
@@ -2329,6 +2336,17 @@ function WaveformViewComponent({
     layoutTrackZoom > TRACK_ZOOM_SCROLL_THRESHOLD ||
     tracksContentHeight > waveformAreaHeight + 1;
   maxScrollYRef.current = Math.max(0, tracksContentHeight - waveformAreaHeight);
+
+  useEffect(() => {
+    if (verticalZoomEnabled) {
+      return;
+    }
+    if (trackZoomRef.current !== 1) {
+      setTrackZoom(1);
+    }
+    verticalScrollOffsetRef.current = 0;
+    verticalScrollRef.current?.scrollTo({ y: 0, animated: false });
+  }, [verticalZoomEnabled]);
 
   useLayoutEffect(() => {
     const maxY = Math.max(0, tracksContentHeight - waveformAreaHeight);
@@ -2760,17 +2778,14 @@ function WaveformViewComponent({
       currentSpanX,
       bounds
     );
-    const nextTrackZoom = applyPinchDeltaToTrackZoom(
-      start.trackZoom,
-      start.spanY,
-      currentSpanY,
-      bounds
-    );
+    const nextTrackZoom = verticalZoomEnabledRef.current
+      ? applyPinchDeltaToTrackZoom(start.trackZoom, start.spanY, currentSpanY, bounds)
+      : 1;
     const hitBound =
       nextPixelsPerSecond === bounds.pixelsPerSecondMin ||
       nextPixelsPerSecond === bounds.pixelsPerSecondMax ||
-      nextTrackZoom === bounds.trackZoomMin ||
-      nextTrackZoom === bounds.trackZoomMax;
+      (verticalZoomEnabledRef.current &&
+        (nextTrackZoom === bounds.trackZoomMin || nextTrackZoom === bounds.trackZoomMax));
     if (hitBound && !hitZoomBoundRef.current) {
       hitZoomBoundRef.current = true;
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -2943,7 +2958,9 @@ function WaveformViewComponent({
     const viewportWidth = viewportWidthRef.current;
     const defaultPps = bounds.pixelsPerSecondDefault;
     const nextPixelsPerSecond = pixelsPerSecondFromZoomMultiplier(x, defaultPps, bounds);
-    const nextTrackZoom = clampTimelineTrackZoom(Math.round(y), bounds);
+    const nextTrackZoom = verticalZoomEnabledRef.current
+      ? clampTimelineTrackZoom(Math.round(y), bounds)
+      : 1;
 
     if (
       nextPixelsPerSecond === pixelsPerSecondRef.current &&
@@ -3019,6 +3036,9 @@ function WaveformViewComponent({
   }, []);
 
   const handleZoomDialogChangeY = useCallback((nextY: number) => {
+    if (!verticalZoomEnabledRef.current) {
+      return;
+    }
     const bounds = zoomBoundsRef.current;
     const currentX = pixelsPerSecondRef.current / bounds.pixelsPerSecondDefault;
     applyZoomMultipliersRef.current(currentX, nextY);
@@ -3642,6 +3662,7 @@ function WaveformViewComponent({
     zoomBounds.pixelsPerSecondDefault
   );
   const zoomMultiplierBounds = getTimelineZoomMultiplierBounds(zoomBounds);
+  const dialogZoomYMax = verticalZoomEnabled ? zoomMultiplierBounds.yMax : 1;
   const showZoomButton =
     zoomEnabled && !isTimelineZoomAtDefault(zoomMultipliers.x, zoomMultipliers.y);
   const loopBarTopOffset = loopOverlay
@@ -3813,7 +3834,7 @@ function WaveformViewComponent({
         xMax={zoomMultiplierBounds.xMax}
         xMin={zoomMultiplierBounds.xMin}
         y={zoomMultipliers.y}
-        yMax={zoomMultiplierBounds.yMax}
+        yMax={dialogZoomYMax}
         yMin={zoomMultiplierBounds.yMin}
         processing={metronomeGridProcessing}
         onChangeX={handleZoomDialogChangeX}
@@ -3887,7 +3908,8 @@ function areWaveformViewPropsEqual(prev: Props, next: Props): boolean {
     prev.onZoomControlsChange !== next.onZoomControlsChange ||
     prev.onMetronomeGridSubdivisionSync !== next.onMetronomeGridSubdivisionSync ||
     prev.onMetronomeGridProcessingChange !== next.onMetronomeGridProcessingChange ||
-    prev.saveProcessing !== next.saveProcessing
+    prev.saveProcessing !== next.saveProcessing ||
+    prev.verticalZoomEnabled !== next.verticalZoomEnabled
   ) {
     return false;
   }

@@ -49,7 +49,11 @@ import {
 import { getGridSnapIntervalSec, getQuarterIntervalSec } from '@/src/audio/metronome';
 import {
   computeAccordionCollapsedIds,
+  computeRecordingLayoutCollapsedIds,
 } from '@/src/audio/trackCollapse';
+import {
+  maybeAutoEnableAccordionAfterRecordingSave,
+} from '@/src/audio/accordionAutoEnable';
 import {
   maybeShowPerformanceWarning,
   resetPerformanceWarningState,
@@ -1708,14 +1712,22 @@ function MemoEditorInner({
         return;
       }
 
-      setCollapsedLayerIds((collapsed) => {
-        if (!collapsed.has(trackId)) {
-          return collapsed;
-        }
-        const next = new Set(collapsed);
-        next.delete(trackId);
-        return next;
-      });
+      const recordingLayoutActive =
+        recordingArmedRef.current ||
+        stackModeRef.current ||
+        replaceModeRef.current ||
+        engineState.isRecording;
+
+      if (!recordingLayoutActive) {
+        setCollapsedLayerIds((collapsed) => {
+          if (!collapsed.has(trackId)) {
+            return collapsed;
+          }
+          const next = new Set(collapsed);
+          next.delete(trackId);
+          return next;
+        });
+      }
 
       if (isPersistingTakeRef.current) {
         userSelectedDuringPersistRef.current = true;
@@ -1735,6 +1747,7 @@ function MemoEditorInner({
     },
     [
       confirmEditDraft,
+      engineState.isRecording,
       flushEffectsPersist,
       flushStartTimePersist,
     ]
@@ -2046,8 +2059,12 @@ function MemoEditorInner({
 
       const effects = getLayerEffects(layer);
       const isCollapsed = collapsedLayerIds.has(layerId);
+      const recordingLayoutActive =
+        recordingArmed || stackMode || replaceMode || engineState.isRecording;
       const showCollapseMenu =
-        !trackAccordionEnabled && layerId !== processingLayerId;
+        !trackAccordionEnabled &&
+        !recordingLayoutActive &&
+        layerId !== processingLayerId;
       const collapseMenuItem = showCollapseMenu
         ? ([
             {
@@ -2126,7 +2143,7 @@ function MemoEditorInner({
       }
       return actions;
     },
-    [collapsedLayerIds, memo, processingLayerId, trackAccordionEnabled]
+    [collapsedLayerIds, engineState.isRecording, memo, processingLayerId, recordingArmed, replaceMode, stackMode, trackAccordionEnabled]
   );
 
   const handleTrackLongPress = useCallback(
@@ -2669,10 +2686,7 @@ function MemoEditorInner({
     if (!memo || !hasRecording(memo)) {
       return;
     }
-    const result = maybeShowPerformanceWarning(memo);
-    if (result.accordionEnabled) {
-      setTrackAccordionEnabledState(true);
-    }
+    maybeShowPerformanceWarning(memo);
   }, [memo]);
 
   useEffect(() => {
@@ -2722,6 +2736,26 @@ function MemoEditorInner({
       ) {
         void loadMemoIntoEngine(engine, merged, result.seekTime);
       }
+
+      void (async () => {
+        const settings = await getAppSettings();
+        const accordionResult = await maybeAutoEnableAccordionAfterRecordingSave({
+          previousMemo: current,
+          savedMemo: merged,
+          trackAccordionEnabled: settings.trackAccordionEnabled,
+        });
+        if (accordionResult.memoUpdated) {
+          const withFlag = {
+            ...merged,
+            accordionAutoEnablePromptSeen: true,
+          };
+          memoRef.current = withFlag;
+          setMemo(withFlag);
+        }
+        if (accordionResult.accordionEnabled) {
+          setTrackAccordionEnabledState(true);
+        }
+      })();
     });
   }, [engine, id, setProcessingLayerTarget]);
 
@@ -4058,7 +4092,20 @@ function MemoEditorInner({
     const validIds = new Set(playableIds);
 
     if (pendingRecordingLayout || isRecording) {
-      setCollapsedLayerIds((current) => (current.size === 0 ? current : new Set()));
+      if (trackAccordionEnabled) {
+        const isStackLayout = stackMode || pendingRecordModeRef.current === 'stack';
+        const nextCollapsed = computeRecordingLayoutCollapsedIds({
+          isStackLayout,
+          playableLayerIds: playableIds,
+          activeLayerId,
+        });
+        setCollapsedLayerIds(nextCollapsed);
+      } else {
+        setCollapsedLayerIds((current) => {
+          const next = new Set([...current].filter((id) => validIds.has(id)));
+          return next.size === current.size ? current : next;
+        });
+      }
       return;
     }
 
@@ -4070,15 +4117,15 @@ function MemoEditorInner({
       return;
     }
 
-    const nonCollapsible = new Set<string>();
-    if (processingLayerId) {
-      nonCollapsible.add(processingLayerId);
-    }
+    const forceExpandedLayerId =
+      processingLayerId && activeLayerId !== processingLayerId
+        ? processingLayerId
+        : null;
 
     const nextCollapsed = computeAccordionCollapsedIds({
       playableLayerIds: playableIds,
       activeLayerId,
-      nonCollapsibleIds: nonCollapsible,
+      forceExpandedLayerId,
     });
     setCollapsedLayerIds(nextCollapsed);
   }, [
@@ -4087,6 +4134,8 @@ function MemoEditorInner({
     memo,
     pendingRecordingLayout,
     processingLayerId,
+    replaceMode,
+    stackMode,
     trackAccordionEnabled,
   ]);
 
@@ -4254,10 +4303,7 @@ function MemoEditorInner({
           loopCount: loopCount > 1 ? loopCount : undefined,
           volumeDb: effects.volumeDb,
           isProcessing: processingLayerId === layer.id,
-          isCollapsed:
-            !pendingRecordingLayout &&
-            !isRecording &&
-            collapsedLayerIds.has(layer.id),
+          isCollapsed: collapsedLayerIds.has(layer.id),
           ...trackFadeFields(effects),
           ...trackMeta,
         };
@@ -4265,9 +4311,7 @@ function MemoEditorInner({
   }, [
     activeLayerId,
     collapsedLayerIds,
-    isRecording,
     memo,
-    pendingRecordingLayout,
     processingLayerId,
   ]);
 
@@ -4697,6 +4741,7 @@ function MemoEditorInner({
               onZoomControlsChange={setZoomControls}
               onMetronomeGridSubdivisionSync={handleMetronomeChange}
               onMetronomeGridProcessingChange={setMetronomeGridProcessing}
+              verticalZoomEnabled={!trackAccordionEnabled}
             />
           ) : (
             <View style={styles.tracksLoading}>

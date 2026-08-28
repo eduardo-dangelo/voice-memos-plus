@@ -1,19 +1,67 @@
 /** Fixed header height for a collapsed track lane — matches expanded region header. */
 export const COLLAPSED_TRACK_HEIGHT = 18;
 
+/** Playable layer count at which accordion is auto-enabled for performance. */
+export const ACCORDION_AUTO_ENABLE_LAYER_COUNT = 5;
+
+export function shouldShowAccordionAutoEnableAlert(
+  playableCount: number,
+  alreadyShown: boolean
+): boolean {
+  return playableCount >= ACCORDION_AUTO_ENABLE_LAYER_COUNT && !alreadyShown;
+}
+
+export function didCrossAccordionAutoEnableThreshold(
+  previousCount: number,
+  nextCount: number
+): boolean {
+  return (
+    previousCount < ACCORDION_AUTO_ENABLE_LAYER_COUNT &&
+    nextCount >= ACCORDION_AUTO_ENABLE_LAYER_COUNT
+  );
+}
+
+export type ComputeRecordingLayoutCollapsedIdsInput = {
+  isStackLayout: boolean;
+  playableLayerIds: readonly string[];
+  activeLayerId: string | null;
+};
+
+/**
+ * During stack/replace recording with accordion on, collapse existing playable
+ * layers so only the recording lane stays expanded.
+ */
+export function computeRecordingLayoutCollapsedIds({
+  isStackLayout,
+  playableLayerIds,
+  activeLayerId,
+}: ComputeRecordingLayoutCollapsedIdsInput): Set<string> {
+  if (isStackLayout) {
+    return new Set(playableLayerIds);
+  }
+
+  return computeAccordionCollapsedIds({
+    playableLayerIds,
+    activeLayerId,
+  });
+}
+
 export type ComputeAccordionCollapsedIdsInput = {
   playableLayerIds: readonly string[];
   activeLayerId: string | null;
+  /** Stays expanded even when not selected (e.g. save-processing shimmer). */
+  forceExpandedLayerId?: string | null;
   nonCollapsibleIds?: ReadonlySet<string>;
 };
 
 /**
  * When accordion is on, returns layer IDs that should be collapsed.
- * Only the active selection stays expanded.
+ * Only the active selection stays expanded, except forceExpandedLayerId.
  */
 export function computeAccordionCollapsedIds({
   playableLayerIds,
   activeLayerId,
+  forceExpandedLayerId,
   nonCollapsibleIds,
 }: ComputeAccordionCollapsedIdsInput): Set<string> {
   const blocked = nonCollapsibleIds ?? new Set<string>();
@@ -24,8 +72,10 @@ export function computeAccordionCollapsedIds({
   }
 
   const expanded = new Set<string>();
-
-  if (activeLayerId && collapsible.includes(activeLayerId)) {
+  if (forceExpandedLayerId && playableLayerIds.includes(forceExpandedLayerId)) {
+    expanded.add(forceExpandedLayerId);
+  }
+  if (activeLayerId && playableLayerIds.includes(activeLayerId)) {
     expanded.add(activeLayerId);
   }
 

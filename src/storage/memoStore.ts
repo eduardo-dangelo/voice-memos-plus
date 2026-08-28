@@ -412,6 +412,17 @@ export async function deactivateMemoLoop(memoId: string): Promise<Memo | null> {
   return updateLoopRegion(memoId, memo.loopStart ?? 0, memo.loopEnd ?? 0, false);
 }
 
+export async function markAccordionAutoEnablePromptSeen(memoId: string): Promise<Memo> {
+  const memo = await getMemo(memoId);
+  if (!memo) {
+    throw new Error('Memo not found');
+  }
+  memo.accordionAutoEnablePromptSeen = true;
+  memo.updatedAt = new Date().toISOString();
+  writeManifest(memo);
+  return memo;
+}
+
 export async function updateMetronomeSettings(
   memoId: string,
   partial: Partial<MetronomeSettings>

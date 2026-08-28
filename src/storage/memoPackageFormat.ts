@@ -110,6 +110,9 @@ export function buildExportableManifest(memo: Memo): Memo {
   if (memo.precount !== undefined) {
     exported.precount = normalizePrecountMode(memo.precount);
   }
+  if (memo.accordionAutoEnablePromptSeen !== undefined) {
+    exported.accordionAutoEnablePromptSeen = memo.accordionAutoEnablePromptSeen;
+  }
 
   return exported;
 }
@@ -206,6 +209,9 @@ export function remapImportedMemo(
   }
   if (packaged.precount !== undefined) {
     memo.precount = normalizePrecountMode(packaged.precount);
+  }
+  if (packaged.accordionAutoEnablePromptSeen !== undefined) {
+    memo.accordionAutoEnablePromptSeen = packaged.accordionAutoEnablePromptSeen;
   }
   if (options.folderId) {
     memo.folderId = options.folderId;

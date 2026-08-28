@@ -81,18 +81,15 @@ export function assessMemoPerformance(memo: Memo): MemoPerformanceAssessment {
   };
 }
 
-const ACCORDION_REMEDY =
-  'Collapse Unselected Tracks is now on — only the selected track shows a full waveform. Turn it off anytime from the memo menu (…).';
-
 export function getPerformanceWarningMessage(
   warnLayers: boolean,
   warnNodes: boolean
 ): string {
   if (warnLayers && warnNodes) {
-    return `This memo has many layers and heavy audio effects, which can slow editing and playback on some devices. ${ACCORDION_REMEDY}`;
+    return 'This memo has many layers and heavy effects. Playback may feel slower on some devices.';
   }
   if (warnLayers) {
-    return `This memo has 8 or more layers, which can slow editing and playback on some devices. ${ACCORDION_REMEDY}`;
+    return 'This memo has 8 or more layers. Playback and editing may feel slower on some devices.';
   }
-  return `This memo uses a lot of audio effects, which can slow playback on some devices. ${ACCORDION_REMEDY}`;
+  return 'This memo uses a lot of audio effects. Playback may feel slower on some devices.';
 }

@@ -242,6 +242,8 @@ export type Memo = {
   precount?: PrecountMode;
   folderId?: string;
   deletedAt?: string;
+  /** Set after the 5-layer accordion auto-enable prompt is shown or skipped for this memo. */
+  accordionAutoEnablePromptSeen?: boolean;
   layers: Layer[];
 };
 
