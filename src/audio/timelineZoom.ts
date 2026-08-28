@@ -70,7 +70,7 @@ export function clampTimelineTrackZoom(
   return Math.max(bounds.trackZoomMin, Math.min(bounds.trackZoomMax, value));
 }
 
-export const TIMELINE_FULL_ZOOM_SPAN_PX = 120;
+export const TIMELINE_FULL_ZOOM_SPAN_PX = 280;
 
 export function applyPinchDeltaToPixelsPerSecond(
   startPps: number,
