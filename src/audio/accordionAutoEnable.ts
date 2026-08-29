@@ -1,12 +1,14 @@
 import { Alert } from 'react-native';
 
 import { didCrossAccordionAutoEnableThreshold } from '@/src/audio/trackCollapse';
-import { markAccordionAutoEnablePromptSeen } from '@/src/storage/memoStore';
+import {
+  markAccordionAutoEnablePromptSeen,
+  updateTrackAccordionEnabled,
+} from '@/src/storage/memoStore';
 import { getPlayableLayers, type Memo } from '@/src/storage/types';
-import { setTrackAccordionEnabled } from '@/src/settings/appSettings';
 
 const ACCORDION_AUTO_ENABLE_MESSAGE =
-  'Collapse unselected layers were turned on to improve performance. You can turn off at any time in the memo menu (…).';
+  'Collapse unselected layers was turned on for this memo to improve performance. You can turn it off anytime in the memo menu (…).';
 
 export type AccordionAutoEnableResult = {
   shown: boolean;
@@ -17,13 +19,11 @@ export type AccordionAutoEnableResult = {
 export type AccordionAutoEnableAfterSaveInput = {
   previousMemo: Memo | null;
   savedMemo: Memo;
-  trackAccordionEnabled: boolean;
 };
 
 export async function maybeAutoEnableAccordionAfterRecordingSave({
   previousMemo,
   savedMemo,
-  trackAccordionEnabled,
 }: AccordionAutoEnableAfterSaveInput): Promise<AccordionAutoEnableResult> {
   if (savedMemo.accordionAutoEnablePromptSeen) {
     return { shown: false, accordionEnabled: false, memoUpdated: null };
@@ -36,13 +36,13 @@ export async function maybeAutoEnableAccordionAfterRecordingSave({
     return { shown: false, accordionEnabled: false, memoUpdated: null };
   }
 
-  const memoUpdated = await markAccordionAutoEnablePromptSeen(savedMemo.id);
+  let memoUpdated = await markAccordionAutoEnablePromptSeen(savedMemo.id);
 
-  if (trackAccordionEnabled) {
+  if (memoUpdated.trackAccordionEnabled === true) {
     return { shown: false, accordionEnabled: false, memoUpdated };
   }
 
-  await setTrackAccordionEnabled(true);
+  memoUpdated = await updateTrackAccordionEnabled(savedMemo.id, true);
 
   Alert.alert('Collapse Unselected Tracks', ACCORDION_AUTO_ENABLE_MESSAGE, [{ text: 'OK' }]);
 

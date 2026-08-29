@@ -10,6 +10,7 @@ import {
   didCrossAccordionAutoEnableThreshold,
   focalTrackIndexFromScrollY,
   scrollYForFocalTrackIndex,
+  shouldApplyTrackAccordionCollapse,
   shouldShowAccordionAutoEnableAlert,
 } from './trackCollapse';
 import { getPerformanceWarningMessage } from './performanceBudget';
@@ -107,6 +108,14 @@ test('didCrossAccordionAutoEnableThreshold detects 5th layer crossing', () => {
   assert.equal(didCrossAccordionAutoEnableThreshold(4, 5), true);
   assert.equal(didCrossAccordionAutoEnableThreshold(5, 6), false);
   assert.equal(didCrossAccordionAutoEnableThreshold(6, 7), false);
+});
+
+test('shouldApplyTrackAccordionCollapse requires accordion on and multiple tracks', () => {
+  assert.equal(shouldApplyTrackAccordionCollapse(0, true), false);
+  assert.equal(shouldApplyTrackAccordionCollapse(1, true), false);
+  assert.equal(shouldApplyTrackAccordionCollapse(1, false), false);
+  assert.equal(shouldApplyTrackAccordionCollapse(2, false), false);
+  assert.equal(shouldApplyTrackAccordionCollapse(2, true), true);
 });
 
 test('computeRecordingLayoutCollapsedIds collapses all layers during stack', () => {

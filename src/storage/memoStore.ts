@@ -423,6 +423,24 @@ export async function markAccordionAutoEnablePromptSeen(memoId: string): Promise
   return memo;
 }
 
+export async function updateTrackAccordionEnabled(
+  memoId: string,
+  enabled: boolean
+): Promise<Memo> {
+  const memo = await getMemo(memoId);
+  if (!memo) {
+    throw new Error('Memo not found');
+  }
+  if (enabled) {
+    memo.trackAccordionEnabled = true;
+  } else {
+    delete memo.trackAccordionEnabled;
+  }
+  memo.updatedAt = new Date().toISOString();
+  writeManifest(memo);
+  return memo;
+}
+
 export async function updateMetronomeSettings(
   memoId: string,
   partial: Partial<MetronomeSettings>

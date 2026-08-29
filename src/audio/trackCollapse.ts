@@ -21,6 +21,14 @@ export function didCrossAccordionAutoEnableThreshold(
   );
 }
 
+/** Accordion collapse is disabled with a single playable track. */
+export function shouldApplyTrackAccordionCollapse(
+  playableCount: number,
+  trackAccordionEnabled: boolean
+): boolean {
+  return trackAccordionEnabled && playableCount > 1;
+}
+
 export type ComputeRecordingLayoutCollapsedIdsInput = {
   isStackLayout: boolean;
   playableLayerIds: readonly string[];

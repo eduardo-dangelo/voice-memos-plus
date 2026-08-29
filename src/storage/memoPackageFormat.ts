@@ -113,6 +113,9 @@ export function buildExportableManifest(memo: Memo): Memo {
   if (memo.accordionAutoEnablePromptSeen !== undefined) {
     exported.accordionAutoEnablePromptSeen = memo.accordionAutoEnablePromptSeen;
   }
+  if (memo.trackAccordionEnabled === true) {
+    exported.trackAccordionEnabled = true;
+  }
 
   return exported;
 }
@@ -212,6 +215,9 @@ export function remapImportedMemo(
   }
   if (packaged.accordionAutoEnablePromptSeen !== undefined) {
     memo.accordionAutoEnablePromptSeen = packaged.accordionAutoEnablePromptSeen;
+  }
+  if (packaged.trackAccordionEnabled === true) {
+    memo.trackAccordionEnabled = true;
   }
   if (options.folderId) {
     memo.folderId = options.folderId;

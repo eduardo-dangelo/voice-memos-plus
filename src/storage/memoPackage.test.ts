@@ -159,6 +159,19 @@ describe('buildExportableManifest', () => {
     assert.equal(exported.loopEnabled, true);
     assert.deepEqual(exported.layers[0]?.waveformPeaks, [0.1, 0.2, 0.3]);
   });
+
+  it('includes trackAccordionEnabled when enabled on the memo', () => {
+    const exported = buildExportableManifest(
+      makeMemo({ trackAccordionEnabled: true, accordionAutoEnablePromptSeen: true })
+    );
+    assert.equal(exported.trackAccordionEnabled, true);
+    assert.equal(exported.accordionAutoEnablePromptSeen, true);
+  });
+
+  it('omits trackAccordionEnabled when disabled on the memo', () => {
+    const exported = buildExportableManifest(makeMemo({ trackAccordionEnabled: false }));
+    assert.equal(exported.trackAccordionEnabled, undefined);
+  });
 });
 
 describe('zip/unzip project files', () => {
@@ -247,6 +260,14 @@ describe('remapImportedMemo', () => {
       layers: remapped.layers.map((layer) => ({ ...layer })),
     });
     assert.equal(normalized.layers.length, 2);
+  });
+
+  it('preserves trackAccordionEnabled on import', () => {
+    const remapped = remapImportedMemo(
+      buildExportableManifest(makeMemo({ trackAccordionEnabled: true })),
+      { newMemoId: 'memo-accordion', now: '2026-08-01T15:00:00.000Z' }
+    );
+    assert.equal(remapped.trackAccordionEnabled, true);
   });
 });
 

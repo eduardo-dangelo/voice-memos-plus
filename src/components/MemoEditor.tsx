@@ -50,6 +50,7 @@ import { getGridSnapIntervalSec, getQuarterIntervalSec } from '@/src/audio/metro
 import {
   computeAccordionCollapsedIds,
   computeRecordingLayoutCollapsedIds,
+  shouldApplyTrackAccordionCollapse,
 } from '@/src/audio/trackCollapse';
 import {
   maybeAutoEnableAccordionAfterRecordingSave,
@@ -127,12 +128,9 @@ import {
   updateMetronomeSettings,
   updatePrecountMode,
   updateTitle,
+  updateTrackAccordionEnabled,
 } from '@/src/storage/memoStore';
 import { getLayerFile, isMemoInTrash } from '@/src/storage/paths';
-import {
-  getAppSettings,
-  setTrackAccordionEnabled,
-} from '@/src/settings/appSettings';
 import type { Layer, Memo, MetronomeSettings, PrecountMode } from '@/src/storage/types';
 import {
   clampLayerStartTime,
@@ -597,6 +595,7 @@ function MemoEditorInner({
   const [replaceMode, setReplaceMode] = useState(false);
   const [stackMode, setStackMode] = useState(false);
   const [recordingArmed, setRecordingArmed] = useState(false);
+  const [armedTimelineTime, setArmedTimelineTime] = useState(0);
   const [activeLayerId, setActiveLayerId] = useState<string | null>(null);
   const [activeEditor, setActiveEditor] = useState<EditorTool | null>(null);
   const [savingTrim, setSavingTrim] = useState(false);
@@ -2058,9 +2057,11 @@ function MemoEditorInner({
 
       const effects = getLayerEffects(layer);
       const isCollapsed = collapsedLayerIds.has(layerId);
+      const playableCount = getPlayableLayers(memo).length;
       const recordingLayoutActive =
         recordingArmed || stackMode || replaceMode || engineState.isRecording;
       const showCollapseMenu =
+        playableCount > 1 &&
         !trackAccordionEnabled &&
         !recordingLayoutActive &&
         layerId !== processingLayerId;
@@ -2097,7 +2098,6 @@ function MemoEditorInner({
         ];
       }
 
-      const playableCount = getPlayableLayers(memo).length;
       const canDelete = playableCount > 1;
       const unlockedPartners = getMergePartnerLayers(memo.layers, layerId).filter(
         (partner) => !isLayerLocked(getLayerEffects(partner))
@@ -2483,6 +2483,7 @@ function MemoEditorInner({
     setRecordingArmed(false);
     setReplaceMode(false);
     setStackMode(false);
+    setArmedTimelineTime(0);
     pendingRecordModeRef.current = null;
     pendingRecordingColor.current = null;
     liveRecordingSnapshot.current = null;
@@ -2563,6 +2564,7 @@ function MemoEditorInner({
       // Remount mid-take must not unload() — that clears isRecording without
       // stopping the native recorder and would lose the take on stop/save.
       recordingStartTime.current = liveSession.startTime;
+      setArmedTimelineTime(liveSession.startTime);
       setRecordingArmed(true);
       setReplaceMode(liveSession.mode === 'replace');
       setStackMode(liveSession.mode === 'stack');
@@ -2689,10 +2691,34 @@ function MemoEditorInner({
   }, [memo]);
 
   useEffect(() => {
-    void getAppSettings().then((settings) => {
-      setTrackAccordionEnabledState(settings.trackAccordionEnabled);
-    });
-  }, []);
+    if (!memo) {
+      setTrackAccordionEnabledState(false);
+      return;
+    }
+    const accordionOn = memo.trackAccordionEnabled === true;
+    setTrackAccordionEnabledState(accordionOn);
+    if (!accordionOn) {
+      setCollapsedLayerIds(new Set());
+    }
+  }, [memo?.id]);
+
+  useEffect(() => {
+    if (!memo || loading || !hasRecording(memo)) {
+      return;
+    }
+    if (
+      engine.getState().isRecording ||
+      beginRecordingInFlight.current ||
+      engine.getState().memoId === memo.id
+    ) {
+      return;
+    }
+    const session = getSession();
+    if (session?.memoId === memo.id) {
+      return;
+    }
+    void loadMemoIntoEngine(engine, memo, memo.trimStart ?? 0);
+  }, [engine, engineState.memoId, loading, memo]);
 
   useEffect(() => {
     if (!id) {
@@ -2737,17 +2763,12 @@ function MemoEditorInner({
       }
 
       void (async () => {
-        const settings = await getAppSettings();
         const accordionResult = await maybeAutoEnableAccordionAfterRecordingSave({
           previousMemo: current,
           savedMemo: merged,
-          trackAccordionEnabled: settings.trackAccordionEnabled,
         });
         if (accordionResult.memoUpdated) {
-          const withFlag = {
-            ...merged,
-            accordionAutoEnablePromptSeen: true,
-          };
+          const withFlag = { ...merged, ...accordionResult.memoUpdated };
           memoRef.current = withFlag;
           setMemo(withFlag);
         }
@@ -2877,6 +2898,7 @@ function MemoEditorInner({
         setActiveEditor(null);
 
         recordingStartTime.current = 0;
+        setArmedTimelineTime(0);
         setRecordingArmed(true);
         beginSession({
           memoId,
@@ -3487,15 +3509,20 @@ function MemoEditorInner({
   }, [flushEditorState, memo, onReload]);
 
   const handleToggleTrackAccordion = useCallback(() => {
+    if (!memo) {
+      return;
+    }
     void (async () => {
       const next = !trackAccordionEnabled;
-      await setTrackAccordionEnabled(next);
+      const updated = await updateTrackAccordionEnabled(memo.id, next);
+      memoRef.current = updated;
+      setMemo(updated);
       setTrackAccordionEnabledState(next);
       if (!next) {
         setCollapsedLayerIds(new Set());
       }
     })();
-  }, [trackAccordionEnabled]);
+  }, [memo, trackAccordionEnabled]);
 
   const renderHeaderBar = useCallback(
     () => {
@@ -3546,7 +3573,11 @@ function MemoEditorInner({
               : false
           }
           includeShare={memo ? hasRecording(memo) : false}
-          includeTrackAccordion={Boolean(memo && hasRecording(memo))}
+          includeTrackAccordion={
+            memo
+              ? hasRecording(memo) && getPlayableLayers(memo).length > 1
+              : false
+          }
           trackAccordionEnabled={trackAccordionEnabled}
           includeRefresh
           onShare={handleShare}
@@ -3708,6 +3739,15 @@ function MemoEditorInner({
       if (!engine.getState().isRecording) {
         engine.seek(time);
       }
+      if (
+        (recordingArmedRef.current ||
+          stackModeRef.current ||
+          replaceModeRef.current) &&
+        !engine.getState().isRecording
+      ) {
+        recordingStartTime.current = time;
+        setArmedTimelineTime(time);
+      }
     },
     [engine]
   );
@@ -3855,6 +3895,7 @@ function MemoEditorInner({
       }
 
       recordingStartTime.current = startTime;
+      setArmedTimelineTime(startTime);
       pendingRecordModeRef.current = mode;
       setRecordingArmed(true);
       setReplaceMode(mode === 'replace');
@@ -4057,7 +4098,6 @@ function MemoEditorInner({
   const currentTime = memo && isActiveMemo ? engineState.currentTime : 0;
   const recordingTimelineTime =
     recordingStartTime.current + engineState.recordingDuration;
-  const pendingTimelineTime = recordingStartTime.current;
   const monitorMixPreparing =
     isRecording &&
     engineState.monitorMixActive &&
@@ -4090,8 +4130,18 @@ function MemoEditorInner({
     const playableIds = memo ? getPlayableLayers(memo).map((layer) => layer.id) : [];
     const validIds = new Set(playableIds);
 
+    if (playableIds.length <= 1) {
+      setCollapsedLayerIds(new Set());
+      return;
+    }
+
+    const accordionActive = shouldApplyTrackAccordionCollapse(
+      playableIds.length,
+      trackAccordionEnabled
+    );
+
     if (pendingRecordingLayout || isRecording) {
-      if (trackAccordionEnabled) {
+      if (accordionActive) {
         const isStackLayout = stackMode || pendingRecordModeRef.current === 'stack';
         const nextCollapsed = computeRecordingLayoutCollapsedIds({
           isStackLayout,
@@ -4108,7 +4158,7 @@ function MemoEditorInner({
       return;
     }
 
-    if (!trackAccordionEnabled) {
+    if (!accordionActive) {
       setCollapsedLayerIds((current) => {
         const next = new Set([...current].filter((id) => validIds.has(id)));
         return next.size === current.size ? current : next;
@@ -4224,14 +4274,14 @@ function MemoEditorInner({
           : liveRecordingSnapshot.current
             ? liveRecordingSnapshot.current.startTime +
               liveRecordingSnapshot.current.duration
-            : pendingTimelineTime,
+            : armedTimelineTime,
         0.01
       )
     : duration;
   const waveformCurrentTime = pendingRecordingLayout
     ? isRecording
       ? recordingTimelineTime
-      : pendingTimelineTime
+      : armedTimelineTime
     : currentTime;
   const metronomeSettings = liveMetronomeSettings;
   /** Match post-save latency skip (wake + I/O + commit lead). */

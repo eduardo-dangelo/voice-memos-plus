@@ -244,6 +244,8 @@ export type Memo = {
   deletedAt?: string;
   /** Set after the 5-layer accordion auto-enable prompt is shown or skipped for this memo. */
   accordionAutoEnablePromptSeen?: boolean;
+  /** When true, unselected playable tracks collapse to header height. Default: off. */
+  trackAccordionEnabled?: boolean;
   layers: Layer[];
 };
 

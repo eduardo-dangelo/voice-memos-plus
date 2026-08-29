@@ -1885,13 +1885,15 @@ export class MemoAudioEngine {
 
   /** Re-sync metronome audio origin after monitor mix ends while recording continues. */
   private reanchorMetronomeForLiveRecording(context: AudioContext): void {
-    const scheduleFrom = this.metronomeScheduledUntil;
+    this.stopMetronomeSources();
+    const timelineNow = this.getRecordingMetronomeTimelineNow(context);
     const when = context.currentTime + PLAYBACK_SCHEDULE_LEAD;
-    this.metronomeTimelineOrigin = scheduleFrom;
+    this.metronomeTimelineOrigin = timelineNow;
+    this.metronomeScheduledUntil = timelineNow;
     this.metronomeAudioOrigin = when;
     this.playbackRateAnchorContextTime = when;
-    this.playbackRateAnchorPosition = this.getRecordingMetronomeTimelineNow(context);
-    this.extendMetronomeOnlySchedule(this.playbackRateAnchorPosition);
+    this.playbackRateAnchorPosition = timelineNow;
+    this.extendMetronomeOnlySchedule(timelineNow);
   }
 
   private startPlaybackTimer(sessionId: number, context: AudioContext): void {
