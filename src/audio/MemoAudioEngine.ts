@@ -34,7 +34,10 @@ import {
   type LayerEffectPathNodes,
 } from '@/src/audio/layerEffectChain';
 import { hasAnySoloActive, isLayerAudible, mergeLayerEffects, type LayerEffects, type LayerEffectsChange } from '@/src/audio/layerEffects';
-import { loadMemoIntoEngine } from '@/src/audio/loadMemoIntoEngine';
+import { loadedLayerTimelineChanged } from '@/src/audio/engineLayerTimeline';
+import { runSerializedEngineLoad } from '@/src/audio/engineMemoLoadQueue';
+import { getMemoPlaybackTimeline } from '@/src/storage/paths';
+import { getMemoMetronomeSettings } from '@/src/storage/types';
 import { MemoMixGraph } from '@/src/audio/memoMixGraph';
 import {
   playSilentMetronomePrime,
@@ -136,6 +139,8 @@ const SPEAKER_MONITOR_MIX_GAIN = 0.4;
 const ROUTE_CHANGE_IGNORE_MS = 400;
 /** Bound cancelPreparedRecording's join of an in-flight commit so UI recovery cannot hang forever. */
 const CANCEL_PREPARED_JOIN_TIMEOUT_MS = 1000;
+/** Bound cancelPreparedRecording's join of an in-flight prepare (decode/warmup). */
+const CANCEL_PREPARE_JOIN_TIMEOUT_MS = 2000;
 /**
  * DEV ONLY — flip to true to verify stuck-after-counter recovery.
  * Hang is abort-aware so watchdog/cancel can unblock commit.
@@ -673,6 +678,10 @@ export class MemoAudioEngine {
     return this.state;
   }
 
+  getLoadedLayers(): readonly LoadedLayer[] {
+    return this.loadedLayers;
+  }
+
   /** True when Phase A/B warmup left a prepared recorder but capture has not started. */
   isPreparedForRecording(): boolean {
     return (
@@ -791,7 +800,26 @@ export class MemoAudioEngine {
             }
             this.resetRecordingWarmupCaches();
           }
-          await loadMemoIntoEngine(this, pending.memo, pending.seekTime);
+          await runSerializedEngineLoad(async () => {
+            const { layers, duration, trimStart, trimEnd } = getMemoPlaybackTimeline(
+              pending.memo
+            );
+            await this.loadMemo(
+              pending.memo.id,
+              pending.memo.title,
+              layers,
+              trimStart,
+              trimEnd,
+              duration,
+              pending.memo.loopStart ?? 0,
+              pending.memo.loopEnd ?? 0,
+              pending.memo.loopEnabled ?? false
+            );
+            if (pending.seekTime !== undefined) {
+              this.seek(pending.seekTime);
+            }
+            this.setMetronome(getMemoMetronomeSettings(pending.memo));
+          });
         }
       } catch (error) {
         this.sessionMode = null;
@@ -2684,7 +2712,8 @@ export class MemoAudioEngine {
     for (const path of pathsToInvalidate) {
       this.invalidateLayerBufferForPath(path);
     }
-    if (pathsToInvalidate.length > 0) {
+    const layerSetChanged = loadedLayerTimelineChanged(previousLayers, layers);
+    if (pathsToInvalidate.length > 0 || layerSetChanged) {
       this.resetRecordingWarmupCaches();
     }
 
@@ -3663,9 +3692,19 @@ export class MemoAudioEngine {
 
     if (this.recordingPrepareInFlight) {
       try {
-        await this.recordingPrepareInFlight;
+        await Promise.race([
+          this.recordingPrepareInFlight,
+          new Promise<void>((_, reject) => {
+            setTimeout(
+              () => reject(new Error('cancelPreparedRecording prepare join timed out')),
+              CANCEL_PREPARE_JOIN_TIMEOUT_MS
+            );
+          }),
+        ]);
       } catch {
-        // Prepare may have failed; still clear any partial recorder.
+        // Prepare may have failed or timed out — force-clear partial state.
+        this.recordingPrepareGeneration += 1;
+        this.recordingPrepareInFlight = null;
       }
     }
 

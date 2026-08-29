@@ -41,7 +41,12 @@ import {
 } from '@/src/audio/headphoneDetection';
 import type { LayerEffects, LayerEffectsChange } from '@/src/audio/layerEffects';
 import { hasAnySoloActive, isLayerLocked, isLayerSelectable, isLockedLayerEffectsChangeAllowed, mergeLayerEffects } from '@/src/audio/layerEffects';
-import { loadMemoIntoEngine } from '@/src/audio/loadMemoIntoEngine';
+import {
+  awaitEngineLoadIdle,
+  engineLayersMatchMemo,
+  loadMemoIntoEngine,
+  syncEngineWithMemo,
+} from '@/src/audio/loadMemoIntoEngine';
 import { RecordingStartAbortedError, type EngineState } from '@/src/audio/MemoAudioEngine';
 import {
   canMergeLayers,
@@ -159,6 +164,8 @@ import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 import { formatDurationWithTenths } from '@/src/utils/format';
 
 const COMMIT_RECORDING_TIMEOUT_MS = 8000;
+/** Monitor-mix prepare + warmup must finish before this or recovery runs. */
+const PREPARE_RECORDING_TIMEOUT_MS = COMMIT_RECORDING_TIMEOUT_MS + 2000;
 /** Backstop only after arming finishes — not a race with commit/wake. */
 const ARMED_UI_ABORT_DELAY_MS = COMMIT_RECORDING_TIMEOUT_MS + 500;
 /** After precount/prepare, fail fast if capture never latches. */
@@ -547,6 +554,10 @@ function MemoEditorInner({
   const autoRecordStarted = useRef(false);
   const loadGenerationRef = useRef(0);
   const beginRecordingInFlight = useRef(false);
+  const persistIdleResolveRef = useRef<(() => void) | null>(null);
+  const persistIdlePromiseRef = useRef<Promise<void>>(Promise.resolve());
+  const deleteQueueRef = useRef<string[]>([]);
+  const deleteDrainRef = useRef<Promise<void> | null>(null);
   const pendingArmRef = useRef<{
     mode: 'replace' | 'stack';
     duckMonitorMix: boolean;
@@ -1786,14 +1797,32 @@ function MemoEditorInner({
     })();
   }, [confirmEditDraft, flushEffectsPersist, flushStartTimePersist]);
 
-  const handleDeleteTrack = useCallback(
+  const awaitRecordingIdle = useCallback(async () => {
+    await awaitSaveInFlight();
+    await persistIdlePromiseRef.current;
+    while (beginRecordingInFlight.current) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 32));
+    }
+  }, []);
+
+  const performDeleteTrack = useCallback(
     async (layerId: string) => {
-      if (!memo) {
+      const current = memoRef.current;
+      if (!current) {
         return;
       }
 
-      const target = memo.layers.find((entry) => entry.id === layerId);
+      const target = current.layers.find((entry) => entry.id === layerId);
       if (target && isLayerLocked(getLayerEffects(target))) {
+        return;
+      }
+
+      if (
+        recordingArmedRef.current ||
+        stackModeRef.current ||
+        replaceModeRef.current ||
+        engine.getState().isRecording
+      ) {
         return;
       }
 
@@ -1801,19 +1830,19 @@ function MemoEditorInner({
         await confirmEditDraft(false);
         flushEffectsPersist();
         flushStartTimePersist();
-        const current = memoRef.current;
-        if (!current) {
+        const snapshot = memoRef.current;
+        if (!snapshot) {
           return;
         }
-        const seekTime = Math.min(engine.getPlaybackTime(), current.duration);
-        const updated = await deleteLayer(current.id, layerId);
+        const seekTime = Math.min(engine.getPlaybackTime(), snapshot.duration);
+        const updated = await deleteLayer(snapshot.id, layerId);
         memoRef.current = updated;
         setMemo(updated);
         setActiveLayerId((currentActive) =>
           currentActive === layerId ? null : currentActive
         );
         setActiveEditor(null);
-        await loadMemoIntoEngine(engine, updated, seekTime);
+        await syncEngineWithMemo(engine, updated, seekTime);
       } catch (error) {
         Alert.alert(
           'Delete failed',
@@ -1821,7 +1850,45 @@ function MemoEditorInner({
         );
       }
     },
-    [confirmEditDraft, engine, flushEffectsPersist, flushStartTimePersist, memo]
+    [
+      confirmEditDraft,
+      engine,
+      flushEffectsPersist,
+      flushStartTimePersist,
+    ]
+  );
+
+  const drainDeleteQueue = useCallback(async () => {
+    if (deleteDrainRef.current) {
+      return deleteDrainRef.current;
+    }
+
+    const drain = (async () => {
+      while (deleteQueueRef.current.length > 0) {
+        const layerId = deleteQueueRef.current.shift();
+        if (layerId) {
+          await performDeleteTrack(layerId);
+        }
+      }
+    })();
+
+    deleteDrainRef.current = drain;
+    try {
+      await drain;
+    } finally {
+      deleteDrainRef.current = null;
+    }
+  }, [performDeleteTrack]);
+
+  const handleDeleteTrack = useCallback(
+    (layerId: string) => {
+      if (!memoRef.current) {
+        return;
+      }
+      deleteQueueRef.current.push(layerId);
+      void drainDeleteQueue();
+    },
+    [drainDeleteQueue]
   );
 
   const handleDuplicateTrack = useCallback(
@@ -2683,7 +2750,7 @@ function MemoEditorInner({
         engine.getState().isRecording ||
         engine.hasRecordingCaptureStarted() ||
         precountCancelledRef.current ||
-        precountOverlayActiveRef.current
+        (precountOverlayActiveRef.current && !precountPreparingRef.current)
       ) {
         return;
       }
@@ -2698,6 +2765,11 @@ function MemoEditorInner({
 
   const performanceWarningLayerCount = memo ? getPlayableLayers(memo).length : 0;
   const performanceWarningNodeCount = memo ? estimateMemoNodeCount(memo) : 0;
+  const playableLayerSignature = memo
+    ? getPlayableLayers(memo)
+        .map((layer) => `${layer.id}\0${layer.fileName ?? ''}`)
+        .join('\n')
+    : '';
 
   useEffect(() => {
     if (!memo || !hasRecording(memo)) {
@@ -2731,7 +2803,9 @@ function MemoEditorInner({
     if (
       engine.getState().isRecording ||
       beginRecordingInFlight.current ||
-      engine.getState().memoId === memo.id
+      isArmingRecording ||
+      isPersistingTakeRef.current ||
+      precountVisible
     ) {
       return;
     }
@@ -2739,8 +2813,19 @@ function MemoEditorInner({
     if (session?.memoId === memo.id) {
       return;
     }
-    void loadMemoIntoEngine(engine, memo, memo.trimStart ?? 0);
-  }, [engine, engineState.memoId, loading, memo]);
+    if (engineLayersMatchMemo(engine, memo)) {
+      return;
+    }
+    void syncEngineWithMemo(engine, memo, memo.trimStart ?? 0);
+  }, [
+    engine,
+    engineState.memoId,
+    isArmingRecording,
+    loading,
+    memo,
+    playableLayerSignature,
+    precountVisible,
+  ]);
 
   useEffect(() => {
     if (!id) {
@@ -3059,7 +3144,7 @@ function MemoEditorInner({
       ) {
         return;
       }
-      if (precountOverlayActiveRef.current) {
+      if (precountOverlayActiveRef.current && !precountPreparingRef.current) {
         return;
       }
       if (__DEV__) {
@@ -3136,6 +3221,9 @@ function MemoEditorInner({
       isPersistingTakeRef.current = true;
       setIsPersistingTake(true);
       setSavePhase('processing');
+      persistIdlePromiseRef.current = new Promise<void>((resolve) => {
+        persistIdleResolveRef.current = resolve;
+      });
       try {
         const state = engine.getState();
         liveRecordingSnapshot.current = {
@@ -3199,6 +3287,9 @@ function MemoEditorInner({
         isPersistingTakeRef.current = false;
         setIsPersistingTake(false);
         setSavePhase(null);
+        persistIdleResolveRef.current?.();
+        persistIdleResolveRef.current = null;
+        persistIdlePromiseRef.current = Promise.resolve();
         // Hold shimmer briefly so fast saves still read as processing.
         clearProcessingLayerVisual();
       }
@@ -3809,13 +3900,16 @@ function MemoEditorInner({
       return;
     }
 
-    await awaitSaveInFlight();
+    await awaitRecordingIdle();
     if (
       beginRecordingInFlight.current ||
       engine.getState().isRecording ||
       isStoppingRecordingRef.current ||
       isPersistingTakeRef.current
     ) {
+      if (__DEV__) {
+        console.warn('[MemoEditor] beginRecording blocked after idle wait');
+      }
       return;
     }
 
@@ -3876,18 +3970,20 @@ function MemoEditorInner({
     const pending = pendingArmRef.current;
     pendingArmRef.current = null;
     setCollapseWarningVisible(false);
-    if (!pending || !memo) {
+    const base = memoRef.current;
+    if (!pending || !base) {
       return;
     }
 
     try {
-      const updated = await applyAccordionAutoEnableForMemo(memo.id);
-      const merged = { ...memo, ...updated };
+      const updated = await applyAccordionAutoEnableForMemo(base.id);
+      const merged = { ...base, ...updated };
       memoRef.current = merged;
       setMemo(merged);
       setTrackAccordionEnabledState(true);
       await startArmedRecording(pending.mode, pending.duckMonitorMix);
     } catch (error) {
+      clearArmedRecordingUi();
       Alert.alert(
         'Could not enable track collapse',
         error instanceof Error ? error.message : 'Unknown error'
@@ -3912,13 +4008,16 @@ function MemoEditorInner({
       return;
     }
 
-    await awaitSaveInFlight();
+    await awaitRecordingIdle();
     if (
       beginRecordingInFlight.current ||
       engine.getState().isRecording ||
       isStoppingRecordingRef.current ||
       isPersistingTakeRef.current
     ) {
+      if (__DEV__) {
+        console.warn('[MemoEditor] beginRecording blocked after idle wait');
+      }
       return;
     }
 
@@ -3934,6 +4033,8 @@ function MemoEditorInner({
         await engine.cancelPreparedRecording();
       }
 
+      await awaitEngineLoadIdle();
+
       if (!sidebarCollapsed && onToggleSidebar) {
         onToggleSidebar();
       }
@@ -3945,6 +4046,15 @@ function MemoEditorInner({
       // prepare/finalize/commit (stack monitor-mix warmup hang).
       await confirmEditDraft(false);
       setActiveEditor(null);
+
+      const currentMemo = memoRef.current ?? memo;
+      if (currentMemo && !engineLayersMatchMemo(engine, currentMemo)) {
+        await syncEngineWithMemo(
+          engine,
+          currentMemo,
+          engine.getPlaybackTime()
+        );
+      }
 
       engine.pause();
       let startTime = engine.getPlaybackTime();
@@ -3998,18 +4108,29 @@ function MemoEditorInner({
           }
         }
 
-        await engine.prepareRecordingStart({
-          monitorMix: useMonitorMix,
-          duckMonitorMix: useMonitorMix && duckMonitorMix,
-        });
-        if (precountCancelledRef.current) {
-          await abortArmedRecording();
-          return;
-        }
-        await engine.finalizeRecordingWarmup({
-          monitorMix: useMonitorMix,
-          duckMonitorMix: useMonitorMix && duckMonitorMix,
-        });
+        const runPreparePhase = async () => {
+          await engine.prepareRecordingStart({
+            monitorMix: useMonitorMix,
+            duckMonitorMix: useMonitorMix && duckMonitorMix,
+          });
+          if (precountCancelledRef.current) {
+            return;
+          }
+          await engine.finalizeRecordingWarmup({
+            monitorMix: useMonitorMix,
+            duckMonitorMix: useMonitorMix && duckMonitorMix,
+          });
+        };
+
+        await Promise.race([
+          runPreparePhase(),
+          new Promise<void>((_, reject) => {
+            setTimeout(
+              () => reject(new Error('Prepare phase timed out')),
+              PREPARE_RECORDING_TIMEOUT_MS
+            );
+          }),
+        ]);
         if (precountCancelledRef.current) {
           await abortArmedRecording();
           return;
@@ -4080,6 +4201,14 @@ function MemoEditorInner({
         clearPostPrecountWatchdog();
         if (stuckRecoveryRef.current) {
           // Watchdog/timeout already recovered — no Alert, leave memo intact.
+          return;
+        }
+        if (
+          error instanceof Error &&
+          error.message === 'Prepare phase timed out'
+        ) {
+          clearPrecountOverlay();
+          await recoverStuckRecordingStart();
           return;
         }
         await abortArmedRecording();
