@@ -1,14 +1,15 @@
-import { Alert } from 'react-native';
-
-import { didCrossAccordionAutoEnableThreshold } from '@/src/audio/trackCollapse';
+import {
+  didCrossAccordionAutoEnableThreshold,
+  shouldPromptAccordionAutoEnableBeforeStackAtCount,
+} from '@/src/audio/trackCollapse';
 import {
   markAccordionAutoEnablePromptSeen,
   updateTrackAccordionEnabled,
 } from '@/src/storage/memoStore';
 import { getPlayableLayers, type Memo } from '@/src/storage/types';
 
-const ACCORDION_AUTO_ENABLE_MESSAGE =
-  'Collapse unselected layers was turned on for this memo to improve performance. You can turn it off anytime in the memo menu (…).';
+export const ACCORDION_AUTO_ENABLE_PRE_RECORD_MESSAGE =
+  'Unselected tracks will be collapsed to improve app Performance. You can change this at anytime.';
 
 export type AccordionAutoEnableResult = {
   shown: boolean;
@@ -20,6 +21,19 @@ export type AccordionAutoEnableAfterSaveInput = {
   previousMemo: Memo | null;
   savedMemo: Memo;
 };
+
+export function shouldPromptAccordionAutoEnableBeforeStack(memo: Memo): boolean {
+  return shouldPromptAccordionAutoEnableBeforeStackAtCount(
+    getPlayableLayers(memo).length,
+    memo.accordionAutoEnablePromptSeen === true,
+    memo.trackAccordionEnabled
+  );
+}
+
+export async function applyAccordionAutoEnableForMemo(memoId: string): Promise<Memo> {
+  await markAccordionAutoEnablePromptSeen(memoId);
+  return updateTrackAccordionEnabled(memoId, true);
+}
 
 export async function maybeAutoEnableAccordionAfterRecordingSave({
   previousMemo,
@@ -44,7 +58,5 @@ export async function maybeAutoEnableAccordionAfterRecordingSave({
 
   memoUpdated = await updateTrackAccordionEnabled(savedMemo.id, true);
 
-  Alert.alert('Collapse Unselected Tracks', ACCORDION_AUTO_ENABLE_MESSAGE, [{ text: 'OK' }]);
-
-  return { shown: true, accordionEnabled: true, memoUpdated };
+  return { shown: false, accordionEnabled: true, memoUpdated };
 }

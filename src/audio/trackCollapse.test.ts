@@ -12,6 +12,7 @@ import {
   scrollYForFocalTrackIndex,
   shouldApplyTrackAccordionCollapse,
   shouldShowAccordionAutoEnableAlert,
+  shouldPromptAccordionAutoEnableBeforeStackAtCount,
 } from './trackCollapse';
 import { getPerformanceWarningMessage } from './performanceBudget';
 
@@ -99,6 +100,50 @@ test('shouldShowAccordionAutoEnableAlert at layer threshold', () => {
   );
   assert.equal(
     shouldShowAccordionAutoEnableAlert(ACCORDION_AUTO_ENABLE_LAYER_COUNT, true),
+    false
+  );
+});
+
+test('shouldPromptAccordionAutoEnableBeforeStackAtCount at 4 playable layers', () => {
+  assert.equal(
+    shouldPromptAccordionAutoEnableBeforeStackAtCount(
+      ACCORDION_AUTO_ENABLE_LAYER_COUNT - 1,
+      false,
+      undefined
+    ),
+    true
+  );
+});
+
+test('shouldPromptAccordionAutoEnableBeforeStackAtCount skips when prompt already seen', () => {
+  assert.equal(
+    shouldPromptAccordionAutoEnableBeforeStackAtCount(
+      ACCORDION_AUTO_ENABLE_LAYER_COUNT - 1,
+      true,
+      undefined
+    ),
+    false
+  );
+});
+
+test('shouldPromptAccordionAutoEnableBeforeStackAtCount skips when accordion already enabled', () => {
+  assert.equal(
+    shouldPromptAccordionAutoEnableBeforeStackAtCount(
+      ACCORDION_AUTO_ENABLE_LAYER_COUNT - 1,
+      false,
+      true
+    ),
+    false
+  );
+});
+
+test('shouldPromptAccordionAutoEnableBeforeStackAtCount skips below threshold', () => {
+  assert.equal(
+    shouldPromptAccordionAutoEnableBeforeStackAtCount(
+      ACCORDION_AUTO_ENABLE_LAYER_COUNT - 2,
+      false,
+      undefined
+    ),
     false
   );
 });

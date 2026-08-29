@@ -8,7 +8,7 @@ import { getPlayableLayers } from '@/src/storage/types';
  * TEMP (alignment QA): allow metronome + stack/replace without headphones.
  * Set back to `false` (or delete) after speaker-stack testing.
  */
-export const ALLOW_METRONOME_WITHOUT_HEADPHONES = true;
+export const ALLOW_METRONOME_WITHOUT_HEADPHONES = false;
 
 const SPEAKER_CATEGORIES = new Set(['BuiltInSpeaker', 'BuiltInReceiver']);
 

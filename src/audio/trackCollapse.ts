@@ -11,6 +11,17 @@ export function shouldShowAccordionAutoEnableAlert(
   return playableCount >= ACCORDION_AUTO_ENABLE_LAYER_COUNT && !alreadyShown;
 }
 
+export function shouldPromptAccordionAutoEnableBeforeStackAtCount(
+  playableCount: number,
+  promptSeen: boolean,
+  trackAccordionEnabled: boolean | undefined
+): boolean {
+  if (promptSeen || trackAccordionEnabled === true) {
+    return false;
+  }
+  return playableCount === ACCORDION_AUTO_ENABLE_LAYER_COUNT - 1;
+}
+
 export function didCrossAccordionAutoEnableThreshold(
   previousCount: number,
   nextCount: number

@@ -1,5 +1,3 @@
-import { Alert } from 'react-native';
-
 import {
   assessMemoPerformance,
   getPerformanceWarningMessage,
@@ -20,6 +18,7 @@ const warnState: WarnState = {
 
 export type PerformanceWarningResult = {
   shown: boolean;
+  message: string | null;
 };
 
 export function maybeShowPerformanceWarning(memo: Memo): PerformanceWarningResult {
@@ -35,7 +34,7 @@ export function maybeShowPerformanceWarning(memo: Memo): PerformanceWarningResul
   const showNodes = assessment.shouldWarnNodes && !warnState.nodes;
 
   if (!showLayers && !showNodes) {
-    return { shown: false };
+    return { shown: false, message: null };
   }
 
   if (showLayers) {
@@ -45,13 +44,10 @@ export function maybeShowPerformanceWarning(memo: Memo): PerformanceWarningResul
     warnState.nodes = true;
   }
 
-  Alert.alert(
-    'Performance may be reduced',
-    getPerformanceWarningMessage(showLayers, showNodes),
-    [{ text: 'OK' }]
-  );
-
-  return { shown: true };
+  return {
+    shown: true,
+    message: getPerformanceWarningMessage(showLayers, showNodes),
+  };
 }
 
 export function resetPerformanceWarningState(): void {

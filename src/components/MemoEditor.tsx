@@ -19,11 +19,17 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { DEFAULT_TRACK_COLOR, pickRandomTrackColor } from '@/constants/VoiceMemosColors';
 import { shareMemo } from '@/src/actions/shareMemo';
+import {
+  ACCORDION_AUTO_ENABLE_PRE_RECORD_MESSAGE,
+  applyAccordionAutoEnableForMemo,
+  maybeAutoEnableAccordionAfterRecordingSave,
+  shouldPromptAccordionAutoEnableBeforeStack,
+} from '@/src/audio/accordionAutoEnable';
 import { useAudioEngine, useAudioEngineSelector } from '@/src/audio/AudioEngineContext';
 import {
+  shouldDuckMonitorMixNow,
   subscribeCueOutputRoute,
   subscribeMonitorPath,
-  shouldDuckMonitorMixNow,
 } from '@/src/audio/audioInputRouting';
 import { clampFadeValues } from '@/src/audio/fadeCurve';
 import {
@@ -38,33 +44,30 @@ import { hasAnySoloActive, isLayerLocked, isLayerSelectable, isLockedLayerEffect
 import { loadMemoIntoEngine } from '@/src/audio/loadMemoIntoEngine';
 import { RecordingStartAbortedError, type EngineState } from '@/src/audio/MemoAudioEngine';
 import {
-  computePostPrecountContextWhen,
-  POST_PRECOUNT_SCHEDULE_LEAD_SEC,
-} from '@/src/audio/postPrecountTiming';
-import {
   canMergeLayers,
   getMergePartnerLayers,
   getPlayableLayersInTimelineOrder,
 } from '@/src/audio/mergeLayersLogic';
 import { getGridSnapIntervalSec, getQuarterIntervalSec } from '@/src/audio/metronome';
 import {
-  computeAccordionCollapsedIds,
-  computeRecordingLayoutCollapsedIds,
-  shouldApplyTrackAccordionCollapse,
-} from '@/src/audio/trackCollapse';
-import {
-  maybeAutoEnableAccordionAfterRecordingSave,
-} from '@/src/audio/accordionAutoEnable';
-import {
   maybeShowPerformanceWarning,
   resetPerformanceWarningState,
 } from '@/src/audio/performanceWarning';
+import {
+  computePostPrecountContextWhen,
+  POST_PRECOUNT_SCHEDULE_LEAD_SEC,
+} from '@/src/audio/postPrecountTiming';
 import {
   getRecordingLatencySkipSeconds,
   type CueOutputRoute,
   type MonitorPath,
 } from '@/src/audio/recordingLatency';
 import { formatTimelineZoomMultiplier, isTimelineZoomAtDefault } from '@/src/audio/timelineZoom';
+import {
+  computeAccordionCollapsedIds,
+  computeRecordingLayoutCollapsedIds,
+  shouldApplyTrackAccordionCollapse,
+} from '@/src/audio/trackCollapse';
 import {
   slicePeaksForTrim,
   WAVEFORM_BAR_GAP,
@@ -82,6 +85,7 @@ import { NamePromptDialog } from '@/src/components/NamePromptDialog';
 import { PlaybackControls } from '@/src/components/PlaybackControls';
 import { PrecountButton } from '@/src/components/PrecountButton';
 import { PrecountOverlay } from '@/src/components/PrecountOverlay';
+import { RecordingPromptDialog } from '@/src/components/RecordingPromptDialog';
 import { TimeSeekDialog } from '@/src/components/TimeSeekDialog';
 import { TrackEditorShell } from '@/src/components/track-editor/TrackEditorShell';
 import type { FadeRegionState } from '@/src/components/track-editor/TrackFadeOverlay';
@@ -542,6 +546,10 @@ function MemoEditorInner({
   const autoRecordStarted = useRef(false);
   const loadGenerationRef = useRef(0);
   const beginRecordingInFlight = useRef(false);
+  const pendingArmRef = useRef<{
+    mode: 'replace' | 'stack';
+    duckMonitorMix: boolean;
+  } | null>(null);
   const [isArmingRecording, setIsArmingRecording] = useState(false);
   const [recordingStartError, setRecordingStartError] = useState<string | null>(null);
   /** True while stuck recovery is tearing down / reloading — catch paths must not Alert/deleteMemo. */
@@ -624,6 +632,10 @@ function MemoEditorInner({
   const [headphonesWarningMode, setHeadphonesWarningMode] = useState<
     'replace' | 'stack' | null
   >(null);
+  const [performanceWarningMessage, setPerformanceWarningMessage] = useState<
+    string | null
+  >(null);
+  const [collapseWarningVisible, setCollapseWarningVisible] = useState(false);
   const [cueOutputRoute, setCueOutputRoute] =
     useState<CueOutputRoute>('wired');
   const [monitorPath, setMonitorPath] = useState<MonitorPath>('headphones');
@@ -2685,10 +2697,16 @@ function MemoEditorInner({
 
   useEffect(() => {
     if (!memo || !hasRecording(memo)) {
+      setPerformanceWarningMessage(null);
       return;
     }
-    maybeShowPerformanceWarning(memo);
-  }, [memo]);
+    const result = maybeShowPerformanceWarning(memo);
+    if (result.message) {
+      setPerformanceWarningMessage(result.message);
+    } else {
+      setPerformanceWarningMessage(null);
+    }
+  }, [memo?.id]);
 
   useEffect(() => {
     if (!memo) {
@@ -3830,7 +3848,47 @@ function MemoEditorInner({
 
     // Phase D: duck open outputs even when "headphones" is true (e.g. A2DP speakers).
     const duckOpen = useMonitorMix && (await shouldDuckMonitorMixNow());
-    await startArmedRecording(mode, duckOpen);
+    await proceedToArming(mode, duckOpen);
+  };
+
+  const proceedToArming = async (
+    mode: 'replace' | 'stack',
+    duckMonitorMix: boolean
+  ) => {
+    if (
+      mode === 'stack' &&
+      memo &&
+      shouldPromptAccordionAutoEnableBeforeStack(memo)
+    ) {
+      pendingArmRef.current = { mode, duckMonitorMix };
+      setCollapseWarningVisible(true);
+      return;
+    }
+
+    await startArmedRecording(mode, duckMonitorMix);
+  };
+
+  const handleCollapseWarningContinue = async () => {
+    const pending = pendingArmRef.current;
+    pendingArmRef.current = null;
+    setCollapseWarningVisible(false);
+    if (!pending || !memo) {
+      return;
+    }
+
+    try {
+      const updated = await applyAccordionAutoEnableForMemo(memo.id);
+      const merged = { ...memo, ...updated };
+      memoRef.current = merged;
+      setMemo(merged);
+      setTrackAccordionEnabledState(true);
+      await startArmedRecording(pending.mode, pending.duckMonitorMix);
+    } catch (error) {
+      Alert.alert(
+        'Could not enable track collapse',
+        error instanceof Error ? error.message : 'Unknown error'
+      );
+    }
   };
 
   const startArmedRecording = async (
@@ -4920,8 +4978,34 @@ function MemoEditorInner({
           const mode = headphonesWarningMode;
           setHeadphonesWarningMode(null);
           if (mode) {
-            void startArmedRecording(mode, true);
+            void proceedToArming(mode, true);
           }
+        }}
+      />
+      <RecordingPromptDialog
+        visible={performanceWarningMessage != null}
+        title="Performance may be reduced"
+        heroIcon="gauge.with.dots.needle.33percent"
+        message={performanceWarningMessage ?? ''}
+        actions="ok"
+        onDismiss={() => setPerformanceWarningMessage(null)}
+      />
+      <RecordingPromptDialog
+        visible={collapseWarningVisible}
+        title="Collapse Tracks"
+        titleIcon="none"
+        heroIcon="rectangle.compress.vertical"
+        message={ACCORDION_AUTO_ENABLE_PRE_RECORD_MESSAGE}
+        compact
+        actions="continue"
+        onDismiss={() => {
+          void handleCollapseWarningContinue();
+        }}
+        onBackdropDismiss={() => {
+          void handleCollapseWarningContinue();
+        }}
+        onContinue={() => {
+          void handleCollapseWarningContinue();
         }}
       />
       <PrecountOverlay
