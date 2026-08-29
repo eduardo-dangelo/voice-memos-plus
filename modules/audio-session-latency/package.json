@@ -1,0 +1,12 @@
+{
+  "name": "audio-session-latency",
+  "version": "1.0.0",
+  "description": "Read AVAudioSession input/output latency for overdub placement",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "peerDependencies": {
+    "expo": "*",
+    "react": "*",
+    "react-native": "*"
+  }
+}

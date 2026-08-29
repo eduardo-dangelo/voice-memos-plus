@@ -10,6 +10,7 @@ import {
   type AudioBuffer,
   type AudioBufferSourceNode,
   type GainNode,
+  type RecorderAdapterNode,
 } from 'react-native-audio-api';
 
 import { File } from 'expo-file-system';
@@ -62,6 +63,8 @@ import {
   playbackScheduleLeadSec,
   resolvePlanAgainstBuffer,
 } from '@/src/audio/playbackPlans';
+import { measuredCueLeadFromOrigin, updateCaptureOriginFromBuffer } from '@/src/audio/captureOrigin';
+import { readRecordingIoLatency } from '@/src/audio/readRecordingIoLatency';
 import {
   classifyCueOutputRoute,
   classifyMonitorPath,
@@ -218,11 +221,14 @@ export type RecordingCaptureResult = {
   /** How cues were heard (headphones vs open-speaker bleed). */
   monitorPath: MonitorPath;
   /**
-   * AudioContext lead from recorder.start() to scheduled cue origin.
-   * Folded into trim for headphones and speakerBleed (commit jitter);
-   * speakerBleed never adds the headphones route constant.
+   * AudioContext lead from capture origin to scheduled cue origin.
+   * Folded into Logic-style trim with measured I/O latency.
    */
   measuredCueLeadSec: number;
+  /** Built-in mic input latency at stop (seconds). */
+  inputLatencySec: number;
+  /** Cue-output latency at stop (seconds). */
+  outputLatencySec: number;
   recorderDuration: number;
   /** True when capture used our 44.1k WAV preset — safe to skip verify-decode. */
   usedWavFormat: boolean;
@@ -273,6 +279,8 @@ export class MemoAudioEngine {
   private listeners = new Set<Listener>();
   private context: AudioContext | null = null;
   private recorder: AudioRecorder | null = null;
+  private recorderAdapter: RecorderAdapterNode | null = null;
+  private recorderSilentGain: GainNode | null = null;
   private sources: AudioBufferSourceNode[] = [];
   private loadedLayers: LoadedLayer[] = [];
   private layerBuffers = new Map<string, AudioBuffer>();
@@ -363,6 +371,11 @@ export class MemoAudioEngine {
   private recordingCueContextWhen = 0;
   /** AudioContext when recorder.start() returned successfully. */
   private recordingRecorderStartedAtContextWhen = 0;
+  /** AudioContext time of capture sample 0 (back-extrapolated / native when). */
+  private recordingCaptureOriginContextWhen = 0;
+  private recordingFramesDelivered = 0;
+  private recordingInputLatencySec = 0;
+  private recordingOutputLatencySec = 0;
   /** Resampled/ready buffers for monitor-mix atomic start (path → buffer). */
   private recordingPlaybackBuffers = new Map<string, AudioBuffer>();
   /** True between AVAudioSession interruption began/ended while a take is live. */
@@ -685,16 +698,19 @@ export class MemoAudioEngine {
    * Used by live waveform latency preview to match post-save trim.
    */
   getMeasuredCueLeadSec(): number {
-    if (
-      this.recordingCueContextWhen <= 0 ||
-      this.recordingRecorderStartedAtContextWhen <= 0
-    ) {
-      return 0;
-    }
-    return Math.max(
-      0,
-      this.recordingCueContextWhen - this.recordingRecorderStartedAtContextWhen
+    return measuredCueLeadFromOrigin(
+      this.recordingCueContextWhen,
+      this.recordingCaptureOriginContextWhen,
+      this.recordingRecorderStartedAtContextWhen
     );
+  }
+
+  getRecordingInputLatencySec(): number {
+    return this.recordingInputLatencySec;
+  }
+
+  getRecordingOutputLatencySec(): number {
+    return this.recordingOutputLatencySec;
   }
 
   getPlaybackTime(): number {
@@ -960,6 +976,77 @@ export class MemoAudioEngine {
     this.refreshActiveRecordingSampleRate();
   }
 
+  private detachRecorderFromGraph(): void {
+    if (this.recorder) {
+      try {
+        this.recorder.disconnect();
+      } catch {
+        // Recorder may not have been connected to an adapter.
+      }
+    }
+    try {
+      this.recorderSilentGain?.disconnect();
+    } catch {
+      // Node may already be disconnected with the context.
+    }
+    try {
+      this.recorderAdapter?.disconnect();
+    } catch {
+      // Node may already be disconnected with the context.
+    }
+    this.recorderAdapter = null;
+    this.recorderSilentGain = null;
+  }
+
+  /**
+   * Put capture on the same AudioContext as metronome/monitor mix.
+   * Adapter output is silenced so the mic is never monitored through speakers.
+   */
+  private async attachRecorderToRecordingContext(
+    context: AudioContext
+  ): Promise<void> {
+    if (!this.recorder) {
+      return;
+    }
+
+    this.detachRecorderFromGraph();
+    try {
+      const adapter = context.createRecorderAdapter();
+      const silent = context.createGain();
+      silent.gain.value = 0;
+      adapter.connect(silent);
+      silent.connect(context.destination);
+      this.recorder.connect(adapter);
+      this.recorderAdapter = adapter;
+      this.recorderSilentGain = silent;
+
+      // Adapter + playAndRecord often prefers a headset mic — pin BuiltInMic again.
+      await pinBuiltInMicrophone();
+      const routeSnapshot = await assertRecordingRouteOk();
+      this.recordingCueOutputRoute = classifyCueOutputRoute(
+        routeSnapshot.outputCategory
+      );
+      this.recordingMonitorPath = classifyMonitorPath(
+        routeSnapshot.outputCategory
+      );
+      logRouteSnapshot('recording-adapter', routeSnapshot);
+
+      const io = readRecordingIoLatency(context, this.recorder);
+      this.recordingInputLatencySec = io.inputLatencySec;
+      this.recordingOutputLatencySec = io.outputLatencySec;
+      if (__DEV__) {
+        console.log(
+          `[audio] ioLatency measured=${io.measured} ` +
+            `in=${(io.inputLatencySec * 1000).toFixed(1)}ms ` +
+            `out=${(io.outputLatencySec * 1000).toFixed(1)}ms`
+        );
+      }
+    } catch (error) {
+      this.detachRecorderFromGraph();
+      throw error;
+    }
+  }
+
   private async configureForPlayback(): Promise<void> {
     await this.applySessionMode('playback');
   }
@@ -978,6 +1065,7 @@ export class MemoAudioEngine {
 
   /** Close AudioContext and drop mix/metronome nodes so they cannot outlive it. */
   private async closeContextAndDisposeGraph(): Promise<void> {
+    this.detachRecorderFromGraph();
     if (this.context) {
       const context = this.context;
       this.context = null;
@@ -3035,6 +3123,7 @@ export class MemoAudioEngine {
     this.clearRecordingSampleRateState();
 
     if (this.recorder) {
+      this.detachRecorderFromGraph();
       try {
         this.recorder.clearOnAudioReady();
         this.recorder.stop();
@@ -3071,7 +3160,7 @@ export class MemoAudioEngine {
         bufferLength: callbackConfig.bufferLength,
         channelCount: 1,
       },
-      ({ buffer }) => {
+      ({ buffer, when }) => {
         const channelData = buffer.getChannelData(0);
         const bufferEndSec = this.recorder?.getCurrentDuration() ?? 0;
         const bufferStartSec = Math.max(
@@ -3084,6 +3173,17 @@ export class MemoAudioEngine {
           callbackConfig.sampleRate,
           this.recordingPeaksBuffer
         );
+        this.recordingFramesDelivered += channelData.length;
+        if (this.context) {
+          this.recordingCaptureOriginContextWhen = updateCaptureOriginFromBuffer({
+            previousOrigin: this.recordingCaptureOriginContextWhen,
+            contextTimeAtDelivery: this.context.currentTime,
+            framesDeliveredIncludingThis: this.recordingFramesDelivered,
+            bufferFrameCount: channelData.length,
+            sampleRate: callbackConfig.sampleRate,
+            eventWhen: when,
+          });
+        }
       }
     );
 
@@ -3163,6 +3263,7 @@ export class MemoAudioEngine {
       const context = await this.ensureRecordingContext({ sessionReady: true });
       this.syncMixGraph(context);
       this.applyPreparedMonitorMixGain();
+      await this.attachRecorderToRecordingContext(context);
 
       this.recordingPlaybackBuffers.clear();
       if (monitorMix && this.loadedLayers.length > 0) {
@@ -3248,6 +3349,8 @@ export class MemoAudioEngine {
 
     this.recordingCueContextWhen = 0;
     this.recordingRecorderStartedAtContextWhen = 0;
+    this.recordingCaptureOriginContextWhen = 0;
+    this.recordingFramesDelivered = 0;
 
     const monitorMix = options?.monitorMix ?? this.preparedMonitorMix;
     const monitorStartTime = options?.monitorStartTime ?? 0;
@@ -3434,6 +3537,7 @@ export class MemoAudioEngine {
     const startResult = this.recorder.start();
 
     if (startResult.status === 'error') {
+      this.detachRecorderFromGraph();
       this.recorder.clearOnAudioReady();
       this.recorder = null;
       this.recordingPrepared = false;
@@ -3441,6 +3545,8 @@ export class MemoAudioEngine {
       this.monitorSilentLayerId = null;
       this.recordingCueContextWhen = 0;
       this.recordingRecorderStartedAtContextWhen = 0;
+      this.recordingCaptureOriginContextWhen = 0;
+      this.recordingFramesDelivered = 0;
       this.recordingCaptureStarted = false;
       this.invalidateAndStopSources();
       throw new Error(startResult.message);
@@ -3563,6 +3669,7 @@ export class MemoAudioEngine {
   /** Clear prepared recorder/warmup without setting abort (internal helper). */
   private clearPreparedRecordingState(): void {
     if (this.recorder) {
+      this.detachRecorderFromGraph();
       try {
         this.recorder.clearOnAudioReady();
         this.recorder.stop();
@@ -3584,6 +3691,10 @@ export class MemoAudioEngine {
     this.recordingMonitorPath = 'headphones';
     this.recordingCueContextWhen = 0;
     this.recordingRecorderStartedAtContextWhen = 0;
+    this.recordingCaptureOriginContextWhen = 0;
+    this.recordingFramesDelivered = 0;
+    this.recordingInputLatencySec = 0;
+    this.recordingOutputLatencySec = 0;
     this.recordingCaptureStarted = false;
     this.clearRecordingSampleRateState();
     this.invalidateAndStopSources();
@@ -3594,6 +3705,7 @@ export class MemoAudioEngine {
       this.clearRecordingTimer();
       this.setRecordingInterruptionObservation(false);
       if (this.recorder) {
+        this.detachRecorderFromGraph();
         this.recorder.clearOnAudioReady();
         this.recorder.stop();
         this.recorder = null;
@@ -3610,6 +3722,10 @@ export class MemoAudioEngine {
       this.recordingMonitorPath = 'headphones';
       this.recordingCueContextWhen = 0;
       this.recordingRecorderStartedAtContextWhen = 0;
+      this.recordingCaptureOriginContextWhen = 0;
+      this.recordingFramesDelivered = 0;
+      this.recordingInputLatencySec = 0;
+      this.recordingOutputLatencySec = 0;
       this.recordingCaptureStarted = false;
       this.clearRecordingSampleRateState();
       await this.resetPlaybackGraph();
@@ -3645,8 +3761,20 @@ export class MemoAudioEngine {
         this.recorder.getCurrentDuration()
       );
       const peaks = this.toAbsolutePeaks(trimmed);
+      const measuredCueLeadSec = this.getMeasuredCueLeadSec();
+      const io = this.context
+        ? readRecordingIoLatency(this.context, this.recorder)
+        : {
+            inputLatencySec: this.recordingInputLatencySec,
+            outputLatencySec: this.recordingOutputLatencySec,
+            measured: false,
+          };
+      const inputLatencySec = io.inputLatencySec || this.recordingInputLatencySec;
+      const outputLatencySec =
+        io.outputLatencySec || this.recordingOutputLatencySec;
       this.recorder.clearOnAudioReady();
       const result = this.recorder.stop();
+      this.detachRecorderFromGraph();
       this.recorder = null;
       this.recordingPeaksBuffer = [];
 
@@ -3655,15 +3783,6 @@ export class MemoAudioEngine {
       const wasSoftwareMonitoredCue = wasMonitorMix || this.metronomeOnlyActive;
       const cueOutputRoute = this.recordingCueOutputRoute;
       const monitorPath = this.recordingMonitorPath;
-      const measuredCueLeadSec =
-        this.recordingCueContextWhen > 0 &&
-        this.recordingRecorderStartedAtContextWhen > 0
-          ? Math.max(
-              0,
-              this.recordingCueContextWhen -
-                this.recordingRecorderStartedAtContextWhen
-            )
-          : 0;
       const usedWavFormat = this.recordingUsedWavFormat;
       this.stopMetronomeSources();
       this.stopActiveSources();
@@ -3682,6 +3801,10 @@ export class MemoAudioEngine {
       this.recordingMonitorPath = 'headphones';
       this.recordingCueContextWhen = 0;
       this.recordingRecorderStartedAtContextWhen = 0;
+      this.recordingCaptureOriginContextWhen = 0;
+      this.recordingFramesDelivered = 0;
+      this.recordingInputLatencySec = 0;
+      this.recordingOutputLatencySec = 0;
       this.recordingCaptureStarted = false;
       this.emit({
         isRecording: false,
@@ -3704,6 +3827,8 @@ export class MemoAudioEngine {
         console.log(
           `[audio] capture cue route=${cueOutputRoute} path=${monitorPath} ` +
             `measuredLead=${(measuredCueLeadSec * 1000).toFixed(1)}ms ` +
+            `in=${(inputLatencySec * 1000).toFixed(1)}ms ` +
+            `out=${(outputLatencySec * 1000).toFixed(1)}ms ` +
             `softwareCue=${wasSoftwareMonitoredCue}`
         );
       }
@@ -3717,6 +3842,8 @@ export class MemoAudioEngine {
         cueOutputRoute,
         monitorPath,
         measuredCueLeadSec,
+        inputLatencySec,
+        outputLatencySec,
         recorderDuration: result.duration,
         usedWavFormat,
       };

@@ -5,10 +5,10 @@ import { AppState } from 'react-native';
 import { loadMemoIntoEngine } from '@/src/audio/loadMemoIntoEngine';
 import type { MemoAudioEngine } from '@/src/audio/MemoAudioEngine';
 import { getRecordingLatencySkipSeconds } from '@/src/audio/recordingLatency';
+import { shouldUseCapturedPeaks } from '@/src/audio/waveform';
 import { notifyLibraryChanged } from '@/src/recording/memoUpdateEvents';
 import {
   addStackedLayer,
-  alignStackedLayer,
   deleteMemo,
   ensureWaveformPeaks,
   getMemo,
@@ -45,7 +45,6 @@ export type RecordingSaveResult = {
 export type RecordingSavePhase =
   | 'processing'
   | 'saving'
-  | 'aligning'
   | 'finalizing';
 
 export type DiscardUnfinishedResult = {
@@ -259,10 +258,8 @@ export type StopAndSaveOptions = {
 /**
  * Stop capture, persist the take, and reload the engine.
  * Always defers playback-session restore until after file persist so
- * `onCaptureComplete` can exit recording layout without waiting on graph reset
- * or stack PCM alignment. Stack path notifies after coarse persist, then
- * awaits fine-align + peak reconcile (final notify) before graph restore —
- * still inside `saveInFlight` so the next record waits.
+ * `onCaptureComplete` can exit recording layout without waiting on graph reset.
+ * Placement uses measured I/O latency (Logic-style); no post-record PCM align.
  */
 export async function stopAndSave(
   engine: MemoAudioEngine,
@@ -281,7 +278,7 @@ export async function stopAndSave(
       const isBackground = AppState.currentState !== 'active';
 
       const capture = await engine.stopRecorderCapture();
-      // Exit recording layout before finalize/PCM align/graph restore.
+      // Exit recording layout before finalize/graph restore.
       options?.onCaptureComplete?.();
 
       const currentSession = getSession() ?? (await ensureSessionForStop());
@@ -321,6 +318,8 @@ export async function stopAndSave(
         cueRoute,
         monitorPath,
         measuredCueLeadSec,
+        inputLatencySec: capture.inputLatencySec,
+        outputLatencySec: capture.outputLatencySec,
       };
       // Single skip value for replace hole + PCM — never re-derive separately.
       const replacementSkipSeconds = getRecordingLatencySkipSeconds(latencyOptions);
@@ -388,37 +387,15 @@ export async function stopAndSave(
 
       clearSession();
 
-      if (wasStackMode) {
-        // Show the new layer immediately (before PCM align / peak reconcile).
-        notifyListeners(result);
-
-        // Fine-align after first paint so stop lag is not blocked on XCorr.
-        if (softwareCue === true && activeLayerId) {
-          notifySaveProgress('aligning');
-          const aligned = await alignStackedLayer(updated.id, activeLayerId);
-          if (aligned) {
-            updated = aligned;
-          }
-        }
-
-        // Same peak/duration reconcile as loadMemo — fixes stretched live peaks
-        // without requiring close/reopen.
+      const skipPeakReconcile = shouldUseCapturedPeaks(peaks, duration);
+      if (!skipPeakReconcile) {
         notifySaveProgress('finalizing');
         updated = await ensureWaveformPeaks(updated, {
           onlyLayerIds: activeLayerId ? [activeLayerId] : undefined,
         });
         result.memo = updated;
-        notifyListeners(result);
-      } else {
-        // First take / replace: reconcile before the single notify so Track 1
-        // cannot ship stretched live peaks (same invariant as reopen).
-        notifySaveProgress('finalizing');
-        updated = await ensureWaveformPeaks(updated, {
-          onlyLayerIds: activeLayerId ? [activeLayerId] : undefined,
-        });
-        result.memo = updated;
-        notifyListeners(result);
       }
+      notifyListeners(result);
 
       if (isBackground) {
         engine.scheduleDeferredEngineReload(

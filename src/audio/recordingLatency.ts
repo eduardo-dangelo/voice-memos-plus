@@ -1,3 +1,4 @@
+import { isUsableLatencySec } from '@/src/audio/ioLatency';
 import { mergeLayerEffects } from '@/src/audio/layerEffects';
 import type { Layer } from '@/src/storage/types';
 import { clampLayerStartTime, getLayerEffects } from '@/src/storage/types';
@@ -70,10 +71,9 @@ const SEALED_HEADPHONE_CATEGORIES = new Set([
 
 /**
  * Per-route software-cue compensation (seconds).
+ * Fallback only when measured I/O latency is unavailable.
  * Wired tuned on-device; bluetooth is a starting point (~130ms above wired)
  * for A2DP stacks — raise/lower in ~20ms steps after clap/metro tests.
- * Speaker matches wired until measured separately (fallback only; speakerBleed
- * uses wake-only trim).
  */
 export const SOFTWARE_CUE_COMPENSATION_BY_ROUTE: Record<CueOutputRoute, number> =
   {
@@ -89,6 +89,8 @@ export const SOFTWARE_CUE_OUTPUT_COMPENSATION_SEC =
 /** Clamp measured AudioContext lead to a sane cue window. */
 const MEASURED_CUE_LEAD_MIN_SEC = 0;
 const MEASURED_CUE_LEAD_MAX_SEC = 0.5;
+/** Cap summed hardware I/O so a bad native read cannot wipe the take. */
+const MEASURED_IO_MAX_SEC = 0.75;
 
 /** Classify iOS output category into a cue-compensation route. Defaults to wired. */
 export function classifyCueOutputRoute(
@@ -176,10 +178,14 @@ export function getSoftwareCueCompensationSec(route: CueOutputRoute): number {
 export type RecordingLatencySkipOptions = {
   softwareCue?: boolean;
   cueRoute?: CueOutputRoute;
-  /** Measured AudioContext lead from recorder start to first scheduled cue. */
+  /** Measured AudioContext lead from capture origin to first scheduled cue. */
   measuredCueLeadSec?: number;
-  /** How cues were heard; speakerBleed uses wake-only when software cues ran. */
+  /** How cues were heard (logging / ducking); skip formula no longer branches on it. */
   monitorPath?: MonitorPath;
+  /** Built-in mic input latency (seconds). */
+  inputLatencySec?: number;
+  /** Cue-output latency (seconds). */
+  outputLatencySec?: number;
 };
 
 function clampMeasuredCueLeadSec(value: number): number {
@@ -193,8 +199,11 @@ function clampMeasuredCueLeadSec(value: number): number {
 }
 
 /**
- * Shared wake(+cue) seconds for first/stack trimIn, replace PCM skip, and live
- * waveform lead. Keep all three consumers on this single helper.
+ * Shared wake(+I/O+commit) seconds for first/stack trimIn, replace PCM skip,
+ * and live waveform lead. Keep all three consumers on this single helper.
+ *
+ * Logic placement: playhead - (outputLatency + inputLatency + commitLead).
+ * Route constants (150/280 ms) are fallback only when hardware reads are 0.
  */
 export function getRecordingLatencySkipSeconds(
   options?: RecordingLatencySkipOptions
@@ -204,36 +213,35 @@ export function getRecordingLatencySkipSeconds(
     return wake;
   }
 
-  const measured =
+  const commitLead =
     options.measuredCueLeadSec != null
       ? clampMeasuredCueLeadSec(options.measuredCueLeadSec)
-      : null;
-  const measuredOrZero =
-    measured != null && measured > 0.001 ? measured : 0;
+      : 0;
+  const measuredIo = Math.min(
+    MEASURED_IO_MAX_SEC,
+    (isUsableLatencySec(options.inputLatencySec)
+      ? options.inputLatencySec
+      : 0) +
+      (isUsableLatencySec(options.outputLatencySec)
+        ? options.outputLatencySec
+        : 0)
+  );
 
-  const monitorPath = options.monitorPath ?? 'headphones';
-  // Open-speaker bleed: never apply the headphones route constant (~150ms) —
-  // that double-counts acoustic capture. Still fold measured commit lead so
-  // stacked takes share the same file offset for identical clicks.
-  if (monitorPath === 'speakerBleed') {
-    return wake + measuredOrZero;
+  if (measuredIo > 0.001) {
+    return wake + commitLead + measuredIo;
   }
 
-  // Headphones: route constant was tuned including typical commit lead —
-  // do not also add measuredCueLeadSec (over-trims). Measured is logged for DEV.
   const cueRoute = options.cueRoute ?? 'wired';
   if (
     typeof __DEV__ !== 'undefined' &&
-    __DEV__ &&
-    measured != null &&
-    measured > 0.001
+    __DEV__
   ) {
     console.log(
-      `[audio] headphones measuredCueLead=${(measured * 1000).toFixed(1)}ms ` +
-        `(not added to wake+route trim)`
+      `[audio] latency skip fallback route=${cueRoute} ` +
+        `commitLead=${(commitLead * 1000).toFixed(1)}ms`
     );
   }
-  return wake + getSoftwareCueCompensationSec(cueRoute);
+  return wake + commitLead + getSoftwareCueCompensationSec(cueRoute);
 }
 
 /** Seconds to skip at the start of a replace-splice replacement buffer. */
@@ -247,6 +255,8 @@ export function getRecordingReplacementSkipSeconds(
     cueRoute: route,
     measuredCueLeadSec: options?.measuredCueLeadSec,
     monitorPath: options?.monitorPath,
+    inputLatencySec: options?.inputLatencySec,
+    outputLatencySec: options?.outputLatencySec,
   });
 }
 
@@ -254,8 +264,8 @@ export type RecordingLatencyTrimOptions = RecordingLatencySkipOptions;
 
 /**
  * Apply wake trim and, for software-cued takes, pull the take earlier via
- * startTime while folding wake+cue into trimIn so the active region starts
- * on the session timeline (DAW-style overdub latency compensation).
+ * startTime while folding wake+I/O+commit into trimIn so the active region
+ * starts on the session timeline (DAW-style overdub latency compensation).
  */
 export function applyRecordingIoLatencyTrim(
   layer: Layer,
@@ -288,7 +298,7 @@ export function applyRecordingIoLatencyTrim(
     console.log(
       `[audio] latency trim route=${cueRoute} path=${monitorPath} ` +
         `wake=${RECORDING_WAKE_TRIM_SEC.toFixed(3)}s ` +
-        `cue=${cuePart.toFixed(3)}s trimIn=${trimIn.toFixed(3)}s ` +
+        `io=${cuePart.toFixed(3)}s trimIn=${trimIn.toFixed(3)}s ` +
         `startTime=${layer.startTime.toFixed(3)}s activeStart=${activeStart.toFixed(3)}s`
     );
   }

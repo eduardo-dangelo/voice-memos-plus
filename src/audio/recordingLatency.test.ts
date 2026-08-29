@@ -1,6 +1,17 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
+/*
+ * Device clap/metro checklist (after native rebuild):
+ * - First take with metronome on wired headphones: downbeat lands on bar 1.
+ * - Stack a second take at 0: transients lock without Aligning… spinner.
+ * - Replace a middle region: splice in-time, no extra hole from skip mismatch.
+ * - Precount sound/silent/off still commits on the downbeat.
+ * - AirPods output + iPhone mic (not HFP): pin holds; bluetooth fallback only
+ *   if AVAudioSession latencies read as 0.
+ * - Lock-screen stop still saves; next record is not blocked.
+ */
+
 import {
   applyRecordingIoLatencyTrim,
   classifyCueOutputRoute,
@@ -98,9 +109,9 @@ describe('getSoftwareCueCompensationSec', () => {
   });
 });
 
-const WIRED_SKIP =
+const WIRED_FALLBACK =
   RECORDING_WAKE_TRIM_SEC + SOFTWARE_CUE_COMPENSATION_BY_ROUTE.wired;
-const BLUETOOTH_SKIP =
+const BLUETOOTH_FALLBACK =
   RECORDING_WAKE_TRIM_SEC + SOFTWARE_CUE_COMPENSATION_BY_ROUTE.bluetooth;
 
 describe('getRecordingLatencySkipSeconds', () => {
@@ -114,63 +125,64 @@ describe('getRecordingLatencySkipSeconds', () => {
         softwareCue: false,
         cueRoute: 'bluetooth',
         measuredCueLeadSec: 0.2,
+        inputLatencySec: 0.01,
+        outputLatencySec: 0.08,
       }),
       RECORDING_WAKE_TRIM_SEC
     );
   });
 
-  it('uses route constant for headphones when measured lead missing', () => {
+  it('uses measured I/O plus commit lead (Logic placement)', () => {
     assert.equal(
       getRecordingLatencySkipSeconds({
         softwareCue: true,
         cueRoute: 'wired',
         monitorPath: 'headphones',
+        measuredCueLeadSec: 0.01,
+        inputLatencySec: 0.012,
+        outputLatencySec: 0.08,
       }),
-      WIRED_SKIP
-    );
-    assert.equal(
-      getRecordingLatencySkipSeconds({
-        softwareCue: true,
-        cueRoute: 'bluetooth',
-        monitorPath: 'headphones',
-      }),
-      BLUETOOTH_SKIP
+      RECORDING_WAKE_TRIM_SEC + 0.01 + 0.012 + 0.08
     );
   });
 
-  it('uses wake+route only for headphones (measured lead not additive)', () => {
-    assert.equal(
-      getRecordingLatencySkipSeconds({
-        softwareCue: true,
-        cueRoute: 'wired',
-        monitorPath: 'headphones',
-        measuredCueLeadSec: 0.12,
-      }),
-      WIRED_SKIP
-    );
-    assert.equal(
-      getRecordingLatencySkipSeconds({
-        softwareCue: true,
-        cueRoute: 'bluetooth',
-        monitorPath: 'headphones',
-        measuredCueLeadSec: 0.08,
-      }),
-      BLUETOOTH_SKIP
-    );
-  });
-
-  it('uses wake-only for speakerBleed when measured lead is missing', () => {
+  it('uses the same measured formula for speakerBleed', () => {
     assert.equal(
       getRecordingLatencySkipSeconds({
         softwareCue: true,
         cueRoute: 'speaker',
         monitorPath: 'speakerBleed',
+        measuredCueLeadSec: 0.01,
+        inputLatencySec: 0.012,
+        outputLatencySec: 0.08,
       }),
-      RECORDING_WAKE_TRIM_SEC
+      RECORDING_WAKE_TRIM_SEC + 0.01 + 0.012 + 0.08
     );
   });
 
-  it('folds measured commit lead on speakerBleed without route constant', () => {
+  it('falls back to wake+commit+route when I/O is missing', () => {
+    assert.ok(
+      Math.abs(
+        getRecordingLatencySkipSeconds({
+          softwareCue: true,
+          cueRoute: 'wired',
+          monitorPath: 'headphones',
+          measuredCueLeadSec: 0.02,
+        }) -
+          (WIRED_FALLBACK + 0.02)
+      ) < 1e-9
+    );
+    assert.equal(
+      getRecordingLatencySkipSeconds({
+        softwareCue: true,
+        cueRoute: 'bluetooth',
+        monitorPath: 'headphones',
+      }),
+      BLUETOOTH_FALLBACK
+    );
+  });
+
+  it('falls back to wake+route for speakerBleed when I/O is missing', () => {
     assert.equal(
       getRecordingLatencySkipSeconds({
         softwareCue: true,
@@ -178,19 +190,8 @@ describe('getRecordingLatencySkipSeconds', () => {
         monitorPath: 'speakerBleed',
         measuredCueLeadSec: 0.03,
       }),
-      RECORDING_WAKE_TRIM_SEC + 0.03
+      RECORDING_WAKE_TRIM_SEC + 0.03 + SOFTWARE_CUE_COMPENSATION_BY_ROUTE.speaker
     );
-  });
-
-  it('never applies the 150ms speaker route constant on speakerBleed', () => {
-    const skip = getRecordingLatencySkipSeconds({
-      softwareCue: true,
-      cueRoute: 'speaker',
-      monitorPath: 'speakerBleed',
-      measuredCueLeadSec: 0.01,
-    });
-    assert.ok(skip < 0.05);
-    assert.ok(skip < SOFTWARE_CUE_COMPENSATION_BY_ROUTE.speaker);
   });
 });
 
@@ -204,64 +205,60 @@ describe('getRecordingReplacementSkipSeconds', () => {
   });
 
   it('adds wired cue compensation by default', () => {
-    assert.equal(getRecordingReplacementSkipSeconds(true), WIRED_SKIP);
-    assert.equal(getRecordingReplacementSkipSeconds(true, 'wired'), WIRED_SKIP);
+    assert.equal(getRecordingReplacementSkipSeconds(true), WIRED_FALLBACK);
+    assert.equal(getRecordingReplacementSkipSeconds(true, 'wired'), WIRED_FALLBACK);
   });
 
   it('adds bluetooth cue compensation when requested', () => {
     assert.equal(
       getRecordingReplacementSkipSeconds(true, 'bluetooth'),
-      BLUETOOTH_SKIP
+      BLUETOOTH_FALLBACK
     );
   });
 
-  it('honors speakerBleed measured lead via options', () => {
+  it('honors measured I/O via options', () => {
     assert.equal(
-      getRecordingReplacementSkipSeconds(true, 'speaker', {
-        monitorPath: 'speakerBleed',
-        measuredCueLeadSec: 0.025,
+      getRecordingReplacementSkipSeconds(true, 'wired', {
+        measuredCueLeadSec: 0.005,
+        inputLatencySec: 0.01,
+        outputLatencySec: 0.05,
       }),
-      RECORDING_WAKE_TRIM_SEC + 0.025
-    );
-  });
-
-  it('speakerBleed without measured lead stays wake-only', () => {
-    assert.equal(
-      getRecordingReplacementSkipSeconds(true, 'speaker', {
-        monitorPath: 'speakerBleed',
-      }),
-      RECORDING_WAKE_TRIM_SEC
+      RECORDING_WAKE_TRIM_SEC + 0.005 + 0.01 + 0.05
     );
   });
 });
 
 describe('applyRecordingIoLatencyTrim', () => {
-  it('folds wake+wired cue into trimIn and pulls startTime', () => {
+  it('folds measured I/O into trimIn and pulls startTime', () => {
     const layer = makeLayer();
+    const skip = RECORDING_WAKE_TRIM_SEC + 0.01 + 0.012 + 0.08;
     applyRecordingIoLatencyTrim(layer, {
       softwareCue: true,
       cueRoute: 'wired',
       monitorPath: 'headphones',
+      measuredCueLeadSec: 0.01,
+      inputLatencySec: 0.012,
+      outputLatencySec: 0.08,
     });
-    assert.equal(layer.effects?.trimIn, WIRED_SKIP);
-    assert.equal(layer.startTime, 4 - WIRED_SKIP);
+    assert.equal(layer.effects?.trimIn, skip);
+    assert.equal(layer.startTime, 4 - skip);
   });
 
-  it('uses larger bluetooth cue compensation', () => {
+  it('uses larger bluetooth fallback when I/O is missing', () => {
     const layer = makeLayer();
     applyRecordingIoLatencyTrim(layer, {
       softwareCue: true,
       cueRoute: 'bluetooth',
       monitorPath: 'headphones',
     });
-    assert.equal(layer.effects?.trimIn, BLUETOOTH_SKIP);
-    assert.equal(layer.startTime, 4 - BLUETOOTH_SKIP);
+    assert.equal(layer.effects?.trimIn, BLUETOOTH_FALLBACK);
+    assert.equal(layer.startTime, 4 - BLUETOOTH_FALLBACK);
   });
 
-  it('defaults missing cueRoute to wired', () => {
+  it('defaults missing cueRoute to wired fallback', () => {
     const layer = makeLayer();
     applyRecordingIoLatencyTrim(layer, { softwareCue: true });
-    assert.equal(layer.effects?.trimIn, WIRED_SKIP);
+    assert.equal(layer.effects?.trimIn, WIRED_FALLBACK);
   });
 
   it('applies wake-only trim without software cues', () => {
@@ -269,29 +266,8 @@ describe('applyRecordingIoLatencyTrim', () => {
     applyRecordingIoLatencyTrim(layer, {
       softwareCue: false,
       cueRoute: 'bluetooth',
-    });
-    assert.equal(layer.effects?.trimIn, RECORDING_WAKE_TRIM_SEC);
-    assert.equal(layer.startTime, 4 - RECORDING_WAKE_TRIM_SEC);
-  });
-
-  it('applies wake+measured on speakerBleed path', () => {
-    const layer = makeLayer();
-    applyRecordingIoLatencyTrim(layer, {
-      softwareCue: true,
-      cueRoute: 'speaker',
-      monitorPath: 'speakerBleed',
-      measuredCueLeadSec: 0.04,
-    });
-    assert.equal(layer.effects?.trimIn, RECORDING_WAKE_TRIM_SEC + 0.04);
-    assert.equal(layer.startTime, 4 - (RECORDING_WAKE_TRIM_SEC + 0.04));
-  });
-
-  it('applies wake-only on speakerBleed when measured lead missing', () => {
-    const layer = makeLayer();
-    applyRecordingIoLatencyTrim(layer, {
-      softwareCue: true,
-      cueRoute: 'speaker',
-      monitorPath: 'speakerBleed',
+      inputLatencySec: 0.01,
+      outputLatencySec: 0.08,
     });
     assert.equal(layer.effects?.trimIn, RECORDING_WAKE_TRIM_SEC);
     assert.equal(layer.startTime, 4 - RECORDING_WAKE_TRIM_SEC);
@@ -303,6 +279,8 @@ describe('applyRecordingIoLatencyTrim', () => {
       softwareCue: true,
       cueRoute: 'wired',
       monitorPath: 'headphones',
+      inputLatencySec: 0.01,
+      outputLatencySec: 0.05,
     });
     const trimIn = layer.effects?.trimIn ?? 0;
     assert.ok(Math.abs(layer.startTime + trimIn - 2) < 1e-9);

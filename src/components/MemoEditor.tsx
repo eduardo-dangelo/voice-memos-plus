@@ -331,7 +331,6 @@ function mergeRecordingSaveIntoMemo(incoming: Memo, current: Memo): Memo {
 const SAVE_PHASE_LABELS: Record<RecordingSavePhase, string> = {
   processing: 'Processing…',
   saving: 'Saving…',
-  aligning: 'Aligning…',
   finalizing: 'Finalizing…',
 };
 
@@ -4235,7 +4234,7 @@ function MemoEditorInner({
       : pendingTimelineTime
     : currentTime;
   const metronomeSettings = liveMetronomeSettings;
-  /** Match post-save latency skip (wake + cue + measured / speakerBleed wake+measured). */
+  /** Match post-save latency skip (wake + I/O + commit lead). */
   const liveLatencyLeadSec = useMemo(
     () =>
       getRecordingLatencySkipSeconds({
@@ -4244,6 +4243,12 @@ function MemoEditorInner({
         monitorPath,
         measuredCueLeadSec: isRecording
           ? engine.getMeasuredCueLeadSec()
+          : undefined,
+        inputLatencySec: isRecording
+          ? engine.getRecordingInputLatencySec()
+          : undefined,
+        outputLatencySec: isRecording
+          ? engine.getRecordingOutputLatencySec()
           : undefined,
       }),
     [

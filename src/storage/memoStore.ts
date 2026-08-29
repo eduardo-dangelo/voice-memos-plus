@@ -770,6 +770,8 @@ export async function addStackedLayer(
     cueRoute: options?.cueRoute,
     measuredCueLeadSec: options?.measuredCueLeadSec,
     monitorPath: options?.monitorPath,
+    inputLatencySec: options?.inputLatencySec,
+    outputLatencySec: options?.outputLatencySec,
   });
 
   memo.layers.push(layer);
@@ -780,9 +782,8 @@ export async function addStackedLayer(
 }
 
 /**
- * Phase E: sample-accurate PCM fine-trim vs an existing layer at the same
- * stack point. Call after {@link addStackedLayer} notify so the UI is not blocked.
- * Never runs on replace (different latency model).
+ * Sample-accurate PCM fine-trim vs an existing layer at the same stack point.
+ * Unused on the save path (Logic I/O placement); kept for tests / manual recovery.
  */
 export async function alignStackedLayer(
   memoId: string,
@@ -873,6 +874,8 @@ export async function replaceLayerSegment(
       {
         measuredCueLeadSec: options?.measuredCueLeadSec,
         monitorPath: options?.monitorPath,
+        inputLatencySec: options?.inputLatencySec,
+        outputLatencySec: options?.outputLatencySec,
       }
     );
 
