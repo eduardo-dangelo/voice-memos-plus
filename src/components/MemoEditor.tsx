@@ -49,6 +49,7 @@ import {
   getPlayableLayersInTimelineOrder,
 } from '@/src/audio/mergeLayersLogic';
 import { getGridSnapIntervalSec, getQuarterIntervalSec } from '@/src/audio/metronome';
+import { estimateMemoNodeCount } from '@/src/audio/performanceBudget';
 import {
   maybeShowPerformanceWarning,
   resetPerformanceWarningState,
@@ -2695,6 +2696,9 @@ function MemoEditorInner({
     }, POST_PRECOUNT_STUCK_MS);
   }, [clearPostPrecountWatchdog, engine, recoverStuckRecordingStart]);
 
+  const performanceWarningLayerCount = memo ? getPlayableLayers(memo).length : 0;
+  const performanceWarningNodeCount = memo ? estimateMemoNodeCount(memo) : 0;
+
   useEffect(() => {
     if (!memo || !hasRecording(memo)) {
       setPerformanceWarningMessage(null);
@@ -2706,7 +2710,7 @@ function MemoEditorInner({
     } else {
       setPerformanceWarningMessage(null);
     }
-  }, [memo?.id]);
+  }, [memo?.id, performanceWarningLayerCount, performanceWarningNodeCount]);
 
   useEffect(() => {
     if (!memo) {
@@ -4987,8 +4991,9 @@ function MemoEditorInner({
         title="Performance may be reduced"
         heroIcon="gauge.with.dots.needle.33percent"
         message={performanceWarningMessage ?? ''}
-        actions="ok"
+        actions="continue"
         onDismiss={() => setPerformanceWarningMessage(null)}
+        onContinue={() => setPerformanceWarningMessage(null)}
       />
       <RecordingPromptDialog
         visible={collapseWarningVisible}

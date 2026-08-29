@@ -30,6 +30,13 @@ export function maybeShowPerformanceWarning(memo: Memo): PerformanceWarningResul
     warnState.nodes = false;
   }
 
+  if (!assessment.shouldWarnLayers) {
+    warnState.layers = false;
+  }
+  if (!assessment.shouldWarnNodes) {
+    warnState.nodes = false;
+  }
+
   const showLayers = assessment.shouldWarnLayers && !warnState.layers;
   const showNodes = assessment.shouldWarnNodes && !warnState.nodes;
 
