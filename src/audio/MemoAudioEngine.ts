@@ -253,6 +253,12 @@ export type EngineState = {
   metronome: MetronomeSettings;
 };
 
+export type PlaybackOptions = {
+  loopRestart?: boolean;
+  /** When false, never schedule click audio during this playback session. Default: follow metronomeSettings.enabled */
+  includeMetronome?: boolean;
+};
+
 type Listener = (state: EngineState) => void;
 
 const initialState: EngineState = {
@@ -328,6 +334,8 @@ export class MemoAudioEngine {
   private metronomeGainContext: AudioContext | null = null;
   private metronomeSources: AudioBufferSourceNode[] = [];
   private metronomeOnlyActive = false;
+  /** Runtime transport flag — list playback passes false without mutating metronome settings. */
+  private playbackIncludeMetronome = true;
   private metronomeScheduledUntil = 0;
   /** AudioContext time corresponding to `metronomeTimelineOrigin`. */
   private metronomeAudioOrigin = 0;
@@ -2043,7 +2051,7 @@ export class MemoAudioEngine {
   }
 
   private shouldPlayMetronome(): boolean {
-    if (!this.metronomeSettings.enabled) {
+    if (!this.metronomeSettings.enabled || !this.playbackIncludeMetronome) {
       return false;
     }
     return this.playbackContextStartWhen > 0 || this.state.isPlaying;
@@ -3954,7 +3962,7 @@ export class MemoAudioEngine {
     return this.finalizeRecordingAfterStop(capture, options);
   }
 
-  async play(options?: { loopRestart?: boolean }): Promise<void> {
+  async play(options?: PlaybackOptions): Promise<void> {
     this.stopMetronomePreview();
     // Only coalesce onto a still-valid in-flight play. pause()/seek bump playRequestId
     // without clearing playInFlight; coalescing onto that cancelled promise would no-op.
@@ -3980,7 +3988,7 @@ export class MemoAudioEngine {
       }
     }
 
-    const playPromise = this.runPlay(requestId);
+    const playPromise = this.runPlay(requestId, options);
     this.playInFlight = playPromise;
     this.playInFlightRequestId = requestId;
     try {
@@ -3992,13 +4000,16 @@ export class MemoAudioEngine {
     }
   }
 
-  private async runPlay(requestId: number): Promise<void> {
+  private async runPlay(requestId: number, options?: PlaybackOptions): Promise<void> {
     if (this.loadedLayers.length === 0) {
       return;
     }
     if (this.state.isRecording) {
       return;
     }
+
+    this.playbackIncludeMetronome =
+      options?.includeMetronome ?? this.metronomeSettings.enabled;
 
     try {
       // Do not arm playback while a stop/save is still restoring the session.
@@ -4211,7 +4222,7 @@ export class MemoAudioEngine {
     }
   }
 
-  togglePlayback(): Promise<void> {
+  togglePlayback(options?: PlaybackOptions): Promise<void> {
     if (this.state.isPlaying) {
       this.pause();
       return Promise.resolve();
@@ -4232,7 +4243,7 @@ export class MemoAudioEngine {
       }
     }
 
-    return this.play();
+    return this.play(options);
   }
 
   seek(time: number): void {

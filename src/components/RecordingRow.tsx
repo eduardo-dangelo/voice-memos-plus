@@ -148,7 +148,7 @@ function RecordingRowComponent({
       return;
     }
     try {
-      await engine.togglePlayback();
+      await engine.togglePlayback({ includeMetronome: false });
     } catch (error) {
       Alert.alert(
         'Playback failed',
@@ -202,7 +202,7 @@ function RecordingRowComponent({
       return;
     }
     resumeAfterScrubRef.current = false;
-    void engine.play().catch(() => {
+    void engine.play({ includeMetronome: false }).catch(() => {
       // Play may race with a later pause; surface via the play button path if needed.
     });
   };
