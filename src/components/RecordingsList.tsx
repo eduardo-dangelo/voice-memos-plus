@@ -290,6 +290,9 @@ export function RecordingsList({
 
   const openEditor = useCallback(
     (memoId: string) => {
+      if (isTrash) {
+        return;
+      }
       if (layoutMode === 'sidebar' && onSelectMemo) {
         onSelectMemo(memoId);
         return;
@@ -299,7 +302,7 @@ export function RecordingsList({
         params: { id: memoId, backTitle },
       });
     },
-    [backTitle, layoutMode, onSelectMemo]
+    [backTitle, isTrash, layoutMode, onSelectMemo]
   );
 
   const dismissSearch = useCallback(() => {
@@ -547,7 +550,7 @@ export function RecordingsList({
             }
             isTrash={isTrash}
             memo={item}
-            selectOnPress={layoutMode === 'sidebar'}
+            selectOnPress={layoutMode === 'sidebar' && !isTrash}
             selected={selectedIds.has(item.id)}
             selectionMode={selectionMode}
             onDeleteFailed={handleDeleteFailed}

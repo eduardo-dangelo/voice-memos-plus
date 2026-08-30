@@ -2637,6 +2637,12 @@ function MemoEditorInner({
       }
       return;
     }
+    if (next.deletedAt || isMemoInTrash(id)) {
+      setLoading(false);
+      Alert.alert('Recording unavailable', 'This recording is in Recently Deleted.');
+      onDismiss();
+      return;
+    }
     const loaded = hasRecording(next) ? await ensureWaveformPeaks(next) : next;
     if (isStale()) {
       return;

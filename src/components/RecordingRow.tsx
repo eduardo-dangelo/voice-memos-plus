@@ -16,6 +16,7 @@ import {
   deleteMemo,
   duplicateMemo,
   permanentlyDeleteMemo,
+  recoverMemo,
   updateTitle,
 } from '@/src/storage/memoStore';
 import { getMemoPlaybackTimeline } from '@/src/storage/paths';
@@ -219,7 +220,7 @@ function RecordingRowComponent({
   };
 
   const titlePressActiveRef = useRef(false);
-  const allowTitleRename = !selectionMode && !selectOnPress;
+  const allowTitleRename = !selectionMode && !selectOnPress && !isTrash;
 
   const handleTitleLongPress = () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -227,10 +228,20 @@ function RecordingRowComponent({
   };
 
   const handleRowLongPress = () => {
-    if (titlePressActiveRef.current) {
+    if (titlePressActiveRef.current || isTrash) {
       return;
     }
     onOpenEditor();
+  };
+
+  const handleRecover = () => {
+    if (isActive) {
+      engine.unload();
+    }
+    onDeleted(memo.id);
+    void recoverMemo(memo.id).catch(() => {
+      onDeleteFailed();
+    });
   };
 
   const confirmDelete = () => {
@@ -280,7 +291,7 @@ function RecordingRowComponent({
       <View style={styles.row}>
         <Pressable
           onPress={handlePrimaryPress}
-          onLongPress={selectOnPress ? undefined : handleRowLongPress}
+          onLongPress={isTrash || selectOnPress ? undefined : handleRowLongPress}
           style={styles.rowMain}>
           {selectionMode ? (
             <SymbolView
@@ -322,21 +333,36 @@ function RecordingRowComponent({
           </View>
         </Pressable>
         {!selectionMode ? (
-          <MemoOptionsMenu
-            includeMoveToFolder={allowMoveToFolder}
-            includeShare={playable}
-            onShare={handleShare}
-            onRename={handleRename}
-            onEditRecording={onOpenEditor}
-            onMoveToFolder={() =>
-              void showMoveToFolderActionSheet(memo.id, memo.folderId, onUpdated)
-            }
-            onDuplicate={() => void duplicateMemo(memo.id).then(onUpdated)}
-            onDelete={confirmDelete}>
-            <View style={styles.moreButton}>
-              <SymbolView name={{ ios: 'ellipsis' }} size={22} tintColor={colors.secondaryText} />
-            </View>
-          </MemoOptionsMenu>
+          isTrash ? (
+            <MemoOptionsMenu
+              deleteTitle="Delete Permanently"
+              includeRecover
+              onDelete={confirmDelete}
+              onDuplicate={() => {}}
+              onRecover={handleRecover}
+              onRename={() => {}}
+              onShare={() => {}}>
+              <View style={styles.moreButton}>
+                <SymbolView name={{ ios: 'ellipsis' }} size={22} tintColor={colors.secondaryText} />
+              </View>
+            </MemoOptionsMenu>
+          ) : (
+            <MemoOptionsMenu
+              includeMoveToFolder={allowMoveToFolder}
+              includeShare={playable}
+              onShare={handleShare}
+              onRename={handleRename}
+              onEditRecording={onOpenEditor}
+              onMoveToFolder={() =>
+                void showMoveToFolderActionSheet(memo.id, memo.folderId, onUpdated)
+              }
+              onDuplicate={() => void duplicateMemo(memo.id).then(onUpdated)}
+              onDelete={confirmDelete}>
+              <View style={styles.moreButton}>
+                <SymbolView name={{ ios: 'ellipsis' }} size={22} tintColor={colors.secondaryText} />
+              </View>
+            </MemoOptionsMenu>
+          )
         ) : null}
       </View>
 
@@ -348,7 +374,7 @@ function RecordingRowComponent({
                 currentTime={displayTime}
                 duration={duration}
                 memo={memo}
-                onPress={onOpenEditor}
+                onPress={isTrash ? undefined : onOpenEditor}
                 onScrubEnd={handleMiniScrubEnd}
                 onScrubStart={handleMiniScrubStart}
                 onSeek={handleMiniSeek}
@@ -365,13 +391,27 @@ function RecordingRowComponent({
               onSkipForward={() => void handleSkip(15)}
             />
             <View style={styles.actionRow}>
-              <Pressable
-                accessibilityLabel="Edit Recording"
-                hitSlop={12}
-                onPress={onOpenEditor}
-                style={styles.editButton}>
-                <SymbolView name={{ ios: 'waveform' }} size={22} tintColor={colors.accent} />
-              </Pressable>
+              {isTrash ? (
+                <Pressable
+                  accessibilityLabel="Recover"
+                  hitSlop={12}
+                  onPress={handleRecover}
+                  style={styles.editButton}>
+                  <SymbolView
+                    name={{ ios: 'arrow.uturn.backward' }}
+                    size={22}
+                    tintColor={colors.accent}
+                  />
+                </Pressable>
+              ) : (
+                <Pressable
+                  accessibilityLabel="Edit Recording"
+                  hitSlop={12}
+                  onPress={onOpenEditor}
+                  style={styles.editButton}>
+                  <SymbolView name={{ ios: 'waveform' }} size={22} tintColor={colors.accent} />
+                </Pressable>
+              )}
               <Pressable hitSlop={12} onPress={confirmDelete} style={styles.deleteButton}>
                 <SymbolView name={{ ios: 'trash' }} size={22} tintColor={colors.accent} />
               </Pressable>

@@ -21,10 +21,13 @@ export type MemoOptionsMenuHandlers = {
   onToggleTrackAccordion?: () => void;
   onDuplicate: () => void;
   onRefresh?: () => void;
+  onRecover?: () => void;
   onDelete: () => void;
 };
 
 export type MemoOptionActionFlags = {
+  includeRecover?: boolean;
+  deleteTitle?: string;
   includeEditRecording?: boolean;
   includeMoveToFolder?: boolean;
   includeShare?: boolean;
@@ -56,6 +59,8 @@ export type MemoOptionsMenuProps = MemoOptionsMenuHandlers &
 
 /** Shared action list for native Menu and IconActionSheet call sites. */
 export function buildMemoOptionActions({
+  includeRecover = false,
+  deleteTitle = 'Delete',
   includeEditRecording = true,
   includeMoveToFolder = false,
   includeShare = true,
@@ -70,6 +75,18 @@ export function buildMemoOptionActions({
   trackAccordionEnabled = false,
   includeRefresh = false,
 }: MemoOptionActionFlags = {}): MemoOptionAction[] {
+  if (includeRecover) {
+    return [
+      { id: 'recover', title: 'Recover', systemImage: 'arrow.uturn.backward' },
+      {
+        id: 'delete',
+        title: deleteTitle,
+        systemImage: 'trash',
+        destructive: true,
+      },
+    ];
+  }
+
   const items: MemoOptionAction[] = [];
   if (includeShare) {
     items.push({ id: 'share', title: 'Export', systemImage: 'square.and.arrow.up' });
@@ -122,7 +139,7 @@ export function buildMemoOptionActions({
   }
   items.push({
     id: 'delete',
-    title: 'Delete',
+    title: deleteTitle,
     systemImage: 'trash',
     destructive: true,
   });
@@ -146,6 +163,8 @@ function toMenuActions(items: MemoOptionAction[]): MenuAction[] {
 
 export function MemoOptionsMenu({
   children,
+  includeRecover = false,
+  deleteTitle = 'Delete',
   includeEditRecording = true,
   includeMoveToFolder = false,
   includeShare = true,
@@ -173,6 +192,7 @@ export function MemoOptionsMenu({
   onToggleTrackAccordion,
   onDuplicate,
   onRefresh,
+  onRecover,
   onDelete,
   style,
 }: MemoOptionsMenuProps) {
@@ -180,6 +200,8 @@ export function MemoOptionsMenu({
     (): MenuAction[] =>
       toMenuActions(
         buildMemoOptionActions({
+          includeRecover,
+          deleteTitle,
           includeEditRecording,
           includeMoveToFolder,
           includeShare,
@@ -196,11 +218,13 @@ export function MemoOptionsMenu({
         })
       ),
     [
+      deleteTitle,
       includeEditRecording,
       includeLockTracks,
       includeMergeLayers,
       includeMoveToFolder,
       includeMuteTracks,
+      includeRecover,
       includeRefresh,
       includeShare,
       includeSoloTracks,
@@ -259,6 +283,9 @@ export function MemoOptionsMenu({
             break;
           case 'refresh':
             onRefresh?.();
+            break;
+          case 'recover':
+            onRecover?.();
             break;
           case 'delete':
             onDelete();
