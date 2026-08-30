@@ -55,6 +55,12 @@ import {
   pickActiveLayerAfterDelete,
 } from '@/src/audio/mergeLayersLogic';
 import { getGridSnapIntervalSec, getQuarterIntervalSec } from '@/src/audio/metronome';
+import {
+  getDefaultMoveSnapSelection,
+  getMoveSnapIntervalSec,
+  isMoveSnapSelectionValid,
+  type MoveSnapSelection,
+} from '@/src/audio/moveSnap';
 import { estimateMemoNodeCount } from '@/src/audio/performanceBudget';
 import {
   maybeShowPerformanceWarning,
@@ -627,6 +633,7 @@ function MemoEditorInner({
   const [armedTimelineTime, setArmedTimelineTime] = useState(0);
   const [activeLayerId, setActiveLayerId] = useState<string | null>(null);
   const [activeEditor, setActiveEditor] = useState<EditorTool | null>(null);
+  const [moveSnapSelection, setMoveSnapSelection] = useState<MoveSnapSelection>('off');
   const [savingTrim, setSavingTrim] = useState(false);
   const savingTrimRef = useRef(false);
   const [colorPickerLayerId, setColorPickerLayerId] = useState<string | null>(null);
@@ -978,6 +985,9 @@ function MemoEditorInner({
     };
     editGestureActiveRef.current = false;
     setActiveEditor(tool);
+    if (tool === 'move') {
+      setMoveSnapSelection(getDefaultMoveSnapSelection(liveMetronomeSettingsRef.current));
+    }
   }, []);
 
   const cancelEditDraft = useCallback(async (): Promise<void> => {
@@ -4834,6 +4844,23 @@ function MemoEditorInner({
     [metronomeSettings]
   );
 
+  const moveSnapIntervalSec = useMemo(
+    () => getMoveSnapIntervalSec(metronomeSettings, moveSnapSelection),
+    [metronomeSettings, moveSnapSelection]
+  );
+
+  useEffect(() => {
+    if (activeEditor !== 'move') {
+      return;
+    }
+    setMoveSnapSelection((current) => {
+      if (isMoveSnapSelectionValid(metronomeSettings, current)) {
+        return current;
+      }
+      return getDefaultMoveSnapSelection(metronomeSettings);
+    });
+  }, [activeEditor, metronomeSettings]);
+
   const trimOverlay = useMemo(() => {
     if (
       activeEditor !== 'trim' ||
@@ -4874,14 +4901,14 @@ function MemoEditorInner({
       startTime: activeLayer.startTime,
       trimIn: activeLayerEffects.trimIn,
       onChange: handleLayerStartTimeChange,
-      snapIntervalSec: timelineSnapIntervalSec,
+      snapIntervalSec: moveSnapIntervalSec,
     };
   }, [
     activeEditor,
     activeLayer,
     activeLayerEffects,
     handleLayerStartTimeChange,
-    timelineSnapIntervalSec,
+    moveSnapIntervalSec,
   ]);
 
   const fadeOverlay = useMemo(() => {
@@ -5079,8 +5106,11 @@ function MemoEditorInner({
                 availableTools={availableTools}
                 effects={activeLayerEffects}
                 layerDuration={activeLayer?.duration ?? 0}
+                metronomeSettings={metronomeSettings}
+                moveSnapSelection={moveSnapSelection}
                 visible={showTrackEditor}
                 onEffectsChange={handleEffectsChange}
+                onMoveSnapChange={setMoveSnapSelection}
                 onToolChange={handleEditorToolChange}
               />
             ) : null}

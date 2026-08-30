@@ -2,11 +2,14 @@ import { useEffect, useMemo, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import type { LayerEffects, LayerEffectsChange } from '@/src/audio/layerEffects';
+import type { MoveSnapSelection } from '@/src/audio/moveSnap';
+import type { MetronomeSettings } from '@/src/storage/types';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
 import { EffectCustomDialog, type EffectCustomKind } from './EffectCustomDialog';
 import { DelayEditor } from './editors/DelayEditor';
 import { EQEditor } from './editors/EQEditor';
+import { MoveEditor } from './editors/MoveEditor';
 import { PanEditor } from './editors/PanEditor';
 import { ReverbEditor } from './editors/ReverbEditor';
 import { VolumeEditor } from './editors/VolumeEditor';
@@ -18,7 +21,10 @@ type Props = {
   activeTool: EditorTool | null;
   effects: LayerEffects;
   layerDuration: number;
+  metronomeSettings?: MetronomeSettings;
+  moveSnapSelection?: MoveSnapSelection;
   onEffectsChange: (partial: EffectsChange) => void;
+  onMoveSnapChange?: (selection: MoveSnapSelection) => void;
 };
 
 function effectKindForTool(tool: EditorTool | null): EffectCustomKind | null {
@@ -32,7 +38,10 @@ export function EditorCanvas({
   activeTool,
   effects,
   layerDuration,
+  metronomeSettings,
+  moveSnapSelection,
   onEffectsChange,
+  onMoveSnapChange,
 }: Props) {
   const colors = useVoiceMemosColors();
   const styles = useStyles(colors);
@@ -90,6 +99,13 @@ export function EditorCanvas({
               effects={effects}
               onChange={(eq) => onEffectsChange({ eq })}
               onRequestCustomEdit={() => setCustomDialogVisible(true)}
+            />
+          ) : null}
+          {activeTool === 'move' && metronomeSettings && moveSnapSelection && onMoveSnapChange ? (
+            <MoveEditor
+              selection={moveSnapSelection}
+              settings={metronomeSettings}
+              onChange={onMoveSnapChange}
             />
           ) : null}
         </View>

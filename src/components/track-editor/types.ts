@@ -26,6 +26,7 @@ export const EDITOR_CANVAS_HEIGHT_VOLUME = 78;
 export const EDITOR_CANVAS_HEIGHT_REVERB_COMPACT = 50;
 export const EDITOR_CANVAS_HEIGHT_DELAY_COMPACT = 50;
 export const EDITOR_CANVAS_HEIGHT_EQ_COMPACT = 50;
+export const EDITOR_CANVAS_HEIGHT_MOVE_COMPACT = 50;
 export const EDITOR_STRIP_HEIGHT = 56;
 
 export function getEditorCanvasHeight(tool: EditorTool | null): number {
@@ -34,8 +35,9 @@ export function getEditorCanvasHeight(tool: EditorTool | null): number {
   }
   switch (tool) {
     case 'trim':
-    case 'move':
       return 0;
+    case 'move':
+      return EDITOR_CANVAS_HEIGHT_MOVE_COMPACT;
     case 'reverb':
       return EDITOR_CANVAS_HEIGHT_REVERB_COMPACT;
     case 'delay':
