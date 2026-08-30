@@ -72,6 +72,50 @@ export function getPlayableLayersInTimelineOrder(
 }
 
 /**
+ * Pick the active layer after deleting a track.
+ * When the deleted track was active, selects the next track below in timeline
+ * order, or the track above when deleting the bottom track.
+ */
+export function pickActiveLayerAfterDelete(
+  layersBefore: readonly Layer[],
+  layersAfter: readonly Layer[],
+  deletedLayerId: string,
+  currentActiveId: string | null
+): string | null {
+  const orderedAfter = getPlayableLayersInTimelineOrder(layersAfter);
+  if (orderedAfter.length === 0) {
+    return null;
+  }
+
+  const afterIds = new Set(orderedAfter.map((layer) => layer.id));
+
+  if (currentActiveId !== deletedLayerId) {
+    if (currentActiveId && afterIds.has(currentActiveId)) {
+      return currentActiveId;
+    }
+    return orderedAfter[0]?.id ?? null;
+  }
+
+  const orderedBefore = getPlayableLayersInTimelineOrder(layersBefore);
+  const deletedIndex = orderedBefore.findIndex((layer) => layer.id === deletedLayerId);
+  if (deletedIndex === -1) {
+    return orderedAfter[0]?.id ?? null;
+  }
+
+  const preferBelow = orderedBefore[deletedIndex + 1]?.id;
+  if (preferBelow && afterIds.has(preferBelow)) {
+    return preferBelow;
+  }
+
+  const preferAbove = orderedBefore[deletedIndex - 1]?.id;
+  if (preferAbove && afterIds.has(preferAbove)) {
+    return preferAbove;
+  }
+
+  return orderedAfter[0]?.id ?? null;
+}
+
+/**
  * Other playable tracks available to merge with an anchor (excludes the anchor).
  * Ordered like the timeline (higher `order` first).
  */

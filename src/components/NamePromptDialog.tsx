@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   KeyboardAvoidingView,
   Modal,
@@ -11,7 +12,10 @@ import {
   View,
 } from 'react-native';
 
+import { useColorScheme } from '@/components/useColorScheme';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
+
+const useGlass = isGlassEffectAPIAvailable();
 
 export type NamePromptDialogProps = {
   visible: boolean;
@@ -33,7 +37,8 @@ export function NamePromptDialog({
   onSave,
 }: NamePromptDialogProps) {
   const colors = useVoiceMemosColors();
-  const styles = useStyles(colors);
+  const colorScheme = useColorScheme();
+  const styles = useStyles(colors, colorScheme);
   const inputRef = useRef<TextInput>(null);
   const valueRef = useRef(initialValue);
   const [value, setValue] = useState(initialValue);
@@ -79,12 +84,18 @@ export function NamePromptDialog({
   };
 
   return (
-    <Modal animationType="fade" transparent visible={visible} onRequestClose={onCancel}>
+    <Modal
+      animationType={useGlass ? 'none' : 'fade'}
+      transparent
+      visible={visible}
+      onRequestClose={onCancel}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.keyboard}>
-        <Pressable style={styles.backdrop} onPress={onCancel}>
-          <Pressable style={styles.card} onPress={() => {}}>
+        <Pressable
+          style={[styles.backdrop, useGlass && styles.backdropGlass]}
+          onPress={onCancel}>
+          <DialogCard styles={styles} colorScheme={colorScheme}>
             <Text style={styles.title}>{title}</Text>
             <TextInput
               key={inputInstance}
@@ -112,14 +123,46 @@ export function NamePromptDialog({
                 <Text style={styles.saveText}>{saveLabel}</Text>
               </Pressable>
             </View>
-          </Pressable>
+          </DialogCard>
         </Pressable>
       </KeyboardAvoidingView>
     </Modal>
   );
 }
 
-function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
+function DialogCard({
+  styles,
+  colorScheme,
+  children,
+}: {
+  styles: ReturnType<typeof useStyles>;
+  colorScheme: 'light' | 'dark' | null | undefined;
+  children: ReactNode;
+}) {
+  return (
+    <Pressable style={styles.cardPressable} onPress={() => {}}>
+      {useGlass ? (
+        <GlassView
+          colorScheme={colorScheme === 'dark' ? 'dark' : 'light'}
+          glassEffectStyle="regular"
+          isInteractive
+          style={styles.cardGlass}>
+          {children}
+        </GlassView>
+      ) : (
+        <View style={styles.cardFallback}>{children}</View>
+      )}
+    </Pressable>
+  );
+}
+
+function useStyles(
+  colors: ReturnType<typeof useVoiceMemosColors>,
+  colorScheme: 'light' | 'dark' | null | undefined
+) {
+  const cardSurface =
+    colorScheme === 'dark' ? colors.sheetBackground : colors.background;
+
   return useMemo(
     () =>
       StyleSheet.create({
@@ -133,13 +176,27 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           alignItems: 'center',
           padding: 24,
         },
-        card: {
+        backdropGlass: {
+          backgroundColor:
+            colorScheme === 'dark' ? 'rgba(0, 0, 0, 0.35)' : 'rgba(0, 0, 0, 0.22)',
+        },
+        cardPressable: {
           width: '100%',
           maxWidth: 340,
-          backgroundColor: colors.sheetBackground,
+        },
+        cardGlass: {
+          borderRadius: 20,
+          paddingHorizontal: 20,
+          paddingVertical: 18,
+          alignItems: 'stretch',
+          gap: 14,
+        },
+        cardFallback: {
+          backgroundColor: cardSurface,
           borderRadius: 14,
           paddingHorizontal: 20,
           paddingVertical: 18,
+          alignItems: 'stretch',
           gap: 14,
         },
         title: {
@@ -175,6 +232,6 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           color: colors.accent,
         },
       }),
-    [colors]
+    [cardSurface, colorScheme, colors]
   );
 }

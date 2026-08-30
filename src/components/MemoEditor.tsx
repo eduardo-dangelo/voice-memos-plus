@@ -52,6 +52,7 @@ import {
   canMergeLayers,
   getMergePartnerLayers,
   getPlayableLayersInTimelineOrder,
+  pickActiveLayerAfterDelete,
 } from '@/src/audio/mergeLayersLogic';
 import { getGridSnapIntervalSec, getQuarterIntervalSec } from '@/src/audio/metronome';
 import { estimateMemoNodeCount } from '@/src/audio/performanceBudget';
@@ -1836,11 +1837,16 @@ function MemoEditorInner({
         }
         const seekTime = Math.min(engine.getPlaybackTime(), snapshot.duration);
         const updated = await deleteLayer(snapshot.id, layerId);
+        const nextActiveId = pickActiveLayerAfterDelete(
+          snapshot.layers,
+          updated.layers,
+          layerId,
+          activeLayerIdRef.current
+        );
         memoRef.current = updated;
         setMemo(updated);
-        setActiveLayerId((currentActive) =>
-          currentActive === layerId ? null : currentActive
-        );
+        activeLayerIdRef.current = nextActiveId;
+        setActiveLayerId(nextActiveId);
         setActiveEditor(null);
         await syncEngineWithMemo(engine, updated, seekTime);
       } catch (error) {

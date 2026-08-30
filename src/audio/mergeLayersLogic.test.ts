@@ -7,6 +7,7 @@ import {
   canMergeLayers,
   getMergePartnerLayers,
   getPlayableLayersInTimelineOrder,
+  pickActiveLayerAfterDelete,
   prepareLayersForMix,
   resolveMergeSurvivor,
 } from '@/src/audio/mergeLayersLogic';
@@ -145,5 +146,75 @@ test('buildMergedLayerLabel joins labels with & and puts survivor first', () => 
   assert.equal(
     buildMergedLayerLabel(layers, ['c', 'a']),
     'Track 1 & Track 3'
+  );
+});
+
+test('pickActiveLayerAfterDelete selects track below when deleting active middle track', () => {
+  const layersBefore = [
+    makeLayer('a', 0),
+    makeLayer('b', 1),
+    makeLayer('c', 2),
+  ];
+  const layersAfter = [makeLayer('a', 0), makeLayer('c', 2)];
+  assert.equal(
+    pickActiveLayerAfterDelete(layersBefore, layersAfter, 'b', 'b'),
+    'a'
+  );
+});
+
+test('pickActiveLayerAfterDelete selects track above when deleting active bottom track', () => {
+  const layersBefore = [
+    makeLayer('a', 0),
+    makeLayer('b', 1),
+    makeLayer('c', 2),
+  ];
+  const layersAfter = [makeLayer('a', 0), makeLayer('b', 1)];
+  assert.equal(
+    pickActiveLayerAfterDelete(layersBefore, layersAfter, 'a', 'a'),
+    'b'
+  );
+});
+
+test('pickActiveLayerAfterDelete preserves selection when deleting non-active track', () => {
+  const layersBefore = [
+    makeLayer('a', 0),
+    makeLayer('b', 1),
+    makeLayer('c', 2),
+  ];
+  const layersAfter = [makeLayer('a', 0), makeLayer('c', 2)];
+  assert.equal(
+    pickActiveLayerAfterDelete(layersBefore, layersAfter, 'b', 'c'),
+    'c'
+  );
+});
+
+test('pickActiveLayerAfterDelete falls back to first playable when active was deleted', () => {
+  const layersBefore = [makeLayer('a', 0), makeLayer('b', 1)];
+  const layersAfter = [makeLayer('b', 1)];
+  assert.equal(
+    pickActiveLayerAfterDelete(layersBefore, layersAfter, 'a', 'a'),
+    'b'
+  );
+});
+
+test('pickActiveLayerAfterDelete returns null when no playable layers remain', () => {
+  const layersBefore = [makeLayer('a', 0)];
+  const layersAfter: Layer[] = [];
+  assert.equal(
+    pickActiveLayerAfterDelete(layersBefore, layersAfter, 'a', 'a'),
+    null
+  );
+});
+
+test('pickActiveLayerAfterDelete picks first playable when current active no longer exists', () => {
+  const layersBefore = [
+    makeLayer('a', 0),
+    makeLayer('b', 1),
+    makeLayer('c', 2),
+  ];
+  const layersAfter = [makeLayer('a', 0), makeLayer('c', 2)];
+  assert.equal(
+    pickActiveLayerAfterDelete(layersBefore, layersAfter, 'b', 'missing'),
+    'c'
   );
 });
