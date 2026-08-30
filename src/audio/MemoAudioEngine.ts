@@ -94,6 +94,7 @@ import {
   clearSession,
   getSession,
 } from '@/src/recording/activeRecordingSession';
+import { STALE_LIVE_RECORDING_MIN_DURATION_SEC } from '@/src/recording/recordingStartRecovery';
 import {
   DEFAULT_METRONOME_SETTINGS,
   normalizeMetronomeSettings,
@@ -3712,6 +3713,62 @@ export class MemoAudioEngine {
       return;
     }
 
+    this.clearPreparedRecordingState();
+  }
+
+  /**
+   * Stuck-recovery teardown: bounded-join in-flight prepare/commit, then force-clear
+   * prepared state. Cancels a stale live take when duration never progressed.
+   */
+  async forceAbortRecordingStart(): Promise<void> {
+    this.recordingStartAborted = true;
+
+    const inFlight = this.recordingStartInFlight;
+    if (inFlight) {
+      try {
+        await Promise.race([
+          inFlight,
+          new Promise<void>((_, reject) => {
+            setTimeout(
+              () => reject(new Error('forceAbortRecordingStart join timed out')),
+              CANCEL_PREPARED_JOIN_TIMEOUT_MS
+            );
+          }),
+        ]);
+      } catch {
+        // Continue forced cleanup.
+      }
+    }
+
+    if (this.recordingPrepareInFlight) {
+      try {
+        await Promise.race([
+          this.recordingPrepareInFlight,
+          new Promise<void>((_, reject) => {
+            setTimeout(
+              () => reject(new Error('forceAbortRecordingStart prepare join timed out')),
+              CANCEL_PREPARE_JOIN_TIMEOUT_MS
+            );
+          }),
+        ]);
+      } catch {
+        this.recordingPrepareGeneration += 1;
+        this.recordingPrepareInFlight = null;
+      }
+    }
+
+    this.recordingStartInFlight = null;
+
+    if (this.state.isRecording || this.recordingCaptureStarted) {
+      const duration = this.getRecordingDuration();
+      if (duration >= STALE_LIVE_RECORDING_MIN_DURATION_SEC) {
+        return;
+      }
+      await this.cancelRecording();
+      return;
+    }
+
+    this.recordingCaptureStarted = false;
     this.clearPreparedRecordingState();
   }
 
