@@ -4,7 +4,7 @@ import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 
-import { LIST_ITEM_EXIT, LIST_ITEM_TRANSITION } from '@/src/components/listTransitions';
+import { LIST_ITEM_EXIT } from '@/src/components/listTransitions';
 import { MiniWaveformTracks } from '@/src/components/MiniWaveformTracks';
 import { NamePromptDialog } from '@/src/components/NamePromptDialog';
 
@@ -286,7 +286,6 @@ function RecordingRowComponent({
     <>
       <Animated.View
       exiting={LIST_ITEM_EXIT}
-      layout={LIST_ITEM_TRANSITION}
       style={[styles.container, active && styles.containerActive]}>
       <View style={styles.row}>
         <Pressable
@@ -333,36 +332,40 @@ function RecordingRowComponent({
           </View>
         </Pressable>
         {!selectionMode ? (
-          isTrash ? (
-            <MemoOptionsMenu
-              deleteTitle="Delete Permanently"
-              includeRecover
-              onDelete={confirmDelete}
-              onDuplicate={() => {}}
-              onRecover={handleRecover}
-              onRename={() => {}}
-              onShare={() => {}}>
-              <View style={styles.moreButton}>
-                <SymbolView name={{ ios: 'ellipsis' }} size={22} tintColor={colors.secondaryText} />
-              </View>
-            </MemoOptionsMenu>
-          ) : (
-            <MemoOptionsMenu
-              includeMoveToFolder={allowMoveToFolder}
-              includeShare={playable}
-              onShare={handleShare}
-              onRename={handleRename}
-              onEditRecording={onOpenEditor}
-              onMoveToFolder={() =>
-                void showMoveToFolderActionSheet(memo.id, memo.folderId, onUpdated)
-              }
-              onDuplicate={() => void duplicateMemo(memo.id).then(onUpdated)}
-              onDelete={confirmDelete}>
-              <View style={styles.moreButton}>
-                <SymbolView name={{ ios: 'ellipsis' }} size={22} tintColor={colors.secondaryText} />
-              </View>
-            </MemoOptionsMenu>
-          )
+          <View style={styles.menuSlot}>
+            {isTrash ? (
+              <MemoOptionsMenu
+                deleteTitle="Delete Permanently"
+                includeRecover
+                style={styles.menuHost}
+                onDelete={confirmDelete}
+                onDuplicate={() => {}}
+                onRecover={handleRecover}
+                onRename={() => {}}
+                onShare={() => {}}>
+                <View style={styles.moreButton}>
+                  <SymbolView name={{ ios: 'ellipsis' }} size={22} tintColor={colors.secondaryText} />
+                </View>
+              </MemoOptionsMenu>
+            ) : (
+              <MemoOptionsMenu
+                includeMoveToFolder={allowMoveToFolder}
+                includeShare={playable}
+                style={styles.menuHost}
+                onShare={handleShare}
+                onRename={handleRename}
+                onEditRecording={onOpenEditor}
+                onMoveToFolder={() =>
+                  void showMoveToFolderActionSheet(memo.id, memo.folderId, onUpdated)
+                }
+                onDuplicate={() => void duplicateMemo(memo.id).then(onUpdated)}
+                onDelete={confirmDelete}>
+                <View style={styles.moreButton}>
+                  <SymbolView name={{ ios: 'ellipsis' }} size={22} tintColor={colors.secondaryText} />
+                </View>
+              </MemoOptionsMenu>
+            )}
+          </View>
         ) : null}
       </View>
 
@@ -473,13 +476,24 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           gap: 12,
           minWidth: 0,
         },
+        menuSlot: {
+          flexShrink: 0,
+          width: 44,
+          height: 44,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        menuHost: {
+          width: 44,
+          height: 44,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
         moreButton: {
           width: 44,
           height: 44,
           alignItems: 'center',
           justifyContent: 'center',
-          marginVertical: -10,
-          marginHorizontal: -10,
         },
         meta: {
           flex: 1,
