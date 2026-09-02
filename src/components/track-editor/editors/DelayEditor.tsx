@@ -58,7 +58,12 @@ export function DelayEditor({ effects, onChange, onRequestCustomEdit }: Props) {
   return (
     <View style={styles.container}>
       <View style={styles.presetRow}>
-        <PresetPills options={PRESETS} selectedId={delay.preset} onSelect={handlePreset} />
+        <PresetPills
+          align="center"
+          options={PRESETS}
+          selectedId={delay.preset}
+          onSelect={handlePreset}
+        />
       </View>
     </View>
   );
@@ -70,6 +75,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   presetRow: {
+    width: '100%',
     alignItems: 'center',
+    justifyContent: 'center',
   },
 });

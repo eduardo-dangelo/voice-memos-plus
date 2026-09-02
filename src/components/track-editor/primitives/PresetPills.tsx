@@ -8,7 +8,7 @@ type Props<T extends string> = {
   options: { id: T; label: string }[];
   selectedId: T;
   onSelect: (id: T) => void;
-  align?: 'start' | 'end';
+  align?: 'start' | 'center' | 'end';
   compact?: boolean;
   disabled?: boolean;
 };
@@ -27,10 +27,15 @@ export function PresetPills<T extends string>({
   return (
     <ScrollView
       horizontal
-      style={[styles.scroll, align === 'end' && styles.scrollEnd]}
+      style={[
+        styles.scroll,
+        align === 'center' && styles.scrollCenter,
+        align === 'end' && styles.scrollEnd,
+      ]}
       contentContainerStyle={[
         styles.row,
         compact && styles.rowCompact,
+        align === 'center' && styles.rowCenter,
         align === 'end' && styles.rowEnd,
       ]}
       showsHorizontalScrollIndicator={false}>
@@ -71,6 +76,9 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           flexGrow: 0,
           flexShrink: 1,
         },
+        scrollCenter: {
+          width: '100%',
+        },
         scrollEnd: {
           width: '100%',
         },
@@ -79,6 +87,10 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           alignItems: 'center',
           gap: 8,
           paddingHorizontal: 6,
+        },
+        rowCenter: {
+          flexGrow: 1,
+          justifyContent: 'center',
         },
         rowEnd: {
           flexGrow: 1,

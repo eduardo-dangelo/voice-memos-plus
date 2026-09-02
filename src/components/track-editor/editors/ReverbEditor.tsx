@@ -51,7 +51,12 @@ export function ReverbEditor({ effects, onChange, onRequestCustomEdit }: Props) 
   return (
     <View style={styles.container}>
       <View style={styles.presetRow}>
-        <PresetPills options={PRESETS} selectedId={reverb.preset} onSelect={handlePreset} />
+        <PresetPills
+          align="center"
+          options={PRESETS}
+          selectedId={reverb.preset}
+          onSelect={handlePreset}
+        />
       </View>
     </View>
   );
@@ -63,6 +68,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   presetRow: {
+    width: '100%',
     alignItems: 'center',
+    justifyContent: 'center',
   },
 });

@@ -19,6 +19,7 @@ export function MoveEditor({ settings, selection, onChange }: Props) {
     <View style={styles.container}>
       <View style={styles.presetRow}>
         <PresetPills
+          align="center"
           compact
           options={options}
           selectedId={selection}
@@ -35,6 +36,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   presetRow: {
+    width: '100%',
     alignItems: 'center',
+    justifyContent: 'center',
   },
 });

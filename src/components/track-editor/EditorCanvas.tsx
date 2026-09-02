@@ -47,6 +47,11 @@ export function EditorCanvas({
   const styles = useStyles(colors);
   const canvasHeight = getEditorCanvasHeight(activeTool);
   const volumeCompact = activeTool === 'volume' || activeTool === 'pan';
+  const chipTools =
+    activeTool === 'move' ||
+    activeTool === 'reverb' ||
+    activeTool === 'delay' ||
+    activeTool === 'eq';
   const effectKind = effectKindForTool(activeTool);
   const [customDialogVisible, setCustomDialogVisible] = useState(false);
 
@@ -66,6 +71,7 @@ export function EditorCanvas({
             styles.content,
             { height: canvasHeight },
             effectKind != null && styles.contentEffectsCompact,
+            chipTools && styles.contentChipTools,
             volumeCompact && styles.contentVolumeCompact,
           ]}>
           {activeTool === 'volume' ? (
@@ -133,11 +139,15 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           borderTopColor: colors.separator,
         },
         content: {
+          flex: 1,
           paddingHorizontal: 16,
           paddingVertical: 4,
         },
         contentEffectsCompact: {
           paddingVertical: 2,
+        },
+        contentChipTools: {
+          justifyContent: 'center',
         },
         contentVolumeCompact: {
           paddingVertical: 2,
