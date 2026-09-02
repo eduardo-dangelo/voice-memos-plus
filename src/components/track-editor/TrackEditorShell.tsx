@@ -16,10 +16,10 @@ type Props = {
   effects: LayerEffects;
   layerDuration: number;
   metronomeSettings?: MetronomeSettings;
-  moveSnapSelection?: MoveSnapSelection;
+  editSnapSelection?: MoveSnapSelection;
   onToolChange: (tool: EditorTool | null) => void;
   onEffectsChange: (partial: LayerEffectsChange) => void;
-  onMoveSnapChange?: (selection: MoveSnapSelection) => void;
+  onEditSnapChange?: (selection: MoveSnapSelection) => void;
 };
 
 export function TrackEditorShell({
@@ -29,10 +29,10 @@ export function TrackEditorShell({
   effects,
   layerDuration,
   metronomeSettings,
-  moveSnapSelection,
+  editSnapSelection,
   onToolChange,
   onEffectsChange,
-  onMoveSnapChange,
+  onEditSnapChange,
 }: Props) {
   if (!visible) {
     return null;
@@ -45,9 +45,9 @@ export function TrackEditorShell({
         effects={effects}
         layerDuration={layerDuration}
         metronomeSettings={metronomeSettings}
-        moveSnapSelection={moveSnapSelection}
+        editSnapSelection={editSnapSelection}
         onEffectsChange={onEffectsChange}
-        onMoveSnapChange={onMoveSnapChange}
+        onEditSnapChange={onEditSnapChange}
       />
       <EditorToolStrip
         activeTool={activeTool}

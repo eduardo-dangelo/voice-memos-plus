@@ -8,8 +8,8 @@ import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
 import { EffectCustomDialog, type EffectCustomKind } from './EffectCustomDialog';
 import { DelayEditor } from './editors/DelayEditor';
+import { EditSnapEditor } from './editors/EditSnapEditor';
 import { EQEditor } from './editors/EQEditor';
-import { MoveEditor } from './editors/MoveEditor';
 import { PanEditor } from './editors/PanEditor';
 import { ReverbEditor } from './editors/ReverbEditor';
 import { VolumeEditor } from './editors/VolumeEditor';
@@ -22,9 +22,9 @@ type Props = {
   effects: LayerEffects;
   layerDuration: number;
   metronomeSettings?: MetronomeSettings;
-  moveSnapSelection?: MoveSnapSelection;
+  editSnapSelection?: MoveSnapSelection;
   onEffectsChange: (partial: EffectsChange) => void;
-  onMoveSnapChange?: (selection: MoveSnapSelection) => void;
+  onEditSnapChange?: (selection: MoveSnapSelection) => void;
 };
 
 function effectKindForTool(tool: EditorTool | null): EffectCustomKind | null {
@@ -34,20 +34,25 @@ function effectKindForTool(tool: EditorTool | null): EffectCustomKind | null {
   return null;
 }
 
+function isEditSnapTool(tool: EditorTool | null): tool is 'trim' | 'move' {
+  return tool === 'trim' || tool === 'move';
+}
+
 export function EditorCanvas({
   activeTool,
   effects,
   layerDuration,
   metronomeSettings,
-  moveSnapSelection,
+  editSnapSelection,
   onEffectsChange,
-  onMoveSnapChange,
+  onEditSnapChange,
 }: Props) {
   const colors = useVoiceMemosColors();
   const styles = useStyles(colors);
   const canvasHeight = getEditorCanvasHeight(activeTool);
   const volumeCompact = activeTool === 'volume' || activeTool === 'pan';
   const chipTools =
+    activeTool === 'trim' ||
     activeTool === 'move' ||
     activeTool === 'reverb' ||
     activeTool === 'delay' ||
@@ -107,11 +112,14 @@ export function EditorCanvas({
               onRequestCustomEdit={() => setCustomDialogVisible(true)}
             />
           ) : null}
-          {activeTool === 'move' && metronomeSettings && moveSnapSelection && onMoveSnapChange ? (
-            <MoveEditor
-              selection={moveSnapSelection}
+          {isEditSnapTool(activeTool) &&
+          metronomeSettings &&
+          editSnapSelection &&
+          onEditSnapChange ? (
+            <EditSnapEditor
+              selection={editSnapSelection}
               settings={metronomeSettings}
-              onChange={onMoveSnapChange}
+              onChange={onEditSnapChange}
             />
           ) : null}
         </View>

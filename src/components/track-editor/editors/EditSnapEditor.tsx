@@ -12,7 +12,7 @@ type Props = {
   onChange: (selection: MoveSnapSelection) => void;
 };
 
-export function MoveEditor({ settings, selection, onChange }: Props) {
+export function EditSnapEditor({ settings, selection, onChange }: Props) {
   const options = getMoveSnapOptions(settings);
 
   return (
