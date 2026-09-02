@@ -147,6 +147,15 @@ export function MetronomeSettingsSheet({
     if (controlsDisabled && isGridProcessingChange(partial)) {
       return;
     }
+    const committedBpm = partial.bpm;
+    const isBpmOnlyChange =
+      committedBpm !== undefined && Object.keys(partial).length === 1;
+    if (isBpmOnlyChange && committedBpm === settingsRef.current.bpm) {
+      setOptimistic((current) =>
+        current.bpm === committedBpm ? current : { ...current, bpm: committedBpm }
+      );
+      return;
+    }
     setOptimistic((current) => ({ ...current, ...partial }));
     if (isGridProcessingChange(partial)) {
       setPendingProcessing(true);
@@ -154,6 +163,10 @@ export function MetronomeSettingsSheet({
     startTransition(() => {
       onChange(partial);
     });
+  };
+
+  const handleBpmPreview = (bpm: number) => {
+    setOptimistic((current) => (current.bpm === bpm ? current : { ...current, bpm }));
   };
 
   const togglePreview = () => {
@@ -183,7 +196,8 @@ export function MetronomeSettingsSheet({
             max={240}
             min={40}
             value={optimistic.bpm}
-            onChange={(bpm) => handleChange({ bpm })}
+            onChange={handleBpmPreview}
+            onCommit={(bpm) => handleChange({ bpm })}
           />
           <Text style={styles.bpmSuffix}>BPM</Text>
           <Pressable
