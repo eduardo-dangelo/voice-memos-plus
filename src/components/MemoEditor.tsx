@@ -5105,7 +5105,11 @@ function MemoEditorInner({
               onPlaybackScrubEnd={handlePlaybackScrubEnd}
               onTrackPress={handleTrackPress}
               onTrackDeselect={handleTrackDeselect}
-              onTrackLongPress={handleTrackLongPress}
+              onTrackLongPress={
+                activeEditor === 'trim' || activeEditor === 'move'
+                  ? undefined
+                  : handleTrackLongPress
+              }
               onEditGestureActive={handleEditGestureActive}
               onZoomControlsChange={setZoomControls}
               onMetronomeGridSubdivisionSync={handleMetronomeChange}
