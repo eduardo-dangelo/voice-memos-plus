@@ -1,5 +1,5 @@
 import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo } from 'react';
 import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useColorScheme } from '@/components/useColorScheme';
@@ -8,6 +8,8 @@ import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 import { NumericDragInput } from './track-editor/primitives/NumericDragInput';
 
 const useGlass = isGlassEffectAPIAvailable();
+/** Default NumericDragInput sensitivity (~50px) sweeps full range; horizontal zoom needs finer control. */
+const HORIZONTAL_ZOOM_DRAG_SENSITIVITY = 0.5;
 
 export type TimelineZoomDialogProps = {
   visible: boolean;
@@ -42,43 +44,6 @@ export function TimelineZoomDialog({
   const colorScheme = useColorScheme();
   const styles = useStyles(colors, colorScheme);
   const showVertical = yMax > 1;
-  const [pendingReset, setPendingReset] = useState(false);
-  const resetStartedRef = useRef(false);
-
-  useEffect(() => {
-    if (visible) {
-      return;
-    }
-    resetStartedRef.current = false;
-    setPendingReset(false);
-  }, [visible]);
-
-  useEffect(() => {
-    if (!processing) {
-      setPendingReset(false);
-    }
-  }, [processing]);
-
-  useEffect(() => {
-    if (!pendingReset || processing) {
-      return;
-    }
-    const timeout = setTimeout(() => setPendingReset(false), 400);
-    return () => clearTimeout(timeout);
-  }, [pendingReset, processing]);
-
-  const showSpinner = pendingReset || processing;
-
-  useEffect(() => {
-    if (!visible || !resetStartedRef.current) {
-      return;
-    }
-    if (showSpinner) {
-      return;
-    }
-    resetStartedRef.current = false;
-    onClose();
-  }, [visible, showSpinner, onClose]);
 
   const body = (
     <>
@@ -90,6 +55,7 @@ export function TimelineZoomDialog({
           <NumericDragInput
             accessibilityLabel="Horizontal zoom"
             decimals={1}
+            gestureSensitivity={HORIZONTAL_ZOOM_DRAG_SENSITIVITY}
             max={xMax}
             min={xMin}
             value={x}
@@ -117,28 +83,30 @@ export function TimelineZoomDialog({
         </View>
       ) : null}
 
-      <Pressable
-        accessibilityLabel="Reset zoom"
-        accessibilityRole="button"
-        accessibilityState={{ disabled: showSpinner }}
-        disabled={showSpinner}
-        hitSlop={8}
-        style={[styles.resetButton, showSpinner && styles.resetButtonDisabled]}
-        onPress={() => {
-          resetStartedRef.current = true;
-          setPendingReset(true);
-          onReset();
-        }}>
-        <View style={styles.resetButtonContent}>
-          <View style={styles.resetSpinnerSlot} />
-          <Text style={styles.resetButtonText}>Reset zoom</Text>
-          <View style={styles.resetSpinnerSlot}>
-            {showSpinner ? (
-              <ActivityIndicator color={colors.accent} size="small" />
-            ) : null}
-          </View>
-        </View>
-      </Pressable>
+      <View style={styles.actions}>
+        <Pressable
+          accessibilityLabel="Reset zoom"
+          accessibilityRole="button"
+          accessibilityState={{ disabled: processing }}
+          disabled={processing}
+          hitSlop={8}
+          style={styles.actionButton}
+          onPress={onReset}>
+          {processing ? (
+            <ActivityIndicator color={colors.secondaryText} size="small" />
+          ) : (
+            <Text style={styles.resetText}>Reset</Text>
+          )}
+        </Pressable>
+        <Pressable
+          accessibilityLabel="OK"
+          accessibilityRole="button"
+          hitSlop={8}
+          style={styles.actionButton}
+          onPress={onClose}>
+          <Text style={styles.okText}>OK</Text>
+        </Pressable>
+      </View>
     </>
   );
 
@@ -240,31 +208,23 @@ function useStyles(
           fontWeight: '600',
           color: colors.secondaryText,
         },
-        resetButton: {
-          alignSelf: 'stretch',
-          alignItems: 'center',
-          justifyContent: 'center',
-          paddingVertical: 12,
-          borderRadius: 10,
-          backgroundColor: colors.waveformInactive,
-        },
-        resetButtonDisabled: {
-          opacity: 0.7,
-        },
-        resetButtonContent: {
+        actions: {
           flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: 8,
+          justifyContent: 'flex-end',
+          gap: 24,
+          paddingTop: 2,
         },
-        resetSpinnerSlot: {
-          width: 20,
-          height: 20,
+        actionButton: {
+          paddingVertical: 6,
+          minWidth: 44,
           alignItems: 'center',
-          justifyContent: 'center',
         },
-        resetButtonText: {
-          fontSize: 15,
+        resetText: {
+          fontSize: 17,
+          color: colors.secondaryText,
+        },
+        okText: {
+          fontSize: 17,
           fontWeight: '600',
           color: colors.accent,
         },
