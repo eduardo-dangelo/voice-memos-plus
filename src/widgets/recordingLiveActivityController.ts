@@ -161,6 +161,22 @@ export function startPlaybackLiveActivity(params: {
   ensurePlaybackLiveActivity(params);
 }
 
+export async function endIdlePlaybackLiveActivities(
+  engine: MemoAudioEngine
+): Promise<void> {
+  if (getSession()) {
+    return;
+  }
+
+  const state = engine.getState();
+  if (state.isRecording || state.isPlaying) {
+    return;
+  }
+
+  instance = null;
+  await endAllInstances();
+}
+
 export async function recoverMemoLiveActivity(engine: MemoAudioEngine): Promise<void> {
   await hydrateSessionFromStorage();
 
@@ -203,8 +219,7 @@ export async function recoverMemoLiveActivity(engine: MemoAudioEngine): Promise<
     return;
   }
 
-  await endAllInstances();
-  instance = null;
+  await endIdlePlaybackLiveActivities(engine);
 
   // Process death: discard unfinished take (delete new memo / clear session).
   if (getSession()) {

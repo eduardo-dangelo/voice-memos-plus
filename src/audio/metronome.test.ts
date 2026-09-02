@@ -5,6 +5,8 @@ import {
   ACCENT_AMPLITUDE,
   getClickIntervalSec,
   getGridSnapIntervalSec,
+  getMetronomeBarDurationSec,
+  getMetronomeBarOffsetSec,
   getMinPixelsPerSecondForGrid,
   getMetronomeBeatTimes,
   getMetronomeGridLineKind,
@@ -20,6 +22,7 @@ import {
   isSecondaryAccentBeat,
   METRONOME_GRID_MAX_LINES,
   METRONOME_GRID_MIN_SPACING_PX,
+  mixMetronomeBarSamples,
   NORMAL_AMPLITUDE,
   pickGridSubdivisionForPixelsPerSecond,
   pickMetronomeGridSubdivisionForPixelsPerSecond,
@@ -83,6 +86,40 @@ describe('getClickIntervalSec', () => {
 
   it('uses quarter-note spacing for 3/4 at 120 bpm', () => {
     assert.equal(getClickIntervalSec(makeSettings({ bpm: 120, timeSignature: '3/4' })), 0.5);
+  });
+});
+
+describe('metronome bar click track', () => {
+  it('is four quarter notes at 120 4/4', () => {
+    assert.equal(getMetronomeBarDurationSec(makeSettings({ bpm: 120, timeSignature: '4/4' })), 2);
+  });
+
+  it('wraps timeline phase into the bar', () => {
+    assert.equal(getMetronomeBarOffsetSec(0.25, 2), 0.25);
+    assert.equal(getMetronomeBarOffsetSec(2.25, 2), 0.25);
+    assert.equal(getMetronomeBarOffsetSec(0, 2), 0);
+  });
+
+  it('places an accent at sample 0 and a click on later beats', () => {
+    const sampleRate = 48_000;
+    const settings = makeSettings({ bpm: 120, timeSignature: '4/4', accentEnabled: true });
+    const samples = mixMetronomeBarSamples(sampleRate, settings);
+    assert.equal(samples.length, 96_000);
+    let downbeatPeak = 0;
+    const attackWindow = Math.ceil(sampleRate * 0.004);
+    for (let i = 0; i < attackWindow; i += 1) {
+      downbeatPeak = Math.max(downbeatPeak, Math.abs(samples[i]!));
+    }
+    assert.ok(downbeatPeak > 0.01);
+    const beatSample = Math.round(0.5 * sampleRate);
+    let beatPeak = 0;
+    for (let i = 0; i < attackWindow; i += 1) {
+      beatPeak = Math.max(beatPeak, Math.abs(samples[beatSample + i]!));
+    }
+    assert.ok(beatPeak > 0.01);
+    const quiet = Math.round(0.25 * sampleRate);
+    assert.ok(Math.abs(samples[quiet]!) < 0.001);
+    assert.ok(downbeatPeak > beatPeak);
   });
 });
 

@@ -1,3 +1,22 @@
+/** SVG rect subpath for one waveform bar (absolute coordinates). */
+export function appendWaveformBarRect(
+  d: string,
+  x: number,
+  y: number,
+  width: number,
+  height: number
+): string {
+  return `${d}M${x} ${y}h${width}v${height}h${-width}z`;
+}
+
+export function waveformBarHeightPx(scaledPeak: number, bodyHeight: number): number {
+  const maxBar = Math.max(4, bodyHeight - 8);
+  if (scaledPeak <= 0.01) {
+    return 2;
+  }
+  return Math.max(4, Math.min(maxBar, scaledPeak * maxBar));
+}
+
 /** Visible bar indices for a track given a buffered time window (seconds). */
 export function getVisibleBarIndexRange(
   visibleStartSec: number,

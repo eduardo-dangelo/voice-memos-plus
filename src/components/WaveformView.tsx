@@ -99,9 +99,12 @@ import {
 } from '@/src/components/track-editor/TrackFadeOverlay';
 import { TimelineZoomDialog } from '@/src/components/TimelineZoomDialog';
 import {
+  appendWaveformBarRect,
   getVisibleBarIndexRange,
   getVisibleMarkerSeconds,
+  waveformBarHeightPx,
 } from '@/src/components/waveformViewport';
+import { WaveformBarsSvg } from '@/src/components/WaveformBarsSvg';
 import type { MetronomeSettings } from '@/src/storage/types';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 import { formatMarkerTime } from '@/src/utils/format';
@@ -120,7 +123,7 @@ const MARKER_TICK_WIDTH = 1;
 const TIMELINE_HEADROOM_SECONDS = 30;
 const LAYOUT_DURATION_STEP_SECONDS = 30;
 /** Min interval between React viewport/grid commits while auto-scrolling. */
-const VIEWPORT_COMMIT_MIN_MS = 100;
+const VIEWPORT_COMMIT_MIN_MS = 200;
 const TRIM_SIDE_BORDER = 16;
 const TRIM_SIDE_BORDER_EXPANDED = 24;
 const TRIM_EDGE_BORDER = 2;
@@ -1569,6 +1572,91 @@ const ExpandedTrackWaveformRow = memo(function ExpandedTrackWaveformRow({
   const headerHeight = showRegionChrome ? REGION_HEADER_HEIGHT : 0;
   const bodyHeight = Math.max(0, trackHeight - headerHeight);
   const bodyTop = headerHeight;
+  const idleBarPaint = useMemo(() => {
+    if (isProcessing || visibleBars.endIndex <= visibleBars.startIndex || bodyHeight <= 0) {
+      return { originX: 0, width: 0, path: '', loopedPath: '' };
+    }
+    const startIndex = visibleBars.startIndex;
+    const endIndex = visibleBars.endIndex;
+    const originX = startIndex * BAR_STEP;
+    let path = '';
+    let loopedPath = '';
+    const trackFades = {
+      fadeInSec: track.fadeInSec ?? 0,
+      fadeOutSec: track.fadeOutSec ?? 0,
+      fadeInCurve: track.fadeInCurve ?? 0,
+      fadeOutCurve: track.fadeOutCurve ?? 0,
+    };
+    const hasFades = trackFades.fadeInSec > 0 || trackFades.fadeOutSec > 0;
+    for (let index = startIndex; index < endIndex; index += 1) {
+      const peakIndex = loopPeakIndex(index, barsPerCycle, cycleBarCount);
+      const peak = normalizePeakAt(track.peaks, cycleBarCount, peakIndex);
+      const barTime = (index * BAR_STEP) / pixelsPerSecond;
+      const fadeScale = hasFades
+        ? fadeEnvelopeGain(barTime, track.duration, trackFades)
+        : 1;
+      const scaled = peakToAbsoluteScale(peak) * volumeScale * fadeScale;
+      const barHeight = waveformBarHeightPx(scaled, bodyHeight);
+      const x = index * BAR_STEP - originX;
+      const y = (bodyHeight - barHeight) / 2;
+      const isLoopedCycle = barTime >= cycleDuration - TRACK_LOOP_EPSILON;
+      if (isLoopedCycle) {
+        loopedPath = appendWaveformBarRect(loopedPath, x, y, BAR_WIDTH, barHeight);
+      } else {
+        path = appendWaveformBarRect(path, x, y, BAR_WIDTH, barHeight);
+      }
+    }
+    return {
+      originX,
+      width: (endIndex - startIndex) * BAR_STEP,
+      path,
+      loopedPath,
+    };
+  }, [
+    barsPerCycle,
+    bodyHeight,
+    cycleBarCount,
+    cycleDuration,
+    isProcessing,
+    pixelsPerSecond,
+    track.duration,
+    track.fadeInCurve,
+    track.fadeInSec,
+    track.fadeOutCurve,
+    track.fadeOutSec,
+    track.peaks,
+    visibleBars.endIndex,
+    visibleBars.startIndex,
+    volumeScale,
+  ]);
+  const liveBarPaint = useMemo(() => {
+    if (!liveRecording || visibleLiveBars.endIndex <= visibleLiveBars.startIndex || bodyHeight <= 0) {
+      return { originX: 0, width: 0, path: '' };
+    }
+    const startIndex = visibleLiveBars.startIndex;
+    const endIndex = visibleLiveBars.endIndex;
+    const originX = startIndex * BAR_STEP;
+    let path = '';
+    for (let index = startIndex; index < endIndex; index += 1) {
+      const peak = normalizePeakAt(liveRecording.peaks, liveBarCount, index);
+      const scaled = peakToAbsoluteScale(peak);
+      const barHeight = waveformBarHeightPx(scaled, bodyHeight);
+      const x = index * BAR_STEP - originX;
+      const y = (bodyHeight - barHeight) / 2;
+      path = appendWaveformBarRect(path, x, y, BAR_WIDTH, barHeight);
+    }
+    return {
+      originX,
+      width: (endIndex - startIndex) * BAR_STEP,
+      path,
+    };
+  }, [
+    bodyHeight,
+    liveBarCount,
+    liveRecording,
+    visibleLiveBars.endIndex,
+    visibleLiveBars.startIndex,
+  ]);
   const headerLongPressEnabled =
     Boolean(trackLoopOverlay) &&
     trackLoopOverlay?.editable !== false &&
@@ -1872,55 +1960,15 @@ const ExpandedTrackWaveformRow = memo(function ExpandedTrackWaveformRow({
                   volumeScale={volumeScale}
                 />
               ) : (
-                Array.from(
-                  { length: Math.max(0, visibleBars.endIndex - visibleBars.startIndex) },
-                  (_, offset) => {
-                    const index = visibleBars.startIndex + offset;
-                    const peakIndex = loopPeakIndex(index, barsPerCycle, cycleBarCount);
-                    // Sample one bar — never allocate a full-track resample on zoom.
-                    const peak = normalizePeakAt(track.peaks, cycleBarCount, peakIndex);
-                    const barTime = (index * BAR_STEP) / pixelsPerSecond;
-                    const trackFades = {
-                      fadeInSec: track.fadeInSec ?? 0,
-                      fadeOutSec: track.fadeOutSec ?? 0,
-                      fadeInCurve: track.fadeInCurve ?? 0,
-                      fadeOutCurve: track.fadeOutCurve ?? 0,
-                    };
-                    let fadeScale = 1;
-                    if (
-                      trackFades.fadeInSec > 0 ||
-                      trackFades.fadeOutSec > 0
-                    ) {
-                      fadeScale = fadeEnvelopeGain(
-                        barTime,
-                        track.duration,
-                        trackFades
-                      );
-                    }
-                    const scaled = peakToAbsoluteScale(peak) * volumeScale * fadeScale;
-                    const maxBar = Math.max(4, bodyHeight - 8);
-                    const barHeight =
-                      scaled <= 0.01
-                        ? 2
-                        : Math.max(4, Math.min(maxBar, scaled * maxBar));
-                    const isLoopedCycle = barTime >= cycleDuration - TRACK_LOOP_EPSILON;
-                    const fillColor = isLoopedCycle ? loopedBarColor : barColor;
-                    return (
-                      <View
-                        key={index}
-                        style={[
-                          styles.bar,
-                          {
-                            left: index * BAR_STEP,
-                            top: (bodyHeight - barHeight) / 2,
-                            height: barHeight,
-                            backgroundColor: fillColor,
-                          },
-                        ]}
-                      />
-                    );
-                  }
-                )
+                <WaveformBarsSvg
+                  color={barColor}
+                  height={bodyHeight}
+                  loopedColor={loopedBarColor}
+                  loopedPath={idleBarPaint.loopedPath}
+                  originX={idleBarPaint.originX}
+                  path={idleBarPaint.path}
+                  width={idleBarPaint.width}
+                />
               )}
               {/* Cycle seams for looped footprints */}
               {cycleDuration + TRACK_LOOP_EPSILON < track.duration
@@ -1980,33 +2028,15 @@ const ExpandedTrackWaveformRow = memo(function ExpandedTrackWaveformRow({
                   width: liveTrackWidth,
                 },
               ]}>
-              {Array.from(
-                { length: Math.max(0, visibleLiveBars.endIndex - visibleLiveBars.startIndex) },
-                (_, offset) => {
-                  const index = visibleLiveBars.startIndex + offset;
-                  const peak = normalizePeakAt(liveRecording?.peaks, liveBarCount, index);
-                  const scaled = peakToAbsoluteScale(peak);
-                  const maxBar = Math.max(4, bodyHeight - 8);
-                  const barHeight =
-                    scaled <= 0.01
-                      ? 2
-                      : Math.max(4, Math.min(maxBar, scaled * maxBar));
-                  return (
-                    <View
-                      key={`live-${index}`}
-                      style={[
-                        styles.bar,
-                        {
-                          left: index * BAR_STEP,
-                          top: (bodyHeight - barHeight) / 2,
-                          height: barHeight,
-                          backgroundColor: colors.recordRed,
-                        },
-                      ]}
-                    />
-                  );
-                }
-              )}
+              {liveBarPaint.path ? (
+                <WaveformBarsSvg
+                  color={colors.recordRed}
+                  height={bodyHeight}
+                  originX={liveBarPaint.originX}
+                  path={liveBarPaint.path}
+                  width={liveBarPaint.width}
+                />
+              ) : null}
             </View>
           ) : null}
         </View>
@@ -2479,9 +2509,8 @@ function WaveformViewComponent({
         prev.start === buffer.start && prev.end === buffer.end ? prev : buffer
       );
     } else if (
-      // Playback paints visible-only bars; refresh the React window on the
-      // throttle cadence so remounts track the playhead (ScrollView alone
-      // cannot create bars ahead of the last paint range).
+      // Playback paints a bounded SVG window; refresh on the throttle cadence
+      // so the path tracks the playhead (ScrollView alone cannot extend it).
       isPlayingRef.current &&
       !followRecordingScroll &&
       !throttleCommits &&

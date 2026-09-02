@@ -3,7 +3,7 @@ import type { LoadedLayer } from '@/src/audio/MemoAudioEngine';
 
 export const PLAYBACK_END_TOLERANCE = 0.05;
 
-/** Sliding schedule window for looped / long segments (play + monitor-mix). */
+/** Sliding schedule window for monitor-mix (recording) only. Play uses one-shot voices. */
 export const PLAYBACK_SCHEDULE_CHUNK_SEC = 12;
 export const PLAYBACK_SCHEDULE_EXTEND_LEAD_SEC = 2;
 
@@ -34,6 +34,8 @@ export type LayerPlaybackPlanSpec = {
   bufferOffset: number;
   delay: number;
   layerPlayLength: number;
+  /** Native BufferSource loop across the cycle; play-path constant-voice only. */
+  loopPlayback?: boolean;
 };
 
 export type ResolvedLayerPlaybackPlan = {
@@ -41,6 +43,16 @@ export type ResolvedLayerPlaybackPlan = {
   bufferOffset: number;
   delay: number;
   layerPlayLength: number;
+  loopPlayback?: boolean;
+};
+
+export type BuildLayerPlaybackPlansOptions = {
+  /**
+   * When true (default), emit one plan per loop cycle (monitor-mix windows).
+   * When false, emit one plan for the audible span and set `loopPlayback` if
+   * the span wraps the trimmed cycle.
+   */
+  expandLoopCycles?: boolean;
 };
 
 /**
@@ -61,6 +73,19 @@ export function resolvePlanAgainstBuffer(
 
   if (plan.bufferOffset >= maxBufferOffset) {
     return null;
+  }
+
+  if (plan.loopPlayback) {
+    if (plan.layerPlayLength <= PLAYBACK_END_TOLERANCE) {
+      return null;
+    }
+    return {
+      playbackEffects,
+      bufferOffset: plan.bufferOffset,
+      delay: plan.delay,
+      layerPlayLength: plan.layerPlayLength,
+      loopPlayback: true,
+    };
   }
 
   const layerPlayLength = Math.min(plan.layerPlayLength, trimOut - plan.bufferOffset);
@@ -132,7 +157,8 @@ export function buildLayerPlaybackPlans(
   layers: LoadedLayer[],
   startAt: number,
   endAt: number,
-  getEffects: (layer: LoadedLayer) => LayerEffects = getLayerEffectsForPlayback
+  getEffects: (layer: LoadedLayer) => LayerEffects = getLayerEffectsForPlayback,
+  options?: BuildLayerPlaybackPlansOptions
 ): LayerPlaybackPlanSpec[] {
   const plans: LayerPlaybackPlanSpec[] = [];
 
@@ -167,10 +193,43 @@ export function buildLayerPlaybackPlans(
       continue;
     }
 
+    const expandLoopCycles = options?.expandLoopCycles !== false;
     const firstCycleIndex = Math.floor((audibleStart - activeStart) / cycleDuration);
     const lastCycleIndex = Math.floor(
       Math.max(0, audibleEnd - activeStart - PLAYBACK_END_TOLERANCE) / cycleDuration
     );
+
+    if (!expandLoopCycles) {
+      const cycleStart = activeStart + firstCycleIndex * cycleDuration;
+      const relativeStart = audibleStart - cycleStart;
+      const bufferOffset = trimIn + relativeStart;
+      const maxBufferOffset = trimOut - PLAYBACK_END_TOLERANCE;
+      if (bufferOffset >= maxBufferOffset) {
+        continue;
+      }
+
+      const remainingInCycle = trimOut - bufferOffset;
+      const layerPlayLength = audibleEnd - audibleStart;
+      if (layerPlayLength <= PLAYBACK_END_TOLERANCE) {
+        continue;
+      }
+
+      const applyFadeIn =
+        firstCycleIndex === 0 && relativeStart <= PLAYBACK_END_TOLERANCE;
+      const applyFadeOut = audibleEnd >= footprintEnd - PLAYBACK_END_TOLERANCE;
+      const loopPlayback =
+        layerPlayLength > remainingInCycle + PLAYBACK_END_TOLERANCE;
+
+      plans.push({
+        layer,
+        playbackEffects: effectsForLoopSegment(playbackEffects, applyFadeIn, applyFadeOut),
+        bufferOffset,
+        delay: Math.max(0, audibleStart - startAt),
+        layerPlayLength,
+        loopPlayback,
+      });
+      continue;
+    }
 
     for (let cycleIndex = firstCycleIndex; cycleIndex <= lastCycleIndex; cycleIndex += 1) {
       const cycleStart = activeStart + cycleIndex * cycleDuration;

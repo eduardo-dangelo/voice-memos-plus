@@ -6,6 +6,7 @@ import type { LoadedLayer } from '@/src/audio/MemoAudioEngine';
 import {
   buildLayerPlaybackPlans,
   filterPlaybackPlansBySilentLayer,
+  getLayerEffectsForPlayback,
   partitionPlansByHorizon,
   playbackScheduleLeadSec,
   PLAYBACK_SCHEDULE_CHUNK_SEC,
@@ -175,6 +176,62 @@ test('windowed buildLayerPlaybackPlans only emits cycles intersecting the window
   );
   assert.equal(nextWindow.length, 6);
   assert.ok(nextWindow.every((plan) => plan.delay < PLAYBACK_SCHEDULE_CHUNK_SEC));
+});
+
+test('windowed plans stitch a long unlooped layer via bufferOffset (delayBias in engine)', () => {
+  const layer = makeLayer('long', 0, 40);
+  const first = buildLayerPlaybackPlans([layer], 0, PLAYBACK_SCHEDULE_CHUNK_SEC);
+  assert.equal(first.length, 1);
+  assert.equal(first[0].delay, 0);
+  assert.equal(first[0].bufferOffset, 0);
+  assert.ok(Math.abs(first[0].layerPlayLength - PLAYBACK_SCHEDULE_CHUNK_SEC) < 0.001);
+
+  const windowStart = PLAYBACK_SCHEDULE_CHUNK_SEC;
+  const second = buildLayerPlaybackPlans(
+    [layer],
+    windowStart,
+    windowStart + PLAYBACK_SCHEDULE_CHUNK_SEC
+  );
+  assert.equal(second.length, 1);
+  assert.equal(second[0].delay, 0);
+  assert.ok(Math.abs(second[0].bufferOffset - PLAYBACK_SCHEDULE_CHUNK_SEC) < 0.001);
+  assert.ok(Math.abs(second[0].layerPlayLength - PLAYBACK_SCHEDULE_CHUNK_SEC) < 0.001);
+});
+
+test('constant-voice plans emit one looping voice for loopUntil', () => {
+  const layer = makeLayer('looped', 0, 2);
+  layer.loopUntil = 5.5;
+  const plans = buildLayerPlaybackPlans(
+    [layer],
+    0,
+    20,
+    getLayerEffectsForPlayback,
+    { expandLoopCycles: false }
+  );
+  assert.equal(plans.length, 1);
+  assert.equal(plans[0].loopPlayback, true);
+  assert.equal(plans[0].bufferOffset, 0);
+  assert.ok(Math.abs(plans[0].layerPlayLength - 5.5) < 0.001);
+
+  const resolved = resolvePlanAgainstBuffer(plans[0], 2);
+  assert.ok(resolved);
+  assert.equal(resolved!.loopPlayback, true);
+  assert.ok(Math.abs(resolved!.layerPlayLength - 5.5) < 0.001);
+});
+
+test('constant-voice plans skip native loop when remaining fit in one cycle', () => {
+  const layer = makeLayer('looped', 0, 2);
+  layer.loopUntil = 5.5;
+  const plans = buildLayerPlaybackPlans(
+    [layer],
+    4,
+    5.5,
+    getLayerEffectsForPlayback,
+    { expandLoopCycles: false }
+  );
+  assert.equal(plans.length, 1);
+  assert.equal(plans[0].loopPlayback, false);
+  assert.ok(Math.abs(plans[0].layerPlayLength - 1.5) < 0.001);
 });
 
 test('playbackScheduleLeadSec grows with ready plans and stays bounded', () => {

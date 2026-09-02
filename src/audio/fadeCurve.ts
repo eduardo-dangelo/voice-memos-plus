@@ -302,8 +302,22 @@ export function schedulePathFades(
   effects: LayerEffects,
   startWhen: number,
   playLength: number,
-  bufferOffset: number
+  bufferOffset: number,
+  envelopeOverPlayLength = false
 ): void {
+  if (envelopeOverPlayLength) {
+    scheduleLayerFades(path.fadeGain.gain, {
+      startWhen,
+      playLength,
+      activeOffset: 0,
+      activeDuration: playLength,
+      fadeInSec: effects.fadeInSec,
+      fadeOutSec: effects.fadeOutSec,
+      fadeInCurve: effects.fadeInCurve,
+      fadeOutCurve: effects.fadeOutCurve,
+    });
+    return;
+  }
   const activeDuration = Math.max(0, effects.trimOut - effects.trimIn);
   const activeOffset = Math.max(0, bufferOffset - effects.trimIn);
   scheduleLayerFades(path.fadeGain.gain, {

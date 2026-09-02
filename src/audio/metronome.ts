@@ -164,6 +164,135 @@ export function getClickIntervalSec(settings: MetronomeSettings): number {
   return config.beatUnit === 'eighth' ? quarterInterval / 2 : quarterInterval;
 }
 
+/** One bar of click grid, in seconds (integer-sample buffers round this). */
+export function getMetronomeBarDurationSec(settings: MetronomeSettings): number {
+  const config = getTimeSignatureConfig(settings.timeSignature);
+  return getClickIntervalSec(settings) * config.clicksPerBar;
+}
+
+/** Phase into the repeating bar at `timelineTime` (seconds). */
+export function getMetronomeBarOffsetSec(
+  timelineTime: number,
+  barDurationSec: number
+): number {
+  if (!(barDurationSec > 0) || !Number.isFinite(timelineTime)) {
+    return 0;
+  }
+  const wrapped = timelineTime % barDurationSec;
+  if (!Number.isFinite(wrapped)) {
+    return 0;
+  }
+  return wrapped < 0 ? wrapped + barDurationSec : wrapped;
+}
+
+/** Mix accent/normal clicks into one bar of samples (no AudioContext). */
+export function mixMetronomeBarSamples(
+  sampleRate: number,
+  settings: MetronomeSettings
+): Float32Array {
+  const barSec = getMetronomeBarDurationSec(settings);
+  const length = Math.max(1, Math.round(barSec * sampleRate));
+  const data = new Float32Array(length);
+  if (!(barSec > 0) || !(sampleRate > 0)) {
+    return data;
+  }
+
+  const config = getTimeSignatureConfig(settings.timeSignature);
+  const interval = getClickIntervalSec(settings);
+  const normal = synthesizeClickSamples(sampleRate, NORMAL_CLICK_FREQ, NORMAL_AMPLITUDE);
+  const accent = synthesizeClickSamples(sampleRate, ACCENT_CLICK_FREQ, ACCENT_AMPLITUDE);
+  const secondary = synthesizeClickSamples(
+    sampleRate,
+    ACCENT_CLICK_FREQ,
+    ACCENT_AMPLITUDE * SECONDARY_ACCENT_GAIN
+  );
+
+  for (let clickIndex = 0; clickIndex < config.clicksPerBar; clickIndex += 1) {
+    const beatTime = clickIndex * interval;
+    const startSample = Math.round(beatTime * sampleRate);
+    const isPrimary = settings.accentEnabled && clickIndex === 0;
+    const isSecondary =
+      settings.accentEnabled &&
+      config.secondaryAccentAt !== undefined &&
+      clickIndex === config.secondaryAccentAt;
+    const samples = isPrimary ? accent : isSecondary ? secondary : normal;
+    const copyCount = Math.min(samples.length, length - startSample);
+    for (let i = 0; i < copyCount; i += 1) {
+      data[startSample + i] += samples[i]!;
+    }
+  }
+  return data;
+}
+
+const metronomeBarBufferCache = new WeakMap<AudioContext, Map<string, AudioBuffer>>();
+
+function metronomeBarCacheKey(settings: MetronomeSettings): string {
+  return `${settings.bpm}|${settings.timeSignature}|${settings.accentEnabled ? 1 : 0}`;
+}
+
+function getMetronomeBarBuffer(
+  context: AudioContext,
+  settings: MetronomeSettings
+): AudioBuffer {
+  let byKey = metronomeBarBufferCache.get(context);
+  if (!byKey) {
+    byKey = new Map();
+    metronomeBarBufferCache.set(context, byKey);
+  }
+  const key = metronomeBarCacheKey(settings);
+  const cached = byKey.get(key);
+  if (cached) {
+    return cached;
+  }
+
+  const samples = mixMetronomeBarSamples(context.sampleRate, settings);
+  const buffer = context.createBuffer(1, samples.length, context.sampleRate);
+  buffer.getChannelData(0).set(samples);
+  byKey.set(key, buffer);
+  return buffer;
+}
+
+/**
+ * One looping bar of clicks (Logic click-track analog). `stopWhen` omitted
+ * while recording so the bar runs until sources are stopped.
+ */
+export function scheduleLoopingMetronomeBar(
+  context: AudioContext,
+  outputGain: GainNode,
+  settings: MetronomeSettings,
+  startAt: number,
+  startWhen: number,
+  stopWhen?: number
+): AudioBufferSourceNode | null {
+  if (!settings.enabled) {
+    return null;
+  }
+
+  const buffer = getMetronomeBarBuffer(context, settings);
+  if (buffer.duration <= 0) {
+    return null;
+  }
+
+  const barSec = getMetronomeBarDurationSec(settings);
+  const phase = getMetronomeBarOffsetSec(startAt, barSec);
+  const offset = Math.min(
+    barSec > 0 ? (phase / barSec) * buffer.duration : 0,
+    Math.max(0, buffer.duration - 1 / Math.max(1, context.sampleRate))
+  );
+
+  const source = context.createBufferSource();
+  source.buffer = buffer;
+  source.loop = true;
+  source.loopStart = 0;
+  source.loopEnd = buffer.duration;
+  source.connect(outputGain);
+  source.start(startWhen, offset);
+  if (stopWhen != null && stopWhen > startWhen) {
+    source.stop(stopWhen);
+  }
+  return source;
+}
+
 const METRONOME_GRID_SUBDIVISION_DIVISOR: Record<MetronomeGridSubdivision, number> = {
   '1/4': 1,
   '1/8': 2,
