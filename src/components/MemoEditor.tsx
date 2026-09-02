@@ -671,6 +671,8 @@ function MemoEditorInner({
   const [loopDialogLayerId, setLoopDialogLayerId] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
   const [layoutReady, setLayoutReady] = useState(false);
+  const [waveformLayoutKey, setWaveformLayoutKey] = useState(0);
+  const remountedForChromeRef = useRef(false);
   const [zoomControls, setZoomControls] = useState<TimelineZoomControlsState>({
     visible: false,
     x: 1,
@@ -1154,10 +1156,17 @@ function MemoEditorInner({
         return;
       }
 
+      const pauseIfPlayingForStructuralEdit = () => {
+        if (engineState.isPlaying) {
+          engine.pause();
+        }
+      };
+
       const draft = editDraftRef.current;
       if (draft && tool !== draft.tool) {
         void confirmEditDraft(false).then(() => {
           if (tool === 'trim' || tool === 'move') {
+            pauseIfPlayingForStructuralEdit();
             beginEditDraft(tool);
           } else {
             setActiveEditor(tool);
@@ -1167,13 +1176,21 @@ function MemoEditorInner({
       }
 
       if (tool === 'trim' || tool === 'move') {
+        pauseIfPlayingForStructuralEdit();
         beginEditDraft(tool);
         return;
       }
 
       setActiveEditor(tool);
     },
-    [activeLayerEffects, beginEditDraft, confirmEditDraft, savingTrim]
+    [
+      activeLayerEffects,
+      beginEditDraft,
+      confirmEditDraft,
+      engine,
+      engineState.isPlaying,
+      savingTrim,
+    ]
   );
 
   const handleTrimChange = useCallback(
@@ -3478,6 +3495,14 @@ function MemoEditorInner({
   }, []);
 
   useEffect(() => {
+    if (!layoutReady || remountedForChromeRef.current) {
+      return;
+    }
+    remountedForChromeRef.current = true;
+    setWaveformLayoutKey((key) => key + 1);
+  }, [layoutReady]);
+
+  useEffect(() => {
     const unsubscribe = navigation.addListener('blur', resetLayoutReady);
     return unsubscribe;
   }, [navigation, resetLayoutReady]);
@@ -5058,6 +5083,7 @@ function MemoEditorInner({
         <View style={styles.tracksArea}>
           {showEditorContent ? (
             <LiveRecordingWaveform
+              key={waveformLayoutKey}
               currentTime={waveformCurrentTime}
               duration={waveformDuration}
               getPlaybackTime={getPlaybackTime}
