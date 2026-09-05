@@ -7,6 +7,7 @@ import {
   clampTimelinePixelsPerSecond,
   clampTimelineTrackZoom,
   formatTimelineZoomMultiplier,
+  getInitialTimelinePixelsPerSecond,
   getTimelineZoomBounds,
   getTimelineZoomDisplayMultipliers,
   getTimelineZoomMultiplierBounds,
@@ -15,6 +16,7 @@ import {
   TIMELINE_MIN_PIXELS_PER_SECOND,
   TIMELINE_DEFAULT_PIXELS_PER_SECOND,
   TIMELINE_MAX_PIXELS_PER_SECOND,
+  TIMELINE_REGULAR_INITIAL_ZOOM_MULTIPLIER,
   TIMELINE_VISIBLE_SECONDS_AT_MAX_ZOOM,
 } from './timelineZoom';
 
@@ -89,6 +91,33 @@ test('getTimelineZoomBounds clamps default to max on tiny viewports', () => {
   assert.equal(bounds.pixelsPerSecondMax, expectedMax);
   assert.equal(bounds.pixelsPerSecondDefault, expectedMax);
   assert.ok(bounds.pixelsPerSecondDefault <= bounds.pixelsPerSecondMax);
+});
+
+test('getInitialTimelinePixelsPerSecond uses 0.5× on regular width', () => {
+  const bounds = getTimelineZoomBounds(1200, 60, 1);
+  assert.equal(bounds.pixelsPerSecondDefault, TIMELINE_DEFAULT_PIXELS_PER_SECOND);
+  assert.equal(
+    getInitialTimelinePixelsPerSecond(bounds, true),
+    TIMELINE_DEFAULT_PIXELS_PER_SECOND * TIMELINE_REGULAR_INITIAL_ZOOM_MULTIPLIER
+  );
+});
+
+test('getInitialTimelinePixelsPerSecond uses 1× on compact width', () => {
+  const bounds = getTimelineZoomBounds(393, 60, 1);
+  assert.equal(getInitialTimelinePixelsPerSecond(bounds, false), bounds.pixelsPerSecondDefault);
+});
+
+test('getInitialTimelinePixelsPerSecond clamps into bounds', () => {
+  const bounds = getTimelineZoomBounds(400, 20, 1);
+  // Force a case where 0.5× default would be below min if min were raised.
+  const raisedMin = {
+    ...bounds,
+    pixelsPerSecondMin: bounds.pixelsPerSecondDefault * 0.75,
+  };
+  const initial = getInitialTimelinePixelsPerSecond(raisedMin, true);
+  assert.equal(initial, raisedMin.pixelsPerSecondMin);
+  assert.ok(initial >= raisedMin.pixelsPerSecondMin);
+  assert.ok(initial <= raisedMin.pixelsPerSecondMax);
 });
 
 test('getTimelineZoomBounds lets a phone viewport reach 1/32 grid zoom', () => {

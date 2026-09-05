@@ -44,6 +44,7 @@ import {
   getTimelineZoomBounds,
   getTimelineZoomDisplayMultipliers,
   getTimelineZoomMultiplierBounds,
+  getInitialTimelinePixelsPerSecond,
   isTimelineZoomAtDefault,
   pixelsPerSecondFromZoomMultiplier,
   TIMELINE_DEFAULT_PIXELS_PER_SECOND,
@@ -107,6 +108,7 @@ import {
 import { WaveformBarsSvg } from '@/src/components/WaveformBarsSvg';
 import type { MetronomeSettings } from '@/src/storage/types';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
+import { useIsRegularWidth } from '@/src/hooks/useIsRegularWidth';
 import { formatMarkerTime } from '@/src/utils/format';
 
 export type { FadeOverlayConfig, FadeRegionState };
@@ -2198,6 +2200,7 @@ function WaveformViewComponent({
   metronome,
 }: Props) {
   const colors = useVoiceMemosColors();
+  const isRegularWidth = useIsRegularWidth();
   const styles = useMemo(() => createWaveformStyles(colors), [colors]);
   const theme = useMemo(() => ({ colors, styles }), [colors, styles]);
   const scrollRef = useRef<GHScrollView>(null);
@@ -2306,6 +2309,7 @@ function WaveformViewComponent({
     [viewportWidth, duration, tracks.length]
   );
   zoomBoundsRef.current = zoomBounds;
+  const didSeedInitialZoomRef = useRef(false);
   // Frozen for the whole take — rotation / split-view width changes must not
   // recompute pps mid-record (headroom still uses the new viewportWidth).
   const frozenZoom = followRecordingScroll ? frozenZoomRef.current : null;
@@ -2452,6 +2456,7 @@ function WaveformViewComponent({
     );
   };
   const prevGridProcessingKeyRef = useRef<string | null>(null);
+  const prevGridZoomSnapKeyRef = useRef<string | null>(null);
   const layoutPixelsPerSecondRef = useRef(layoutPixelsPerSecond);
   layoutPixelsPerSecondRef.current = layoutPixelsPerSecond;
   const viewportWidthRef = useRef(viewportWidth);
@@ -2674,9 +2679,27 @@ function WaveformViewComponent({
   useEffect(() => {
     if (
       !metronome?.showGrid ||
+      !didSeedInitialZoomRef.current ||
       zoomGestureActiveRef.current ||
-      subdivisionSyncFromZoomRef.current ||
       followRecordingScrollRef.current
+    ) {
+      return;
+    }
+    const gridKey = [
+      metronome.showGrid,
+      metronome.gridBasis,
+      metronome.metronomeGridSubdivision,
+      metronome.timeGridSubdivision,
+      metronome.bpm,
+      metronome.timeSignature,
+    ].join(':');
+    const prevKey = prevGridZoomSnapKeyRef.current;
+    prevGridZoomSnapKeyRef.current = gridKey;
+    // Initial observe (incl. after open-zoom seed) or zoom→subdivision sync: keep pps.
+    if (
+      prevKey === null ||
+      prevKey === gridKey ||
+      subdivisionSyncFromZoomRef.current
     ) {
       return;
     }
@@ -2922,6 +2945,44 @@ function WaveformViewComponent({
       subdivisionSyncFromZoomRef.current = false;
     });
   };
+
+  // One-shot open zoom (iPad 0.5×). Layout effect + ref write so the zoomBounds
+  // clamp useEffect in the same flush cannot overwrite with stale 1× pps.
+  useLayoutEffect(() => {
+    if (didSeedInitialZoomRef.current || viewportWidth <= 0) {
+      return;
+    }
+    const initial = getInitialTimelinePixelsPerSecond(zoomBounds, isRegularWidth);
+    didSeedInitialZoomRef.current = true;
+    pixelsPerSecondRef.current = initial;
+    setPixelsPerSecond(initial);
+
+    const settings = metronomeRef.current;
+    if (settings?.showGrid) {
+      const picked = pickGridSubdivisionForPixelsPerSecond(
+        settings,
+        initial,
+        zoomBounds.pixelsPerSecondDefault,
+        zoomBounds.pixelsPerSecondMax
+      );
+      // Arm snap key to the post-seed subdivision so zoom→grid sync does not
+      // look like a user change that should snap pps back to 1×.
+      prevGridZoomSnapKeyRef.current = [
+        settings.showGrid,
+        settings.gridBasis,
+        picked.metronomeGridSubdivision,
+        picked.timeGridSubdivision,
+        settings.bpm,
+        settings.timeSignature,
+      ].join(':');
+    }
+
+    subdivisionSyncFromZoomRef.current = true;
+    syncSubdivisionFromZoomRef.current(initial);
+    queueMicrotask(() => {
+      subdivisionSyncFromZoomRef.current = false;
+    });
+  }, [viewportWidth, zoomBounds, isRegularWidth]);
 
   const commitPendingZoom = useCallback(() => {
     zoomCommitRafRef.current = null;

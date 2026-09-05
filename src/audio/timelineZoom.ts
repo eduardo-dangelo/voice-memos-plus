@@ -70,6 +70,20 @@ export function clampTimelineTrackZoom(
   return Math.max(bounds.trackZoomMin, Math.min(bounds.trackZoomMax, value));
 }
 
+/** Regular-width (iPad) opens at half design density; 1× stays TIMELINE_DEFAULT. */
+export const TIMELINE_REGULAR_INITIAL_ZOOM_MULTIPLIER = 0.5;
+
+export function getInitialTimelinePixelsPerSecond(
+  bounds: TimelineZoomBounds,
+  isRegularWidth: boolean
+): number {
+  const multiplier = isRegularWidth ? TIMELINE_REGULAR_INITIAL_ZOOM_MULTIPLIER : 1;
+  return clampTimelinePixelsPerSecond(
+    bounds.pixelsPerSecondDefault * multiplier,
+    bounds
+  );
+}
+
 export const TIMELINE_FULL_ZOOM_SPAN_PX = 280;
 
 export function applyPinchDeltaToPixelsPerSecond(
