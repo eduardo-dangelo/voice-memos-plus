@@ -689,6 +689,8 @@ function MemoEditorInner({
   const [processingLayerId, setProcessingLayerId] = useState<string | null>(null);
   const [trackAccordionEnabled, setTrackAccordionEnabledState] = useState(false);
   const [collapsedLayerIds, setCollapsedLayerIds] = useState<Set<string>>(() => new Set());
+  const trackAccordionEnabledRef = useRef(false);
+  trackAccordionEnabledRef.current = trackAccordionEnabled;
   const isPersistingTakeRef = useRef(false);
   const userSelectedDuringPersistRef = useRef(false);
   const processingLayerSetAtRef = useRef<number | null>(null);
@@ -1758,9 +1760,39 @@ function MemoEditorInner({
     [dismissPrecountAndWait, engine]
   );
 
+  const expandManualCollapsedLayer = useCallback(
+    (layerId: string) => {
+      if (trackAccordionEnabledRef.current) {
+        return;
+      }
+      const recordingLayoutActive =
+        recordingArmedRef.current ||
+        stackModeRef.current ||
+        replaceModeRef.current ||
+        engineState.isRecording;
+      if (recordingLayoutActive) {
+        return;
+      }
+      setCollapsedLayerIds((collapsed) => {
+        if (!collapsed.has(layerId)) {
+          return collapsed;
+        }
+        const next = new Set(collapsed);
+        next.delete(layerId);
+        return next;
+      });
+    },
+    [engineState.isRecording]
+  );
+
   const handleTrackPress = useCallback(
     (trackId: string) => {
-      if (trackId === activeLayerIdRef.current || savingTrimRef.current) {
+      if (savingTrimRef.current) {
+        return;
+      }
+
+      if (trackId === activeLayerIdRef.current) {
+        expandManualCollapsedLayer(trackId);
         return;
       }
 
@@ -1773,22 +1805,7 @@ function MemoEditorInner({
         return;
       }
 
-      const recordingLayoutActive =
-        recordingArmedRef.current ||
-        stackModeRef.current ||
-        replaceModeRef.current ||
-        engineState.isRecording;
-
-      if (!recordingLayoutActive) {
-        setCollapsedLayerIds((collapsed) => {
-          if (!collapsed.has(trackId)) {
-            return collapsed;
-          }
-          const next = new Set(collapsed);
-          next.delete(trackId);
-          return next;
-        });
-      }
+      expandManualCollapsedLayer(trackId);
 
       if (isPersistingTakeRef.current) {
         userSelectedDuringPersistRef.current = true;
@@ -1808,7 +1825,7 @@ function MemoEditorInner({
     },
     [
       confirmEditDraft,
-      engineState.isRecording,
+      expandManualCollapsedLayer,
       flushEffectsPersist,
       flushStartTimePersist,
     ]
@@ -2193,7 +2210,7 @@ function MemoEditorInner({
         ? ([
             {
               id: isCollapsed ? 'expand' : 'collapse',
-              title: isCollapsed ? 'Expand Track' : 'Collapse Track',
+              title: isCollapsed ? 'Expand' : 'Collapse',
               systemImage: isCollapsed
                 ? 'rectangle.expand.vertical'
                 : 'rectangle.compress.vertical',
@@ -2227,12 +2244,12 @@ function MemoEditorInner({
         (partner) => !isLayerLocked(getLayerEffects(partner))
       );
       const actions: IconActionSheetItem[] = [
-        { id: 'export', title: 'Export Track', systemImage: 'square.and.arrow.up' },
-        { id: 'rename', title: 'Rename Track', systemImage: 'pencil' },
-        { id: 'duplicate', title: 'Duplicate Track', systemImage: 'plus.square.on.square' },
+        { id: 'export', title: 'Export', systemImage: 'square.and.arrow.up' },
+        { id: 'rename', title: 'Rename', systemImage: 'pencil' },
+        { id: 'duplicate', title: 'Duplicate', systemImage: 'plus.square.on.square' },
         { id: 'changeColor', title: 'Change Color', systemImage: 'paintpalette' },
         ...collapseMenuItem,
-        { id: 'loop', title: 'Loop Track', systemImage: 'repeat' },
+        { id: 'loop', title: 'Loop', systemImage: 'repeat' },
         {
           id: 'mute',
           title: effects.muted ? 'Unmute' : 'Mute',
@@ -2259,7 +2276,7 @@ function MemoEditorInner({
       if (canDelete) {
         actions.push({
           id: 'delete',
-          title: 'Delete Track',
+          title: 'Delete',
           systemImage: 'trash',
           destructive: true,
         });
@@ -2285,6 +2302,8 @@ function MemoEditorInner({
         layerId !== activeLayerIdRef.current &&
         !savingTrimRef.current &&
         isLayerSelectable(getLayerEffects(layer), anySoloActive);
+
+      expandManualCollapsedLayer(layerId);
 
       if (isPersistingTakeRef.current && canSelect) {
         userSelectedDuringPersistRef.current = true;
@@ -2312,6 +2331,7 @@ function MemoEditorInner({
     },
     [
       confirmEditDraft,
+      expandManualCollapsedLayer,
       flushEffectsPersist,
       flushStartTimePersist,
       getTrackMenuActions,
@@ -2335,6 +2355,7 @@ function MemoEditorInner({
       );
 
       const selectLayerIfNeeded = () => {
+        expandManualCollapsedLayer(layerId);
         if (layerId !== activeLayerId && isLayerSelectable(effects, anySoloActive)) {
           setActiveLayerId(layerId);
         }
@@ -2472,6 +2493,7 @@ function MemoEditorInner({
       applyLayerEffectsChange,
       engineState.isPlaying,
       engineState.isRecording,
+      expandManualCollapsedLayer,
       handleDeleteTrack,
       handleDuplicateTrack,
       memo,

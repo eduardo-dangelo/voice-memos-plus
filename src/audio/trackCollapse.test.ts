@@ -104,7 +104,7 @@ test('shouldShowAccordionAutoEnableAlert at layer threshold', () => {
   );
 });
 
-test('shouldPromptAccordionAutoEnableBeforeStackAtCount at 4 playable layers', () => {
+test('shouldPromptAccordionAutoEnableBeforeStackAtCount at 5 playable layers', () => {
   assert.equal(
     shouldPromptAccordionAutoEnableBeforeStackAtCount(
       ACCORDION_AUTO_ENABLE_LAYER_COUNT - 1,
@@ -148,11 +148,11 @@ test('shouldPromptAccordionAutoEnableBeforeStackAtCount skips below threshold', 
   );
 });
 
-test('didCrossAccordionAutoEnableThreshold detects 5th layer crossing', () => {
-  assert.equal(didCrossAccordionAutoEnableThreshold(3, 4), false);
-  assert.equal(didCrossAccordionAutoEnableThreshold(4, 5), true);
-  assert.equal(didCrossAccordionAutoEnableThreshold(5, 6), false);
+test('didCrossAccordionAutoEnableThreshold detects 6th layer crossing', () => {
+  assert.equal(didCrossAccordionAutoEnableThreshold(4, 5), false);
+  assert.equal(didCrossAccordionAutoEnableThreshold(5, 6), true);
   assert.equal(didCrossAccordionAutoEnableThreshold(6, 7), false);
+  assert.equal(didCrossAccordionAutoEnableThreshold(7, 8), false);
 });
 
 test('shouldApplyTrackAccordionCollapse requires accordion on and multiple tracks', () => {

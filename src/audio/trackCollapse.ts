@@ -1,8 +1,8 @@
 /** Fixed header height for a collapsed track lane — matches expanded region header. */
 export const COLLAPSED_TRACK_HEIGHT = 18;
 
-/** Playable layer count at which accordion is auto-enabled for performance. */
-export const ACCORDION_AUTO_ENABLE_LAYER_COUNT = 5;
+/** Playable layer count at which accordion is auto-enabled. */
+export const ACCORDION_AUTO_ENABLE_LAYER_COUNT = 6;
 
 export function shouldShowAccordionAutoEnableAlert(
   playableCount: number,

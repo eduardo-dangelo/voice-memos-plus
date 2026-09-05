@@ -9,7 +9,7 @@ import {
 import { getPlayableLayers, type Memo } from '@/src/storage/types';
 
 export const ACCORDION_AUTO_ENABLE_PRE_RECORD_MESSAGE =
-  'Unselected tracks will be collapsed to improve app Performance. You can change this at anytime.';
+  'Unselected layers will be collapsed. You can change this anytime.';
 
 export type AccordionAutoEnableResult = {
   shown: boolean;
