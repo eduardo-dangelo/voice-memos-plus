@@ -274,6 +274,7 @@ export async function stopAndSave(
   }
 
   const savePromise = (async (): Promise<RecordingSaveResult | null> => {
+    let saveMemoId: string | null = getSession()?.memoId ?? null;
     try {
       const isBackground = AppState.currentState !== 'active';
 
@@ -282,6 +283,7 @@ export async function stopAndSave(
       options?.onCaptureComplete?.();
 
       const currentSession = getSession() ?? (await ensureSessionForStop());
+      saveMemoId = currentSession.memoId;
       const currentMemo = await getMemo(currentSession.memoId);
       if (!currentMemo) {
         throw new Error('Memo not found');
@@ -426,6 +428,9 @@ export async function stopAndSave(
         await engine.finishDeferredPlaybackSetup();
       } catch {
         // Best-effort restore.
+      }
+      if (saveMemoId && getSession()?.memoId === saveMemoId) {
+        clearSession();
       }
       throw error;
     }

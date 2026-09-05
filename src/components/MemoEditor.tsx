@@ -124,6 +124,7 @@ import {
 } from '@/src/recording/activeRecordingSession';
 import { decideAutoRecord } from '@/src/recording/autoRecordGate';
 import { consumeAutoRecordIntent } from '@/src/recording/autoRecordIntent';
+import { mergeRecordingSaveIntoMemo } from '@/src/recording/mergeRecordingSaveIntoMemo';
 import { subscribeMemoUpdate } from '@/src/recording/memoUpdateEvents';
 import { ensureRecordingBootstrapComplete } from '@/src/recording/recordingBootstrap';
 import {
@@ -311,42 +312,6 @@ function injectLiveRecordingPeaks(
     }
     return track;
   });
-}
-
-/** Preserve in-editor layer edits when a save notify arrives mid-persist. */
-function mergeRecordingSaveIntoMemo(incoming: Memo, current: Memo): Memo {
-  const currentById = new Map(current.layers.map((layer) => [layer.id, layer]));
-  const layers = incoming.layers.map((incomingLayer) => {
-    const edited = currentById.get(incomingLayer.id);
-    if (!edited) {
-      return incomingLayer;
-    }
-    // Empty pre-record shell shares the first-take layer id — do not clobber
-    // saved effects/startTime with trimOut:0 defaults (hollow ~0.5s track UI).
-    if (edited.duration <= 0) {
-      return {
-        ...incomingLayer,
-        color: edited.color ?? incomingLayer.color,
-        label: edited.label || incomingLayer.label,
-      };
-    }
-    return {
-      ...incomingLayer,
-      startTime: edited.startTime,
-      effects: edited.effects ?? incomingLayer.effects,
-      color: edited.color ?? incomingLayer.color,
-      label: edited.label,
-      loopUntil: edited.loopUntil ?? incomingLayer.loopUntil,
-    };
-  });
-  return {
-    ...incoming,
-    layers,
-    loopStart: current.loopStart ?? incoming.loopStart,
-    loopEnd: current.loopEnd ?? incoming.loopEnd,
-    loopEnabled: current.loopEnabled ?? incoming.loopEnabled,
-    loopSnapToGrid: current.loopSnapToGrid ?? incoming.loopSnapToGrid,
-  };
 }
 
 const SAVE_PHASE_LABELS: Record<RecordingSavePhase, string> = {
@@ -565,6 +530,13 @@ function MemoEditorInner({
   const autoRecordStarted = useRef(false);
   const loadGenerationRef = useRef(0);
   const beginRecordingInFlight = useRef(false);
+  /** Sticky for this memo id: true if mount opened with autoRecord (for dismiss-on-missing). */
+  const recordIntentRef = useRef(false);
+  const recordIntentMemoIdRef = useRef<string | undefined>(undefined);
+  if (id !== recordIntentMemoIdRef.current) {
+    recordIntentMemoIdRef.current = id;
+    recordIntentRef.current = record === '1';
+  }
   const persistIdleResolveRef = useRef<(() => void) | null>(null);
   const persistIdlePromiseRef = useRef<Promise<void>>(Promise.resolve());
   const deleteQueueRef = useRef<string[]>([]);
@@ -918,6 +890,7 @@ function MemoEditorInner({
     if (!pending) {
       return;
     }
+    pendingEffectsPersist.current = null;
     void updateLayerEffects(
       pending.memoId,
       pending.layerId,
@@ -2716,7 +2689,7 @@ function MemoEditorInner({
       clearArmedRecordingUi();
       setMemo(null);
       setLoading(false);
-      if (getLastDiscardedMemoId() === id || record === '1') {
+      if (getLastDiscardedMemoId() === id || recordIntentRef.current) {
         onDismiss();
       }
       return;
@@ -2779,14 +2752,20 @@ function MemoEditorInner({
           return;
         }
       } else {
-        engine.unload();
-        // unload() resets engine metronome to defaults; restore memo settings so
-        // brand-new recordings still arm clicks when the UI shows metro on.
-        engine.setMetronome(getMemoMetronomeSettings(loaded));
+        const armingOrPrepared =
+          beginRecordingInFlight.current ||
+          engine.isPreparedForRecording() ||
+          engine.hasRecordingCaptureStarted();
+        if (!armingOrPrepared) {
+          engine.unload();
+          // unload() resets engine metronome to defaults; restore memo settings so
+          // brand-new recordings still arm clicks when the UI shows metro on.
+          engine.setMetronome(getMemoMetronomeSettings(loaded));
+        }
       }
     }
     setLoading(false);
-  }, [clearArmedRecordingUi, engine, id, onDismiss, record]);
+  }, [clearArmedRecordingUi, engine, id, onDismiss]);
 
   const recoverStuckRecordingStart = useCallback(async () => {
     if (recoveringStuckRef.current) {
@@ -2948,6 +2927,16 @@ function MemoEditorInner({
       if (!pendingMetronomePersist.current) {
         setLiveMetronomeSettings(getMemoMetronomeSettings(merged));
       }
+      if (result.wasReplaceMode && result.activeLayerId) {
+        const pending = pendingEffectsPersist.current;
+        if (pending?.layerId === result.activeLayerId) {
+          if (persistEffectsTimeout.current) {
+            clearTimeout(persistEffectsTimeout.current);
+            persistEffectsTimeout.current = null;
+          }
+          pendingEffectsPersist.current = null;
+        }
+      }
       // Defer new-track selection until stopAndSaveActiveRecording finishes;
       // mid-save notifies would highlight the take while phases are still running.
       if (!isPersistingTakeRef.current) {
@@ -3086,9 +3075,9 @@ function MemoEditorInner({
       autoRecordStarted.current = true;
       setMemo(refreshed);
       pendingLocationNamingRef.current = true;
-      onAutoRecordConsumed?.();
 
       if (beginRecordingInFlight.current || engine.getState().isRecording) {
+        onAutoRecordConsumed?.();
         return;
       }
       beginRecordingInFlight.current = true;
@@ -3096,6 +3085,8 @@ function MemoEditorInner({
       clearRecordingStartError();
       stuckRecoveryRef.current = false;
       startArmingWatchdog();
+      // Fresh arm — clear stale cancel from prior Modal dismiss / id mount.
+      precountCancelledRef.current = false;
       const memoId = refreshed.id;
       const memoTitle = refreshed.title;
       const precountMode = getMemoPrecountMode(refreshed);
@@ -3217,6 +3208,8 @@ function MemoEditorInner({
           error instanceof Error ? error.message : 'Unknown error'
         );
       } finally {
+        // Consume after arm attempt so flipping autoRecord cannot recreate loadMemo mid-arm.
+        onAutoRecordConsumed?.();
         beginRecordingInFlight.current = false;
         setIsArmingRecording(false);
         stuckRecoveryRef.current = false;
@@ -3376,6 +3369,16 @@ function MemoEditorInner({
             : result.memo;
         memoRef.current = merged;
         setMemo(merged);
+        if (result.wasReplaceMode && result.activeLayerId) {
+          const pending = pendingEffectsPersist.current;
+          if (pending?.layerId === result.activeLayerId) {
+            if (persistEffectsTimeout.current) {
+              clearTimeout(persistEffectsTimeout.current);
+              persistEffectsTimeout.current = null;
+            }
+            pendingEffectsPersist.current = null;
+          }
+        }
         const nextActiveLayerId = userSelectedDuringPersistRef.current
           ? activeLayerIdRef.current
           : result.activeLayerId;
