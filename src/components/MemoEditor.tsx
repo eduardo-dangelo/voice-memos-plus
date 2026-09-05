@@ -962,9 +962,6 @@ function MemoEditorInner({
     };
     editGestureActiveRef.current = false;
     setActiveEditor(tool);
-    if (tool === 'trim' || tool === 'move') {
-      setEditSnapSelection(getDefaultMoveSnapSelection(liveMetronomeSettingsRef.current));
-    }
   }, []);
 
   const cancelEditDraft = useCallback(async (): Promise<void> => {
@@ -4578,7 +4575,11 @@ function MemoEditorInner({
     }
   }, [activeEditor, activeLayerId, memo]);
 
-  const blockNavGesture = isRecording || (isPane && sidebarCollapsed);
+  const blockNavGesture =
+    isRecording ||
+    (isPane && sidebarCollapsed) ||
+    activeEditor === 'trim' ||
+    activeEditor === 'move';
 
   useLayoutEffect(() => {
     navigation.setOptions({ gestureEnabled: !blockNavGesture });
