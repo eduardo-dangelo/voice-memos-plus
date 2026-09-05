@@ -7,6 +7,7 @@ import {
   buildLayerPlaybackPlans,
   filterPlaybackPlansBySilentLayer,
   getLayerEffectsForPlayback,
+  needsAudibilityResync,
   partitionPlansByHorizon,
   playbackScheduleLeadSec,
   PLAYBACK_SCHEDULE_CHUNK_SEC,
@@ -240,4 +241,52 @@ test('playbackScheduleLeadSec grows with ready plans and stays bounded', () => {
   assert.ok(playbackScheduleLeadSec(10) > playbackScheduleLeadSec(1));
   assert.equal(playbackScheduleLeadSec(1000), PLAYBACK_SCHEDULE_LEAD_MAX_SEC);
   assert.equal(playbackScheduleLeadSec(-3), PLAYBACK_SCHEDULE_LEAD_SEC);
+});
+
+test('needsAudibilityResync is true when clearing solo reveals unscheduled layers', () => {
+  const a = makeLayer('a');
+  const b = makeLayer('b');
+  a.effects = { ...createDefaultLayerEffects(10), solo: false };
+  b.effects = { ...createDefaultLayerEffects(10), solo: false };
+  const plans = [
+    { layer: a, playbackEffects: a.effects },
+    { layer: b, playbackEffects: b.effects },
+  ];
+  // Play started with only A armed (solo was on at schedule time).
+  assert.equal(needsAudibilityResync(plans, false, new Set(['a'])), true);
+});
+
+test('needsAudibilityResync is false when every audible layer is already scheduled', () => {
+  const a = makeLayer('a');
+  const b = makeLayer('b');
+  const plans = [
+    { layer: a, playbackEffects: createDefaultLayerEffects(10) },
+    { layer: b, playbackEffects: createDefaultLayerEffects(10) },
+  ];
+  assert.equal(needsAudibilityResync(plans, false, new Set(['a', 'b'])), false);
+});
+
+test('needsAudibilityResync ignores inaudible layers still missing sources', () => {
+  const a = makeLayer('a');
+  const b = makeLayer('b');
+  a.effects = { ...createDefaultLayerEffects(10), solo: true };
+  b.effects = { ...createDefaultLayerEffects(10), solo: false };
+  const plans = [
+    { layer: a, playbackEffects: a.effects },
+    { layer: b, playbackEffects: b.effects },
+  ];
+  // Solo still active — B is inaudible, no resync needed.
+  assert.equal(needsAudibilityResync(plans, true, new Set(['a'])), false);
+});
+
+test('needsAudibilityResync is true when unmuting reveals an unscheduled layer', () => {
+  const a = makeLayer('a');
+  const b = makeLayer('b');
+  a.effects = createDefaultLayerEffects(10);
+  b.effects = createDefaultLayerEffects(10);
+  const plans = [
+    { layer: a, playbackEffects: a.effects },
+    { layer: b, playbackEffects: b.effects },
+  ];
+  assert.equal(needsAudibilityResync(plans, false, new Set(['a'])), true);
 });

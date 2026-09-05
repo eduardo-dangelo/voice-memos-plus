@@ -1,4 +1,4 @@
-import { normalizeLayerEffects, type LayerEffects } from '@/src/audio/layerEffects';
+import { isLayerAudible, normalizeLayerEffects, type LayerEffects } from '@/src/audio/layerEffects';
 import type { LoadedLayer } from '@/src/audio/MemoAudioEngine';
 
 export const PLAYBACK_END_TOLERANCE = 0.05;
@@ -281,4 +281,25 @@ export function filterPlaybackPlansBySilentLayer<T extends { layer: { id: string
     return plans;
   }
   return plans.filter((plan) => plan.layer.id !== silentLayerId);
+}
+
+/**
+ * True when an audible plan has no armed BufferSource segments — e.g. play
+ * started while soloed/muted and audibility later expands. Callers should
+ * resync playback rather than only raising channel gains.
+ */
+export function needsAudibilityResync(
+  plans: ReadonlyArray<{ layer: { id: string }; playbackEffects: LayerEffects }>,
+  anySoloActive: boolean,
+  scheduledLayerIds: ReadonlySet<string>
+): boolean {
+  for (const plan of plans) {
+    if (!isLayerAudible(plan.playbackEffects, anySoloActive)) {
+      continue;
+    }
+    if (!scheduledLayerIds.has(plan.layer.id)) {
+      return true;
+    }
+  }
+  return false;
 }

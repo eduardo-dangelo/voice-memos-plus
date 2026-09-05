@@ -51,6 +51,7 @@ import {
   buildLayerPlaybackPlans,
   filterPlaybackPlansBySilentLayer,
   getLayerEffectsForPlayback,
+  needsAudibilityResync,
   PLAYBACK_END_TOLERANCE,
   PLAYBACK_SCHEDULE_CHUNK_SEC,
   PLAYBACK_SCHEDULE_EXTEND_LEAD_SEC,
@@ -1481,6 +1482,30 @@ export class MemoAudioEngine {
     return this.activeLayerPlaybacks.filter((entry) => entry.layerId === layerId);
   }
 
+  /**
+   * True when clearing solo/mute would reveal layers that were never armed at
+   * play start (schedulePlaySpan skips inaudible layers).
+   */
+  private hasUnscheduledAudibleLayer(): boolean {
+    const context = this.context;
+    if (!context) {
+      return false;
+    }
+    const elapsed = this.getElapsedPlaybackTime(context);
+    const endAt = this.getPlaybackEnd(this.state.duration);
+    if (endAt <= elapsed + PLAYBACK_END_TOLERANCE) {
+      return false;
+    }
+    const scheduledLayerIds = new Set(
+      this.activeLayerPlaybacks.map((entry) => entry.layerId)
+    );
+    return needsAudibilityResync(
+      this.buildPlaybackPlans(elapsed, endAt, { expandLoopCycles: false }),
+      this.getAnySoloActive(),
+      scheduledLayerIds
+    );
+  }
+
   private findActiveSegmentAtElapsed(
     layerId: string,
     elapsed: number
@@ -2706,8 +2731,13 @@ export class MemoAudioEngine {
     }
 
     if (this.context) {
-      if (partial.solo !== undefined) {
+      const audibilityChanged =
+        partial.solo !== undefined || partial.muted !== undefined;
+      if (audibilityChanged) {
         this.syncAllLayerGains(this.context);
+        if (this.state.isPlaying && this.hasUnscheduledAudibleLayer()) {
+          this.resyncPlaybackAtCurrentTime();
+        }
         return;
       }
       this.mixGraph.applyLayerEffects(
