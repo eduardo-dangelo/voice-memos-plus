@@ -1,3 +1,4 @@
+import * as Haptics from 'expo-haptics';
 import { SymbolView } from 'expo-symbols';
 import { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
@@ -12,6 +13,8 @@ type Props = {
   onPlayPause: () => void;
   onSkipBack: () => void;
   onSkipForward: () => void;
+  /** Starts decode early on finger-down (optional; MemoEditor wires warmPlaybackBuffers). */
+  onPlayPressIn?: () => void;
   onRecordPress?: () => void;
   onStopRecording?: () => void;
   recordDisabled?: boolean;
@@ -31,6 +34,7 @@ export function PlaybackControls({
   onPlayPause,
   onSkipBack,
   onSkipForward,
+  onPlayPressIn,
   onRecordPress,
   onStopRecording,
   recordDisabled = false,
@@ -76,14 +80,31 @@ export function PlaybackControls({
           </Pressable>
         ) : (
           <View style={styles.buttons}>
-            <Pressable accessibilityLabel="Skip back 15 seconds" onPress={onSkipBack} style={styles.iconButton}>
+            <Pressable
+              accessibilityLabel="Skip back 15 seconds"
+              onPress={onSkipBack}
+              style={({ pressed }) => [
+                styles.iconButton,
+                pressed && styles.controlPressed,
+              ]}>
               <SymbolView name={{ ios: 'gobackward.15' }} size={compact ? 24 : 28} tintColor={colors.text} />
             </Pressable>
             <Pressable
               accessibilityLabel={isPlaying ? 'Pause' : 'Play'}
               disabled={playDisabled}
-              onPress={onPlayPause}
-              style={[styles.playButton, playDisabled && styles.playDisabled]}>
+              onPressIn={playDisabled ? undefined : onPlayPressIn}
+              onPress={() => {
+                if (playDisabled) {
+                  return;
+                }
+                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                onPlayPause();
+              }}
+              style={({ pressed }) => [
+                styles.playButton,
+                playDisabled && styles.playDisabled,
+                pressed && !playDisabled && styles.controlPressed,
+              ]}>
               <SymbolView
                 name={{ ios: isPlaying ? 'pause.fill' : 'play.fill' }}
                 size={compact ? 28 : 34}
@@ -103,7 +124,13 @@ export function PlaybackControls({
                 <View style={[styles.recordDot, compact && styles.recordDotCompact]} />
               </Pressable>
             ) : null}
-            <Pressable accessibilityLabel="Skip forward 15 seconds" onPress={onSkipForward} style={styles.iconButton}>
+            <Pressable
+              accessibilityLabel="Skip forward 15 seconds"
+              onPress={onSkipForward}
+              style={({ pressed }) => [
+                styles.iconButton,
+                pressed && styles.controlPressed,
+              ]}>
               <SymbolView name={{ ios: 'goforward.15' }} size={compact ? 24 : 28} tintColor={colors.text} />
             </Pressable>
           </View>
@@ -154,6 +181,9 @@ function useStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
         },
         playButton: {
           padding: 4,
+        },
+        controlPressed: {
+          opacity: 0.85,
         },
         playDisabled: {
           opacity: 0.4,

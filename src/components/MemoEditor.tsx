@@ -5242,6 +5242,9 @@ function MemoEditorInner({
                 showTimeLabels={false}
                 stopRecordingDisabled={!isRecording}
                 onPlayPause={() => void handlePlayPause()}
+                onPlayPressIn={() => {
+                  void engine.warmPlaybackBuffers();
+                }}
                 onRecordPress={showRecordOptions}
                 onSkipBack={() => engine.skip(-15)}
                 onSkipForward={() => engine.skip(15)}

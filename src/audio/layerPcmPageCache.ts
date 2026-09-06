@@ -118,7 +118,14 @@ export class LayerPcmPageCache {
       return null;
     }
 
-    const buffer = context.createBuffer(1, window.samples.length, window.sampleRate);
+    const contextRate = Math.round(context.sampleRate);
+    // Native createBuffer may coerce sampleRate to the context rate. Only page
+    // when the WAV rate already matches — otherwise content plays fast/slow.
+    if (Math.round(window.sampleRate) !== contextRate) {
+      return null;
+    }
+
+    const buffer = context.createBuffer(1, window.samples.length, contextRate);
     const channel =
       window.samples.buffer.byteLength === window.samples.length * 4 &&
       window.samples.byteOffset === 0

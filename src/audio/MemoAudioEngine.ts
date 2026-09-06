@@ -318,6 +318,12 @@ export class MemoAudioEngine {
   private layerBuffers = new Map<string, AudioBuffer>();
   /** Resampled playback buffers keyed by `${path}@${contextSampleRate}`. */
   private resampledLayerBuffers = new Map<string, AudioBuffer>();
+  /** In-flight getLayerBuffer work keyed like resampledLayerBuffers (dedupe warm+play). */
+  private layerBufferInflight = new Map<string, Promise<AudioBuffer>>();
+  /** Bumped when PCM caches are cleared so late decodes do not re-seed RAM. */
+  private bufferLoadEpoch = 0;
+  /** Bumped to cancel background warmPlaybackBuffers. */
+  private warmGeneration = 0;
   /** Disk-paged PCM for long WAV stems (working set, not full-file). */
   private pcmPageCache = new LayerPcmPageCache();
   /** Clears decoded PCM after a long pause (see LAYER_PCM_IDLE_EVICT_MS). */
@@ -855,6 +861,7 @@ export class MemoAudioEngine {
         this.deferredSetupInFlight = null;
       }
     }
+    void this.warmPlaybackBuffers();
   }
 
   private isAppInBackground(): boolean {
@@ -1389,7 +1396,11 @@ export class MemoAudioEngine {
   }
 
   /** Arm constant-voice play plans for the remaining [startAt, endAt) span. */
-  private schedulePlaySpan(startAt: number, endAt: number): number {
+  private schedulePlaySpan(
+    startAt: number,
+    endAt: number,
+    preloadedBuffers?: Map<string, AudioBuffer>
+  ): number {
     const context = this.context;
     if (!context || endAt <= startAt + PLAYBACK_END_TOLERANCE) {
       return 0;
@@ -1399,6 +1410,7 @@ export class MemoAudioEngine {
       expandLoopCycles: false,
     });
     const anySoloActive = this.getAnySoloActive();
+    const contextRate = Math.round(context.sampleRate);
 
     let scheduledSources = 0;
     for (const plan of planSpecs) {
@@ -1406,26 +1418,32 @@ export class MemoAudioEngine {
         continue;
       }
 
-      const buffer =
+      const preloaded = preloadedBuffers?.get(plan.layer.path);
+      const standby = this.recordingPlaybackBuffers.get(plan.layer.path);
+      const bufferCandidate =
+        (preloaded && Math.round(preloaded.sampleRate) === contextRate
+          ? preloaded
+          : null) ??
         this.getCachedPlaybackBuffer(plan.layer) ??
-        this.recordingPlaybackBuffers.get(plan.layer.path);
-      if (!buffer) {
+        (standby && Math.round(standby.sampleRate) === contextRate ? standby : null);
+      if (!bufferCandidate) {
         if (__DEV__) {
           console.warn(
-            `[MemoAudioEngine] play missing buffer for layer ${plan.layer.id}`
+            `[MemoAudioEngine] play missing rate-matched buffer for layer ${plan.layer.id} ` +
+              `(context ${contextRate} Hz)`
           );
         }
         continue;
       }
 
-      const resolved = resolvePlanAgainstBuffer(plan, buffer.duration);
+      const resolved = resolvePlanAgainstBuffer(plan, bufferCandidate.duration);
       if (!resolved) {
         continue;
       }
 
       scheduledSources += this.scheduleResolvedLayerPlan(context, {
         layer: plan.layer,
-        buffer,
+        buffer: bufferCandidate,
         playbackEffects: resolved.playbackEffects,
         bufferOffset: resolved.bufferOffset,
         fileBufferOffset: resolved.bufferOffset,
@@ -2351,9 +2369,61 @@ export class MemoAudioEngine {
   }
 
   private invalidateLayerBuffers(): void {
+    this.bufferLoadEpoch += 1;
+    this.layerBufferInflight.clear();
     this.layerBuffers.clear();
     this.resampledLayerBuffers.clear();
     this.pcmPageCache.clear();
+  }
+
+  private cancelPlaybackWarm(): void {
+    this.warmGeneration += 1;
+  }
+
+  /**
+   * Best-effort background decode of audible layers so Play is near-instant.
+   * Cancelled on unload / new load / record arm. Does not run after idle eviction.
+   */
+  async warmPlaybackBuffers(): Promise<void> {
+    if (
+      this.state.isRecording ||
+      this.recordingPrepared ||
+      this.recordingWarmupFinalized ||
+      this.recordingPrepareInFlight ||
+      this.recordingStartInFlight ||
+      this.loadedLayers.length === 0
+    ) {
+      return;
+    }
+
+    this.cancelPcmIdleEvict();
+    const gen = this.warmGeneration;
+    try {
+      const context = await this.ensureContext();
+      if (gen !== this.warmGeneration || this.state.isRecording) {
+        return;
+      }
+      const anySoloActive = this.getAnySoloActive();
+      for (const layer of this.loadedLayers) {
+        if (gen !== this.warmGeneration || this.state.isRecording) {
+          return;
+        }
+        if (layer.duration <= 0) {
+          continue;
+        }
+        if (!isLayerAudible(this.getLoadedLayerEffects(layer), anySoloActive)) {
+          continue;
+        }
+        if (this.getCachedPlaybackBuffer(layer)) {
+          continue;
+        }
+        await this.getLayerBuffer(context, layer);
+      }
+    } catch (error) {
+      if (__DEV__) {
+        console.warn('[audio] warmPlaybackBuffers failed', error);
+      }
+    }
   }
 
   /**
@@ -2396,6 +2466,8 @@ export class MemoAudioEngine {
     ) {
       return;
     }
+    // Stop any background warm from re-filling RAM after this eviction.
+    this.cancelPlaybackWarm();
     if (__DEV__) {
       const before = this.getBufferCacheStats();
       console.log(
@@ -2418,6 +2490,11 @@ export class MemoAudioEngine {
     }
     this.layerBuffers.delete(path);
     this.pcmPageCache.clearPath(path);
+    for (const key of [...this.layerBufferInflight.keys()]) {
+      if (key === path || key.startsWith(`${path}@`)) {
+        this.layerBufferInflight.delete(key);
+      }
+    }
     for (const key of getResampledCacheKeysForPath(
       path,
       this.resampledLayerBuffers.keys()
@@ -2451,6 +2528,12 @@ export class MemoAudioEngine {
         this.resampledLayerBuffers.delete(key);
       }
     }
+    for (const key of [...this.layerBufferInflight.keys()]) {
+      const path = key.includes('@') ? key.slice(0, key.lastIndexOf('@')) : key;
+      if (!activePaths.has(path)) {
+        this.layerBufferInflight.delete(key);
+      }
+    }
   }
 
   private resampledBufferKey(path: string, contextRate: number): string {
@@ -2462,8 +2545,11 @@ export class MemoAudioEngine {
     if (cached) {
       return cached;
     }
+    const epoch = this.bufferLoadEpoch;
     const buffer = await decodeAudioData(layer.path);
-    this.layerBuffers.set(layer.path, buffer);
+    if (epoch === this.bufferLoadEpoch) {
+      this.layerBuffers.set(layer.path, buffer);
+    }
     return buffer;
   }
 
@@ -2503,13 +2589,38 @@ export class MemoAudioEngine {
       return cachedResampled;
     }
 
+    const inflight = this.layerBufferInflight.get(cacheKey);
+    if (inflight) {
+      return inflight;
+    }
+
+    const epoch = this.bufferLoadEpoch;
+    const promise = this.loadLayerBufferUncached(context, layer, cacheKey, epoch).finally(
+      () => {
+        if (this.layerBufferInflight.get(cacheKey) === promise) {
+          this.layerBufferInflight.delete(cacheKey);
+        }
+      }
+    );
+    this.layerBufferInflight.set(cacheKey, promise);
+    return promise;
+  }
+
+  private async loadLayerBufferUncached(
+    context: AudioContext,
+    layer: LoadedLayer,
+    cacheKey: string,
+    epoch: number
+  ): Promise<AudioBuffer> {
     // Native decode-at-rate: avoids multi-second JS resample on first play when
     // the playback context is 48k and files are 44.1k (felt like "play is broken").
     try {
-      const decodedAtRate = await decodeAudioData(layer.path, contextRate);
-      if (Math.round(decodedAtRate.sampleRate) === contextRate) {
-        this.resampledLayerBuffers.set(cacheKey, decodedAtRate);
-        this.dropFileRateBufferIfPlaybackCopyReady(layer.path);
+      const decodedAtRate = await decodeAudioData(layer.path, Math.round(context.sampleRate));
+      if (Math.round(decodedAtRate.sampleRate) === Math.round(context.sampleRate)) {
+        if (epoch === this.bufferLoadEpoch) {
+          this.resampledLayerBuffers.set(cacheKey, decodedAtRate);
+          this.dropFileRateBufferIfPlaybackCopyReady(layer.path);
+        }
         return decodedAtRate;
       }
     } catch {
@@ -2518,9 +2629,12 @@ export class MemoAudioEngine {
 
     const decoded = await this.getDecodedLayerBuffer(layer);
     const bufferRate = Math.round(decoded.sampleRate);
+    const contextRate = Math.round(context.sampleRate);
 
     if (bufferRate === contextRate) {
-      this.resampledLayerBuffers.set(cacheKey, decoded);
+      if (epoch === this.bufferLoadEpoch) {
+        this.resampledLayerBuffers.set(cacheKey, decoded);
+      }
       return decoded;
     }
 
@@ -2536,8 +2650,10 @@ export class MemoAudioEngine {
       contextRate,
       context
     );
-    this.resampledLayerBuffers.set(cacheKey, resampled);
-    this.dropFileRateBufferIfPlaybackCopyReady(layer.path);
+    if (epoch === this.bufferLoadEpoch) {
+      this.resampledLayerBuffers.set(cacheKey, resampled);
+      this.dropFileRateBufferIfPlaybackCopyReady(layer.path);
+    }
     return resampled;
   }
 
@@ -2562,11 +2678,26 @@ export class MemoAudioEngine {
       return null;
     }
     const contextRate = Math.round(this.context.sampleRate);
-    return (
-      this.resampledLayerBuffers.get(this.resampledBufferKey(layer.path, contextRate)) ??
-      this.layerBuffers.get(layer.path) ??
-      null
+    const resampled = this.resampledLayerBuffers.get(
+      this.resampledBufferKey(layer.path, contextRate)
     );
+    if (resampled && Math.round(resampled.sampleRate) === contextRate) {
+      return resampled;
+    }
+    // Only use the file-rate cache when it already matches the context.
+    // A 44.1k stem on a 48k context plays fast (chipmunk) on native.
+    const fileRate = this.layerBuffers.get(layer.path);
+    if (fileRate && Math.round(fileRate.sampleRate) === contextRate) {
+      return fileRate;
+    }
+    return null;
+  }
+
+  private bufferMatchesContextRate(
+    buffer: AudioBuffer,
+    context: AudioContext
+  ): boolean {
+    return Math.round(buffer.sampleRate) === Math.round(context.sampleRate);
   }
 
   /**
@@ -2580,8 +2711,15 @@ export class MemoAudioEngine {
     playLengthSec: number,
     loopPlayback: boolean
   ): { buffer: AudioBuffer; bufferOffset: number } | null {
+    const context = this.context;
+    if (!context) {
+      return null;
+    }
+    const contextRate = Math.round(context.sampleRate);
+    const standby = this.recordingPlaybackBuffers.get(layer.path);
     const full =
-      this.recordingPlaybackBuffers.get(layer.path) ?? this.getCachedPlaybackBuffer(layer);
+      (standby && Math.round(standby.sampleRate) === contextRate ? standby : null) ??
+      this.getCachedPlaybackBuffer(layer);
     if (full) {
       return { buffer: full, bufferOffset: fileOffsetSec };
     }
@@ -2596,7 +2734,7 @@ export class MemoAudioEngine {
         fileOffsetSec,
         playLengthSec
       );
-      if (covering) {
+      if (covering && Math.round(covering.buffer.sampleRate) === contextRate) {
         return {
           buffer: covering.buffer,
           bufferOffset: Math.max(0, fileOffsetSec - covering.startSec),
@@ -2606,7 +2744,7 @@ export class MemoAudioEngine {
         layer.path,
         pageStartForOffset(fileOffsetSec)
       );
-      if (aligned) {
+      if (aligned && Math.round(aligned.buffer.sampleRate) === contextRate) {
         return {
           buffer: aligned.buffer,
           bufferOffset: Math.max(0, fileOffsetSec - aligned.startSec),
@@ -2852,6 +2990,8 @@ export class MemoAudioEngine {
     loopEnabled = false
   ): Promise<void> {
     void endMemoLiveActivity();
+    this.cancelPlaybackWarm();
+    this.cancelPcmIdleEvict();
     this.stopPlayback();
     this.disposeMixGraph();
     clearReverbIrCache();
@@ -2885,6 +3025,8 @@ export class MemoAudioEngine {
       currentTime: trimStart,
       isPlaying: false,
     });
+
+    void this.warmPlaybackBuffers();
   }
 
   setLoopRegion(start: number, end: number, enabled?: boolean): void {
@@ -3167,6 +3309,7 @@ export class MemoAudioEngine {
   }
 
   unload(): void {
+    this.cancelPlaybackWarm();
     this.cancelPcmIdleEvict();
     this.stopPlayback();
     this.loadedLayers = [];
@@ -3217,6 +3360,7 @@ export class MemoAudioEngine {
     monitorMix?: boolean;
     duckMonitorMix?: boolean;
   }): Promise<void> {
+    this.cancelPlaybackWarm();
     this.cancelPcmIdleEvict();
     if (this.state.isRecording) {
       return;
@@ -4311,21 +4455,31 @@ export class MemoAudioEngine {
     this.playbackIncludeMetronome =
       options?.includeMetronome ?? this.metronomeSettings.enabled;
 
+    // Flip the transport icon immediately; audio arms after decode below.
+    this.emit({ isPlaying: true });
+    if (this.state.memoId && this.state.memoTitle) {
+      ensurePlaybackLiveActivity({
+        memoId: this.state.memoId,
+        memoTitle: this.state.memoTitle,
+        playbackOffset: this.state.currentTime,
+      });
+    }
+
     try {
       // Do not arm playback while a stop/save is still restoring the session.
       await awaitSaveInFlight();
-      if (requestId !== this.playRequestId || this.state.isRecording) {
+      if (this.playRequestAbandoned(requestId)) {
         return;
       }
       if (this.deferredPlaybackSetup || this.pendingEngineReload) {
         await this.finishDeferredPlaybackSetup();
       }
-      if (requestId !== this.playRequestId || this.state.isRecording) {
+      if (this.playRequestAbandoned(requestId)) {
         return;
       }
 
       const context = await this.ensureContext();
-      if (requestId !== this.playRequestId || this.state.isRecording) {
+      if (this.playRequestAbandoned(requestId)) {
         return;
       }
       // Loop wrap already stopped sources; still invalidate session for a clean restart.
@@ -4345,7 +4499,7 @@ export class MemoAudioEngine {
         endAt = this.getPlaybackEnd(timelineDuration);
       } else if (this.isAtPlaybackEnd(timelineDuration)) {
         startAt = bounds.start;
-        this.emit({ currentTime: startAt });
+        this.emit({ currentTime: startAt, isPlaying: true });
       }
 
       const playDuration = endAt - startAt;
@@ -4374,33 +4528,50 @@ export class MemoAudioEngine {
         return;
       }
 
+      if (
+        this.state.memoId &&
+        this.state.memoTitle &&
+        Math.abs(startAt - this.state.currentTime) > PLAYBACK_END_TOLERANCE
+      ) {
+        ensurePlaybackLiveActivity({
+          memoId: this.state.memoId,
+          memoTitle: this.state.memoTitle,
+          playbackOffset: startAt,
+        });
+      }
+
       // Full-decode audible layers only for listen-play. Inaudible (muted /
       // soloed-out) stay cold until unmute → ensureAudibleLayerBuffersThenResync.
       // Monitor-mix may page long WAVs separately during record warmup.
+      const preloadedBuffers = new Map<string, AudioBuffer>();
       for (const layer of layersToDecode) {
-        if (
-          requestId !== this.playRequestId ||
-          sessionId !== this.activePlaybackSessionId ||
-          this.state.isRecording
-        ) {
+        if (this.playRequestAbandoned(requestId, sessionId)) {
           return;
         }
-        await this.getLayerBuffer(context, layer);
+        const buffer = await this.getLayerBuffer(context, layer);
+        if (!this.bufferMatchesContextRate(buffer, context)) {
+          if (__DEV__) {
+            console.warn(
+              `[MemoAudioEngine] decoded buffer rate ${Math.round(buffer.sampleRate)} Hz ` +
+                `!= context ${Math.round(context.sampleRate)} Hz for ${layer.id}`
+            );
+          }
+          this.abortFailedPlaybackStart(requestId, startAt);
+          return;
+        }
+        preloadedBuffers.set(layer.path, buffer);
       }
 
       if (__DEV__) {
         const stats = this.getBufferCacheStats();
         console.log(
-          `[audio] play buffers fullPaths=${stats.fullBufferPaths} pages=${stats.pageCount} pageSec=${stats.pageSeconds.toFixed(1)}`
+          `[audio] play buffers fullPaths=${stats.fullBufferPaths} pages=${stats.pageCount} pageSec=${stats.pageSeconds.toFixed(1)} ` +
+            `ctx=${Math.round(context.sampleRate)}Hz`
         );
       }
 
       // Another play()/stop may have started during buffer decode.
-      if (
-        requestId !== this.playRequestId ||
-        sessionId !== this.activePlaybackSessionId ||
-        this.state.isRecording
-      ) {
+      if (this.playRequestAbandoned(requestId, sessionId)) {
         return;
       }
 
@@ -4417,11 +4588,7 @@ export class MemoAudioEngine {
         this.abortFailedPlaybackStart(requestId, startAt);
         return;
       }
-      if (
-        requestId !== this.playRequestId ||
-        sessionId !== this.activePlaybackSessionId ||
-        this.state.isRecording
-      ) {
+      if (this.playRequestAbandoned(requestId, sessionId)) {
         return;
       }
 
@@ -4437,7 +4604,7 @@ export class MemoAudioEngine {
       this.playbackRateAnchorContextTime = when;
       this.playbackRateAnchorPosition = startAt;
 
-      const scheduledSources = this.schedulePlaySpan(startAt, endAt);
+      const scheduledSources = this.schedulePlaySpan(startAt, endAt, preloadedBuffers);
 
       if (scheduledSources === 0) {
         this.playbackContextStartWhen = 0;
@@ -4462,19 +4629,6 @@ export class MemoAudioEngine {
         // JS must observe so we sync pause UI; native then skips onInterruptionEnd.
         this.setPlaybackInterruptionObservation(true);
       }
-
-      if (
-        !this.state.isRecording &&
-        this.state.memoId &&
-        this.state.memoTitle
-      ) {
-        // Update-in-place on loop wraps; start only when no activity exists.
-        ensurePlaybackLiveActivity({
-          memoId: this.state.memoId,
-          memoTitle: this.state.memoTitle,
-          playbackOffset: startAt,
-        });
-      }
     } catch (error) {
       this.invalidateAndStopSources();
       this.emit({ isPlaying: false });
@@ -4486,8 +4640,26 @@ export class MemoAudioEngine {
     }
   }
 
+  /**
+   * True when this play request should stop work. Superseded requests leave UI
+   * to pause/newer play; recording with the same id aborts optimistic isPlaying.
+   */
+  private playRequestAbandoned(requestId: number, sessionId?: number): boolean {
+    if (requestId !== this.playRequestId) {
+      return true;
+    }
+    if (sessionId !== undefined && sessionId !== this.activePlaybackSessionId) {
+      return true;
+    }
+    if (this.state.isRecording) {
+      this.abortFailedPlaybackStart(requestId);
+      return true;
+    }
+    return false;
+  }
+
   pause(): void {
-    // Always cancel in-flight play(); isPlaying stays false until sources schedule.
+    // Always cancel in-flight play() (including optimistic isPlaying during decode).
     this.playRequestId += 1;
     if (!this.state.isPlaying) {
       if (!this.state.isRecording) {
