@@ -2254,6 +2254,10 @@ function WaveformViewComponent({
   const verticalScrollRef = useRef<GHScrollView>(null);
   const isUserScrollingRef = useRef(false);
   const resumeAfterScrubRef = useRef(false);
+  /** Clears stuck isUserScrolling when momentum never ends at scroll edges. */
+  const userScrollMomentumTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
   const scrollOffsetRef = useRef(0);
   const verticalScrollOffsetRef = useRef(0);
   const trimGestureActiveRef = useRef(false);
@@ -3383,7 +3387,15 @@ function WaveformViewComponent({
     onPlaybackScrubEndRef.current?.();
   };
 
+  const clearUserScrollMomentumTimeout = () => {
+    if (userScrollMomentumTimeoutRef.current) {
+      clearTimeout(userScrollMomentumTimeoutRef.current);
+      userScrollMomentumTimeoutRef.current = null;
+    }
+  };
+
   const endUserScroll = () => {
+    clearUserScrollMomentumTimeout();
     isUserScrollingRef.current = false;
     setIsUserScrolling(false);
     finishPlaybackScrubIfNeeded();
@@ -3393,6 +3405,7 @@ function WaveformViewComponent({
     if (trimGestureActiveRef.current) {
       return;
     }
+    clearUserScrollMomentumTimeout();
     isUserScrollingRef.current = true;
     setIsUserScrolling(true);
     if (isPlayingRef.current) {
@@ -3524,10 +3537,22 @@ function WaveformViewComponent({
   const overlayLoopEnabled = loopPreview?.enabled ?? loopOverlay?.loopEnabled ?? false;
 
   const handleScrollEndDrag = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const x = event.nativeEvent.contentOffset.x;
     const velocity = event.nativeEvent.velocity?.x ?? 0;
-    if (Math.abs(velocity) < 0.1) {
+    const atEdge = x <= 1 || x >= Math.max(0, maxScrollXRef.current - 1);
+    // At content edges momentum often never starts, so onMomentumScrollEnd never
+    // fires — clear user-scroll immediately or the playhead follow RAF stays stuck.
+    if (atEdge || Math.abs(velocity) < 0.1) {
       endUserScroll();
+      return;
     }
+    clearUserScrollMomentumTimeout();
+    userScrollMomentumTimeoutRef.current = setTimeout(() => {
+      userScrollMomentumTimeoutRef.current = null;
+      if (isUserScrollingRef.current) {
+        endUserScroll();
+      }
+    }, 120);
   };
 
   const handleMomentumScrollEnd = () => {
@@ -3575,6 +3600,13 @@ function WaveformViewComponent({
     ) {
       return;
     }
+
+    // Stale user-scroll (e.g. scrub-to-0 with leftover velocity and no momentum
+    // end) would make the follow RAF no-op forever. Clear without scrub-end
+    // resume — that path already owns play()/resume.
+    clearUserScrollMomentumTimeout();
+    isUserScrollingRef.current = false;
+    setIsUserScrolling(false);
 
     let raf = 0;
     let bufferSyncRaf = 0;
@@ -3653,6 +3685,12 @@ function WaveformViewComponent({
       }
     };
   }, [isPlaying, followRecordingScroll, duration, contentWidth, viewportWidth, layoutPixelsPerSecond]);
+
+  useEffect(() => {
+    return () => {
+      clearUserScrollMomentumTimeout();
+    };
+  }, []);
 
   useEffect(() => {
     if (!followRecordingScroll || viewportWidth <= 0) {

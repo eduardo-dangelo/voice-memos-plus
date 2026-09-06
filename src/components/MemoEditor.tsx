@@ -686,6 +686,7 @@ function MemoEditorInner({
   const editDraftRef = useRef<EditDraftSnapshot | null>(null);
   const draftGenerationRef = useRef(0);
   const editGestureActiveRef = useRef(false);
+  const [editGestureActive, setEditGestureActive] = useState(false);
   const confirmEditDraftRef = useRef<(keepTool?: boolean) => Promise<void>>(
     async () => {}
   );
@@ -967,6 +968,7 @@ function MemoEditorInner({
       generation: draftGenerationRef.current,
     };
     editGestureActiveRef.current = false;
+    setEditGestureActive(false);
     setActiveEditor(tool);
   }, []);
 
@@ -980,6 +982,7 @@ function MemoEditorInner({
     clearDraftPersistTimers();
     editDraftRef.current = null;
     editGestureActiveRef.current = false;
+    setEditGestureActive(false);
     setActiveEditor(null);
 
     const current = memoRef.current;
@@ -1017,6 +1020,7 @@ function MemoEditorInner({
           draftGenerationRef.current += 1;
           editDraftRef.current = null;
           editGestureActiveRef.current = false;
+          setEditGestureActive(false);
           if (!nextKeepTool) {
             setActiveEditor(null);
           }
@@ -1028,6 +1032,7 @@ function MemoEditorInner({
             draftGenerationRef.current += 1;
             editDraftRef.current = null;
             editGestureActiveRef.current = false;
+            setEditGestureActive(false);
             setActiveEditor(null);
           }
           return;
@@ -1037,6 +1042,7 @@ function MemoEditorInner({
         draftGenerationRef.current += 1;
         clearDraftPersistTimers();
         editGestureActiveRef.current = false;
+        setEditGestureActive(false);
         savingTrimRef.current = true;
         setSavingTrim(true);
 
@@ -1112,13 +1118,20 @@ function MemoEditorInner({
 
   confirmEditDraftRef.current = confirmEditDraft;
 
-  const handleEditGestureActive = useCallback((active: boolean) => {
-    editGestureActiveRef.current = active;
-    if (active) {
-      return;
-    }
-    void confirmEditDraftRef.current(true);
-  }, []);
+  const handleEditGestureActive = useCallback(
+    (active: boolean) => {
+      editGestureActiveRef.current = active;
+      setEditGestureActive(active);
+      if (active) {
+        // Disable stack pop immediately so the first horizontal move cannot race
+        // the interactive back gesture (iPad split view / card pop).
+        navigation.setOptions({ gestureEnabled: false });
+        return;
+      }
+      void confirmEditDraftRef.current(true);
+    },
+    [navigation]
+  );
 
   const handleEditorToolChange = useCallback(
     (tool: EditorTool | null) => {
@@ -4601,7 +4614,10 @@ function MemoEditorInner({
     isRecording ||
     (isPane && sidebarCollapsed) ||
     activeEditor === 'trim' ||
-    activeEditor === 'move';
+    activeEditor === 'move' ||
+    activeEditor === 'volume' ||
+    activeEditor === 'pan' ||
+    editGestureActive;
 
   useLayoutEffect(() => {
     navigation.setOptions({ gestureEnabled: !blockNavGesture });
