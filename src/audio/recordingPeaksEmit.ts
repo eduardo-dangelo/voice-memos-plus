@@ -34,6 +34,19 @@ export function appendAbsoluteRecordingPeaks(
   }
 
   const refreshFrom = Math.max(0, Math.min(previousCount, targetCount) - refreshTail);
+  // Grow without remapping the unchanged prefix (avoid O(n) slice copies each tick).
+  if (
+    targetCount > previousCount &&
+    previous.length === previousCount &&
+    refreshFrom === previousCount
+  ) {
+    const peaks = previous.slice();
+    for (let i = previousCount; i < targetCount; i++) {
+      peaks.push(peakToAbsoluteScale(rawPeaks[i] ?? 0));
+    }
+    return { peaks, count: targetCount };
+  }
+
   const peaks = previous.slice(0, refreshFrom);
   for (let i = refreshFrom; i < targetCount; i++) {
     peaks.push(peakToAbsoluteScale(rawPeaks[i] ?? 0));

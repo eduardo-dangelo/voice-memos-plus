@@ -532,42 +532,83 @@ function ProcessingTrackBars({
     };
   }, [phase]);
 
+  const path = useMemo(() => {
+    let d = '';
+    for (let offset = 0; offset < visibleCount; offset++) {
+      const index = visibleStart + offset;
+      const peakIndex = loopPeakIndex(index, barsPerCycle, cycleBarCount);
+      const peak = normalizePeakAt(peaks, cycleBarCount, peakIndex);
+      const barTime = (index * BAR_STEP) / pixelsPerSecond;
+      let fadeScale = 1;
+      if (fadeInSec > 0 || fadeOutSec > 0) {
+        fadeScale = fadeEnvelopeGain(barTime, duration, {
+          fadeInSec,
+          fadeOutSec,
+          fadeInCurve,
+          fadeOutCurve,
+        });
+      }
+      const scaled = peakToAbsoluteScale(peak) * volumeScale * fadeScale;
+      const maxBar = Math.max(4, bodyHeight - 8);
+      const barHeight =
+        scaled <= 0.01 ? 2 : Math.max(4, Math.min(maxBar, scaled * maxBar));
+      const left = index * BAR_STEP;
+      const top = (bodyHeight - barHeight) / 2;
+      d = appendWaveformBarRect(d, left, top, BAR_WIDTH, barHeight);
+    }
+    return d;
+  }, [
+    bodyHeight,
+    barsPerCycle,
+    cycleBarCount,
+    duration,
+    fadeInCurve,
+    fadeInSec,
+    fadeOutCurve,
+    fadeOutSec,
+    peaks,
+    pixelsPerSecond,
+    visibleCount,
+    visibleEnd,
+    visibleStart,
+    volumeScale,
+  ]);
+
+  const shimmerStyle = useAnimatedStyle(() => {
+    const width = Math.max(1, visibleCount * BAR_STEP);
+    return {
+      transform: [{ translateX: phase.value * width - width * 0.25 }],
+    };
+  });
+
+  const originX = visibleStart * BAR_STEP;
+  const svgWidth = Math.max(1, visibleCount * BAR_STEP);
+
   return (
-    <>
-      {Array.from({ length: visibleCount }, (_, offset) => {
-        const index = visibleStart + offset;
-        const peakIndex = loopPeakIndex(index, barsPerCycle, cycleBarCount);
-        const peak = normalizePeakAt(peaks, cycleBarCount, peakIndex);
-        const barTime = (index * BAR_STEP) / pixelsPerSecond;
-        let fadeScale = 1;
-        if (fadeInSec > 0 || fadeOutSec > 0) {
-          fadeScale = fadeEnvelopeGain(barTime, duration, {
-            fadeInSec,
-            fadeOutSec,
-            fadeInCurve,
-            fadeOutCurve,
-          });
-        }
-        const scaled = peakToAbsoluteScale(peak) * volumeScale * fadeScale;
-        const maxBar = Math.max(4, bodyHeight - 8);
-        const barHeight =
-          scaled <= 0.01 ? 2 : Math.max(4, Math.min(maxBar, scaled * maxBar));
-        return (
-          <ProcessingWaveBar
-            key={index}
-            brightHex={brightHex}
-            dimHex={dimHex}
-            height={barHeight}
-            index={index}
-            left={index * BAR_STEP}
-            phase={phase}
-            top={(bodyHeight - barHeight) / 2}
-            visibleCount={visibleCount}
-            visibleStart={visibleStart}
-          />
-        );
-      })}
-    </>
+    <View style={{ position: 'absolute', left: 0, top: 0, width: svgWidth + originX, height: bodyHeight }}>
+      <WaveformBarsSvg
+        color={dimHex}
+        height={bodyHeight}
+        originX={originX}
+        path={path}
+        width={svgWidth}
+      />
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          {
+            position: 'absolute',
+            left: originX,
+            top: 0,
+            width: svgWidth * 0.35,
+            height: bodyHeight,
+            backgroundColor: brightHex,
+            opacity: 0.35,
+          },
+          shimmerStyle,
+        ]}
+      />
+    </View>
   );
 }
 
@@ -1691,16 +1732,22 @@ const ExpandedTrackWaveformRow = memo(function ExpandedTrackWaveformRow({
     const cycleWidthPx = cycleDuration * pixelsPerSecond;
     let left = 0;
     let cycleIndex = 0;
-    while (left < trackWidth - 0.5) {
+    // Cap chrome Views — dense short cycles over long footprints.
+    const maxSegments = 64;
+    while (left < trackWidth - 0.5 && cycleIndex < maxSegments) {
       const width = Math.min(cycleWidthPx, trackWidth - left);
       if (width > 0.5) {
         segments.push({ left, width, isLoop: cycleIndex > 0 });
       }
       left += cycleWidthPx;
       cycleIndex += 1;
-      if (cycleIndex > 10_000) {
-        break;
-      }
+    }
+    if (left < trackWidth - 0.5) {
+      segments.push({
+        left,
+        width: trackWidth - left,
+        isLoop: true,
+      });
     }
     return segments;
   }, [showRegionChrome, trackWidth, hasLoopedHeaderCycles, cycleDuration, pixelsPerSecond]);

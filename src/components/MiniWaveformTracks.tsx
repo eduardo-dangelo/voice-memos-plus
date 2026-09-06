@@ -3,6 +3,7 @@ import { LayoutChangeEvent, StyleSheet, Text, View } from 'react-native';
 import { SymbolView } from 'expo-symbols';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
+import Svg, { Path } from 'react-native-svg';
 
 import { colorDesaturatedWithAlpha } from '@/constants/VoiceMemosColors';
 import { hasAnySoloActive } from '@/src/audio/layerEffects';
@@ -15,6 +16,7 @@ import {
   WAVEFORM_BAR_GAP,
   WAVEFORM_BAR_WIDTH,
 } from '@/src/audio/waveform';
+import { appendWaveformBarRect } from '@/src/components/waveformViewport';
 import { resolveTrackColor } from '@/src/components/TrackColorPicker';
 import type { Memo } from '@/src/storage/types';
 import {
@@ -308,6 +310,37 @@ export function MiniWaveformTracks({
     });
   }, [tracks, width, duration]);
 
+  const lanePaths = useMemo(() => {
+    if (!laneGeometry) {
+      return null;
+    }
+    return laneGeometry.map((lane) => {
+      let playedPath = '';
+      let unplayedPath = '';
+      for (const bar of lane.bars) {
+        const top = (LANE_HEIGHT - bar.height) / 2;
+        if (bar.barTime < colorTime) {
+          playedPath = appendWaveformBarRect(
+            playedPath,
+            bar.left,
+            top,
+            WAVEFORM_BAR_WIDTH,
+            bar.height
+          );
+        } else {
+          unplayedPath = appendWaveformBarRect(
+            unplayedPath,
+            bar.left,
+            top,
+            WAVEFORM_BAR_WIDTH,
+            bar.height
+          );
+        }
+      }
+      return { id: lane.id, playedPath, unplayedPath };
+    });
+  }, [laneGeometry, colorTime]);
+
   if (tracks.length === 0 || duration <= 0) {
     return null;
   }
@@ -315,6 +348,8 @@ export function MiniWaveformTracks({
   const totalHeight = tracks.length * LANE_HEIGHT;
   const playheadLeft =
     width > 0 ? Math.max(0, Math.min(1, playheadTime / duration)) * width : 0;
+
+  const pathById = new Map(lanePaths?.map((entry) => [entry.id, entry]) ?? []);
 
   const lanes =
     laneGeometry == null
@@ -329,6 +364,7 @@ export function MiniWaveformTracks({
             UNPLAYED_SATURATION,
             UNPLAYED_ALPHA
           );
+          const paths = pathById.get(lane.id);
           return (
             <View
               key={lane.id}
@@ -345,22 +381,14 @@ export function MiniWaveformTracks({
                     styles.barsRow,
                     { left: lane.left, width: lane.trackWidth, height: LANE_HEIGHT },
                   ]}>
-                  {lane.bars.map((bar, index) => (
-                    <View
-                      key={index}
-                      style={[
-                        styles.bar,
-                        {
-                          left: bar.left,
-                          top: (LANE_HEIGHT - bar.height) / 2,
-                          width: WAVEFORM_BAR_WIDTH,
-                          height: bar.height,
-                          backgroundColor:
-                            bar.barTime < colorTime ? activeColor : unplayedColor,
-                        },
-                      ]}
-                    />
-                  ))}
+                  <Svg height={LANE_HEIGHT} width={Math.max(1, lane.trackWidth)}>
+                    {paths?.unplayedPath ? (
+                      <Path d={paths.unplayedPath} fill={unplayedColor} />
+                    ) : null}
+                    {paths?.playedPath ? (
+                      <Path d={paths.playedPath} fill={activeColor} />
+                    ) : null}
+                  </Svg>
                 </View>
               ) : null}
               {lane.trackWidth > 0 ? (

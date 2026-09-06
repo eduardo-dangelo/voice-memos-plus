@@ -31,6 +31,10 @@ export type ActiveRecordingSession = {
   startTime: number;
   trackColor: string | null;
   recordingStartedAt?: number;
+  /** Set as soon as capture stops so a jetsam mid-save can recover the WAV. */
+  pendingCapturePath?: string | null;
+  pendingCapturePeaks?: number[] | null;
+  pendingCaptureDuration?: number | null;
 };
 
 export type RecordingSaveResult = {
@@ -180,9 +184,10 @@ async function ensureSessionForStop(): Promise<ActiveRecordingSession> {
 }
 
 /**
- * After process death, discard any unfinished take.
- * - new: delete the memo shell
- * - stack/replace: drop session only; prior layers stay
+ * After process death, try to import a pending capture WAV (stack/replace/new),
+ * otherwise discard the unfinished session.
+ * - new without recoverable file: delete the memo shell
+ * - stack/replace without file: drop session only; prior layers stay
  */
 export async function discardUnfinishedRecording(
   engine: MemoAudioEngine
@@ -207,6 +212,20 @@ export async function discardUnfinishedRecording(
     let deletedMemo = false;
 
     try {
+      const recovered = await tryRecoverPendingCapture(currentSession);
+      if (recovered) {
+        clearSession();
+        notifyLibraryChanged({ reason: 'recoveredPendingCapture', memoId });
+        if (engine.getState().memoId === memoId) {
+          try {
+            engine.unload();
+          } catch {
+            // Best-effort; next open reloads.
+          }
+        }
+        return { memoId, mode, deletedMemo: false };
+      }
+
       if (mode === 'new') {
         await deleteMemo(memoId);
         deletedMemo = true;
@@ -244,6 +263,80 @@ export async function discardUnfinishedRecording(
       discardInFlight = null;
     }
   }
+}
+
+async function tryRecoverPendingCapture(
+  currentSession: ActiveRecordingSession
+): Promise<boolean> {
+  const path = currentSession.pendingCapturePath;
+  if (!path) {
+    return false;
+  }
+
+  try {
+    const file = new File(path);
+    if (!file.exists) {
+      return false;
+    }
+  } catch {
+    return false;
+  }
+
+  const peaks = currentSession.pendingCapturePeaks ?? [];
+  const duration = currentSession.pendingCaptureDuration ?? 0;
+  const memo = await getMemo(currentSession.memoId);
+  if (!memo) {
+    return false;
+  }
+
+  try {
+    if (currentSession.mode === 'stack') {
+      await addStackedLayer(
+        currentSession.memoId,
+        currentSession.startTime,
+        path,
+        peaks,
+        currentSession.trackColor ?? undefined,
+        { duration: duration > 0 ? duration : undefined }
+      );
+      return true;
+    }
+
+    if (currentSession.mode === 'new') {
+      await saveRecording(
+        currentSession.memoId,
+        path,
+        duration > 0 ? duration : 0.01,
+        peaks
+      );
+      return true;
+    }
+
+    // Replace recovery without splice params is unsafe; leave file for manual salvage.
+    return false;
+  } catch (error) {
+    if (__DEV__) {
+      console.warn('[activeRecordingSession] pending capture recover failed', error);
+    }
+    return false;
+  }
+}
+
+export function updateSessionCapturePending(update: {
+  path: string;
+  peaks: number[];
+  duration: number;
+}): void {
+  if (!session) {
+    return;
+  }
+  session = {
+    ...session,
+    pendingCapturePath: update.path,
+    pendingCapturePeaks: update.peaks,
+    pendingCaptureDuration: update.duration,
+  };
+  persistSessionToStorage(session);
 }
 
 export type StopAndSaveOptions = {
@@ -284,6 +377,13 @@ export async function stopAndSave(
 
       const currentSession = getSession() ?? (await ensureSessionForStop());
       saveMemoId = currentSession.memoId;
+      // Persist capture path immediately so a kill mid-save can recover the WAV.
+      beginSession({
+        ...currentSession,
+        pendingCapturePath: capture.path,
+        pendingCapturePeaks: capture.peaks,
+        pendingCaptureDuration: capture.duration,
+      });
       const currentMemo = await getMemo(currentSession.memoId);
       if (!currentMemo) {
         throw new Error('Memo not found');
@@ -298,6 +398,12 @@ export async function stopAndSave(
       // Always defer AVAudioSession/graph restore past UI exit + file persist.
       const { path, duration, peaks } = await engine.finalizeRecordingAfterStop(capture, {
         deferPlaybackSetup: true,
+      });
+      beginSession({
+        ...(getSession() ?? currentSession),
+        pendingCapturePath: path,
+        pendingCapturePeaks: peaks,
+        pendingCaptureDuration: duration,
       });
 
       if (!isBackground) {

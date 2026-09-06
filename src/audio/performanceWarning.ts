@@ -8,12 +8,14 @@ type WarnState = {
   memoId: string;
   layers: boolean;
   nodes: boolean;
+  pcm: boolean;
 };
 
 const warnState: WarnState = {
   memoId: '',
   layers: false,
   nodes: false,
+  pcm: false,
 };
 
 export type PerformanceWarningResult = {
@@ -28,6 +30,7 @@ export function maybeShowPerformanceWarning(memo: Memo): PerformanceWarningResul
     warnState.memoId = memo.id;
     warnState.layers = false;
     warnState.nodes = false;
+    warnState.pcm = false;
   }
 
   if (!assessment.shouldWarnLayers) {
@@ -36,11 +39,15 @@ export function maybeShowPerformanceWarning(memo: Memo): PerformanceWarningResul
   if (!assessment.shouldWarnNodes) {
     warnState.nodes = false;
   }
+  if (!assessment.shouldWarnPcm) {
+    warnState.pcm = false;
+  }
 
   const showLayers = assessment.shouldWarnLayers && !warnState.layers;
   const showNodes = assessment.shouldWarnNodes && !warnState.nodes;
+  const showPcm = assessment.shouldWarnPcm && !warnState.pcm;
 
-  if (!showLayers && !showNodes) {
+  if (!showLayers && !showNodes && !showPcm) {
     return { shown: false, message: null };
   }
 
@@ -50,10 +57,13 @@ export function maybeShowPerformanceWarning(memo: Memo): PerformanceWarningResul
   if (showNodes) {
     warnState.nodes = true;
   }
+  if (showPcm) {
+    warnState.pcm = true;
+  }
 
   return {
     shown: true,
-    message: getPerformanceWarningMessage(showLayers, showNodes),
+    message: getPerformanceWarningMessage(showLayers, showNodes, showPcm),
   };
 }
 
@@ -61,4 +71,5 @@ export function resetPerformanceWarningState(): void {
   warnState.memoId = '';
   warnState.layers = false;
   warnState.nodes = false;
+  warnState.pcm = false;
 }

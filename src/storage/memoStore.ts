@@ -40,6 +40,11 @@ import { createDefaultTitle, sanitizeExportFileName } from '@/src/utils/format';
 import { randomId } from '@/src/utils/id';
 
 import { nextLayerOrder } from './layerOrder';
+import {
+  memoForManifestWrite,
+  readLayerPeaksSidecar,
+  writeLayerPeaksSidecar,
+} from './layerPeaksSidecar';
 
 import {
   getManifestFile,
@@ -132,6 +137,25 @@ function readManifest(file: File): Memo | null {
       memo.trimEnd = timeline;
     }
     normalizeLoopRegion(memo, timeline);
+
+    // Prefer peak sidecars; migrate legacy in-manifest peaks on first write.
+    const memoDir = resolveMemoDir(memo.id) ?? getMemoDir(memo.id);
+    let migrated = false;
+    for (const layer of memo.layers) {
+      const fromSidecar = readLayerPeaksSidecar(memoDir, layer.id);
+      if (fromSidecar && fromSidecar.length > 0) {
+        layer.waveformPeaks = fromSidecar;
+        continue;
+      }
+      if (layer.waveformPeaks && layer.waveformPeaks.length > 0) {
+        writeLayerPeaksSidecar(memoDir, layer.id, layer.waveformPeaks);
+        migrated = true;
+      }
+    }
+    if (migrated) {
+      // Rewrite without embedded peaks.
+      writeManifest(memo);
+    }
     return memo;
   } catch {
     return null;
@@ -143,11 +167,16 @@ function writeManifest(memo: Memo): void {
   if (!dir.exists) {
     dir.create({ intermediates: true, idempotent: true });
   }
+  for (const layer of memo.layers) {
+    if (layer.waveformPeaks && layer.waveformPeaks.length > 0) {
+      writeLayerPeaksSidecar(dir, layer.id, layer.waveformPeaks);
+    }
+  }
   const file = new File(dir, 'manifest.json');
   if (!file.exists) {
     file.create();
   }
-  file.write(JSON.stringify(memo, null, 2));
+  file.write(JSON.stringify(memoForManifestWrite(memo), null, 2));
 }
 
 function syncTrimEndToTimeline(memo: Memo, previousDuration: number, timeline: number): void {
@@ -551,6 +580,8 @@ export async function updateLayerLoopUntil(
 
 export type EnsureWaveformPeaksOptions = {
   onlyLayerIds?: string[];
+  /** When true, skip full-file decode; leave missing peaks for background regen. */
+  deferDecode?: boolean;
 };
 
 export async function ensureWaveformPeaks(
@@ -561,6 +592,7 @@ export async function ensureWaveformPeaks(
   const onlyLayerIds = options?.onlyLayerIds
     ? new Set(options.onlyLayerIds)
     : null;
+  const deferDecode = options?.deferDecode === true;
 
   for (const layer of memo.layers) {
     if (layer.duration <= 0) {
@@ -578,6 +610,11 @@ export async function ensureWaveformPeaks(
     try {
       const fileDurationSec = await readWavDurationSec(file.uri);
       if (layerWaveformPeaksAreCurrent(layer, fileDurationSec)) {
+        continue;
+      }
+
+      if (deferDecode) {
+        // Open path: do not block UI on full PCM decode.
         continue;
       }
 
@@ -614,6 +651,37 @@ export async function ensureWaveformPeaks(
   }
 
   return memo;
+}
+
+/** Background peak regen after a fast open (deferDecode). */
+export function scheduleWaveformPeaksRegen(
+  memoId: string,
+  onUpdated?: (memo: Memo) => void
+): void {
+  void (async () => {
+    try {
+      const memo = await getMemo(memoId);
+      if (!memo || !getPlayableLayers(memo).length) {
+        return;
+      }
+      const needs = memo.layers.some((layer) => {
+        if (layer.duration <= 0) {
+          return false;
+        }
+        return !layer.waveformPeaks || layer.waveformPeaks.length === 0;
+      });
+      if (!needs) {
+        return;
+      }
+      const updated = await ensureWaveformPeaks(memo);
+      onUpdated?.(updated);
+      notifyMemoUpdate(updated);
+    } catch (error) {
+      if (__DEV__) {
+        console.warn('[memoStore] background peak regen failed', error);
+      }
+    }
+  })();
 }
 
 export async function saveRecording(

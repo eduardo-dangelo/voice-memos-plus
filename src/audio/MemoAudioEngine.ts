@@ -28,6 +28,11 @@ import {
   layersNeedingBufferInvalidation,
 } from '@/src/audio/layerBufferCache';
 import {
+  LayerPcmPageCache,
+  pageStartForOffset,
+  shouldPageLayerPcm,
+} from '@/src/audio/layerPcmPageCache';
+import {
   clearReverbIrCache,
   isDelayPathActive,
   isReverbPathActive,
@@ -58,6 +63,7 @@ import {
   playbackScheduleLeadSec,
   resolvePlanAgainstBuffer,
   type BuildLayerPlaybackPlansOptions,
+  type LayerPlaybackPlanSpec,
 } from '@/src/audio/playbackPlans';
 import { measuredCueLeadFromOrigin, updateCaptureOriginFromBuffer } from '@/src/audio/captureOrigin';
 import { readRecordingIoLatency } from '@/src/audio/readRecordingIoLatency';
@@ -136,6 +142,16 @@ const CANCEL_PREPARED_JOIN_TIMEOUT_MS = 1000;
 /** Bound cancelPreparedRecording's join of an in-flight prepare (decode/warmup). */
 const CANCEL_PREPARE_JOIN_TIMEOUT_MS = 2000;
 /**
+ * After pause, release decoded PCM if still idle this long (not while playing /
+ * recording / arming). Cancelled on play, seek, scrub, or record prepare.
+ */
+const LAYER_PCM_IDLE_EVICT_MS = 45_000;
+/**
+ * Monitor-mix only: page long WAV stems instead of full-decoding into
+ * recordingPlaybackBuffers. Listen-play stays on full buffers.
+ */
+const MONITOR_MIX_PCM_PAGING_ENABLED = true;
+/**
  * DEV ONLY — flip to true to verify stuck-after-counter recovery.
  * Hang is abort-aware so watchdog/cancel can unblock commit.
  */
@@ -184,6 +200,8 @@ export type LoadedLayer = {
 
 type ActiveLayerPlayback = {
   layerId: string;
+  layerPath: string;
+  layerDuration: number;
   hasDelay: boolean;
   hasReverb: boolean;
   drySources: AudioBufferSourceNode[];
@@ -191,23 +209,30 @@ type ActiveLayerPlayback = {
   reverbSources: AudioBufferSourceNode[];
   /** Schedule params for hot-adding wet paths mid-playback. */
   buffer: AudioBuffer;
+  /** Absolute offset into the layer file (not page-relative). */
+  fileBufferOffset: number;
   bufferOffset: number;
   scheduleDelay: number;
   layerPlayLength: number;
-  /** How much of `layerPlayLength` has been scheduled (tiled monitor mix). */
+  /** How much of `layerPlayLength` has been scheduled (tiled monitor mix / paged play). */
   scheduledLength: number;
   playbackEffects: LayerEffects;
   loopPlayback?: boolean;
+  usesPaging: boolean;
 };
 
-type LayerPlaybackPlan = {
+type ScheduledLayerPlan = {
   layer: LoadedLayer;
   buffer: AudioBuffer;
   playbackEffects: LayerEffects;
+  /** Offset into `buffer` for source.start (page-relative when paged). */
   bufferOffset: number;
+  /** Absolute offset into the layer file. */
+  fileBufferOffset: number;
   delay: number;
   layerPlayLength: number;
   loopPlayback?: boolean;
+  usesPaging: boolean;
 };
 
 export type RecordingCaptureResult = {
@@ -293,6 +318,10 @@ export class MemoAudioEngine {
   private layerBuffers = new Map<string, AudioBuffer>();
   /** Resampled playback buffers keyed by `${path}@${contextSampleRate}`. */
   private resampledLayerBuffers = new Map<string, AudioBuffer>();
+  /** Disk-paged PCM for long WAV stems (working set, not full-file). */
+  private pcmPageCache = new LayerPcmPageCache();
+  /** Clears decoded PCM after a long pause (see LAYER_PCM_IDLE_EVICT_MS). */
+  private pcmIdleEvictTimer: ReturnType<typeof setTimeout> | null = null;
   private playInFlight: Promise<void> | null = null;
   /** Request id that owns `playInFlight`; used so pause-cancelled plays are not coalesced. */
   private playInFlightRequestId = 0;
@@ -1273,6 +1302,8 @@ export class MemoAudioEngine {
   /**
    * Build and arm monitor-mix plans for [windowStart, windowEnd).
    * `delayBias` shifts plan.delay so it stays relative to playbackStartAt.
+   * Long WAV stems may use disk pages when no full buffer was warmed; never
+   * resolve plans against page duration (would truncate the take).
    */
   private scheduleMonitorMixWindow(
     windowStart: number,
@@ -1296,29 +1327,62 @@ export class MemoAudioEngine {
         continue;
       }
 
-      const buffer = this.recordingPlaybackBuffers.get(plan.layer.path);
-      if (!buffer) {
+      const resolved = resolvePlanAgainstBuffer(plan, plan.layer.duration);
+      if (!resolved) {
         continue;
       }
 
-      const resolved = resolvePlanAgainstBuffer(plan, buffer.duration);
-      if (!resolved) {
+      const hasFullStandby =
+        this.recordingPlaybackBuffers.has(plan.layer.path) ||
+        this.getCachedPlaybackBuffer(plan.layer) != null;
+      const usesPaging =
+        MONITOR_MIX_PCM_PAGING_ENABLED &&
+        !hasFullStandby &&
+        shouldPageLayerPcm(plan.layer.path, plan.layer.duration) &&
+        !resolved.loopPlayback;
+
+      const firstChunk = Math.min(
+        resolved.layerPlayLength,
+        PLAYBACK_SCHEDULE_CHUNK_SEC
+      );
+      const scheduled = this.resolveScheduleBuffer(
+        plan.layer,
+        resolved.bufferOffset,
+        firstChunk,
+        Boolean(resolved.loopPlayback)
+      );
+      if (!scheduled) {
+        if (__DEV__) {
+          console.warn(
+            `[MemoAudioEngine] monitor mix missing buffer for layer ${plan.layer.id}`
+          );
+        }
         continue;
       }
 
       scheduledSources += this.scheduleResolvedLayerPlan(context, {
         layer: plan.layer,
-        buffer,
+        buffer: scheduled.buffer,
         playbackEffects: {
           ...resolved.playbackEffects,
           delay: { ...resolved.playbackEffects.delay, preset: 'off', mix: 0 },
           reverb: { ...resolved.playbackEffects.reverb, preset: 'off', mix: 0 },
         },
-        bufferOffset: resolved.bufferOffset,
+        bufferOffset: scheduled.bufferOffset,
+        fileBufferOffset: resolved.bufferOffset,
         delay: resolved.delay + delayBias,
         layerPlayLength: resolved.layerPlayLength,
         loopPlayback: resolved.loopPlayback,
+        usesPaging,
       });
+
+      if (usesPaging) {
+        void this.pcmPageCache.prefetchAround(
+          context,
+          plan.layer.path,
+          resolved.bufferOffset + firstChunk
+        );
+      }
     }
 
     return scheduledSources;
@@ -1342,8 +1406,15 @@ export class MemoAudioEngine {
         continue;
       }
 
-      const buffer = this.getCachedPlaybackBuffer(plan.layer);
+      const buffer =
+        this.getCachedPlaybackBuffer(plan.layer) ??
+        this.recordingPlaybackBuffers.get(plan.layer.path);
       if (!buffer) {
+        if (__DEV__) {
+          console.warn(
+            `[MemoAudioEngine] play missing buffer for layer ${plan.layer.id}`
+          );
+        }
         continue;
       }
 
@@ -1357,9 +1428,11 @@ export class MemoAudioEngine {
         buffer,
         playbackEffects: resolved.playbackEffects,
         bufferOffset: resolved.bufferOffset,
+        fileBufferOffset: resolved.bufferOffset,
         delay: resolved.delay,
         layerPlayLength: resolved.layerPlayLength,
         loopPlayback: resolved.loopPlayback,
+        usesPaging: false,
       });
     }
 
@@ -1368,12 +1441,13 @@ export class MemoAudioEngine {
 
   /**
    * Schedule one resolved layer segment.
-   * Play path: one BufferSource for the full remaining region (native loop if needed).
+   * Play path: one BufferSource for the full remaining region (native loop if needed),
+   * unless disk-paging — then tile like monitor mix.
    * Monitor mix: first chunk only; extendLayerPlaybackSchedule continues them.
    */
   private scheduleResolvedLayerPlan(
     context: AudioContext,
-    plan: LayerPlaybackPlan
+    plan: ScheduledLayerPlan
   ): number {
     const channel = this.mixGraph.getChannel(plan.layer.id);
     if (!channel) {
@@ -1385,7 +1459,7 @@ export class MemoAudioEngine {
     const hasReverb =
       !this.layerPlaybackDryOnly && isReverbPathActive(plan.playbackEffects);
     const layerStartWhen = this.playbackContextStartWhen + plan.delay;
-    const tileChunks = this.layerPlaybackDryOnly;
+    const tileChunks = this.layerPlaybackDryOnly || plan.usesPaging;
     const firstChunk = tileChunks
       ? Math.min(plan.layerPlayLength, PLAYBACK_SCHEDULE_CHUNK_SEC)
       : plan.layerPlayLength;
@@ -1457,18 +1531,22 @@ export class MemoAudioEngine {
 
     this.activeLayerPlaybacks.push({
       layerId: plan.layer.id,
+      layerPath: plan.layer.path,
+      layerDuration: plan.layer.duration,
       hasDelay,
       hasReverb,
       drySources,
       delaySources,
       reverbSources,
       buffer: plan.buffer,
+      fileBufferOffset: plan.fileBufferOffset,
       bufferOffset: plan.bufferOffset,
       scheduleDelay: plan.delay,
       layerPlayLength: plan.layerPlayLength,
       scheduledLength: firstChunk,
       playbackEffects: plan.playbackEffects,
       loopPlayback: plan.loopPlayback,
+      usesPaging: plan.usesPaging,
     });
 
     return scheduledSources;
@@ -1520,12 +1598,12 @@ export class MemoAudioEngine {
     });
   }
 
-  /** Extend within-segment chunks (recording monitor mix only). */
+  /** Extend within-segment chunks (monitor mix + disk-paged play). */
   private extendLayerPlaybackSchedule(timelineNow: number): void {
     if (!this.context || this.playbackContextStartWhen <= 0) {
       return;
     }
-    if (!this.state.isRecording || !this.hasLayerPlaybackScheduled()) {
+    if (!this.hasLayerPlaybackScheduled()) {
       return;
     }
 
@@ -1551,15 +1629,32 @@ export class MemoAudioEngine {
       const chunk = Math.min(remaining, PLAYBACK_SCHEDULE_CHUNK_SEC);
       const chunkStartWhen =
         this.playbackContextStartWhen + active.scheduleDelay + active.scheduledLength;
-      const chunkBufferOffset = active.bufferOffset + active.scheduledLength;
+      const fileOffset = active.fileBufferOffset + active.scheduledLength;
+      const layer: LoadedLayer = {
+        id: active.layerId,
+        path: active.layerPath,
+        duration: active.layerDuration,
+        startTime: 0,
+        effects: active.playbackEffects,
+      };
+      const scheduled = this.resolveScheduleBuffer(
+        layer,
+        fileOffset,
+        chunk,
+        Boolean(active.loopPlayback)
+      );
+      if (!scheduled) {
+        continue;
+      }
+      active.buffer = scheduled.buffer;
 
       const drySource = this.schedulePathSource(
         context,
         channel.dry,
-        active.buffer,
+        scheduled.buffer,
         chunkStartWhen,
         chunkStartWhen + chunk,
-        chunkBufferOffset
+        scheduled.bufferOffset
       );
       if (drySource) {
         active.drySources.push(drySource);
@@ -1568,10 +1663,10 @@ export class MemoAudioEngine {
         const delaySource = this.schedulePathSource(
           context,
           channel.delay,
-          active.buffer,
+          scheduled.buffer,
           chunkStartWhen,
           chunkStartWhen + chunk,
-          chunkBufferOffset
+          scheduled.bufferOffset
         );
         if (delaySource) {
           active.delaySources.push(delaySource);
@@ -1581,16 +1676,23 @@ export class MemoAudioEngine {
         const reverbSource = this.schedulePathSource(
           context,
           channel.reverb,
-          active.buffer,
+          scheduled.buffer,
           chunkStartWhen,
           chunkStartWhen + chunk,
-          chunkBufferOffset
+          scheduled.bufferOffset
         );
         if (reverbSource) {
           active.reverbSources.push(reverbSource);
         }
       }
       active.scheduledLength += chunk;
+      if (active.usesPaging && this.context) {
+        void this.pcmPageCache.prefetchAround(
+          this.context,
+          active.layerPath,
+          fileOffset + chunk
+        );
+      }
     }
   }
 
@@ -1833,23 +1935,29 @@ export class MemoAudioEngine {
     this.clearPlaybackTimer();
 
     const remainingMs = this.getPlaybackRemainingWallMs(context);
+    const keepAliveMs = this.activeLayerPlaybacks.some((active) => active.usesPaging)
+      ? Math.min(remainingMs, 10_000)
+      : remainingMs;
     this.playbackEndTimeoutId = setTimeout(() => {
       this.playbackEndTimeoutId = null;
       if (sessionId !== this.activePlaybackSessionId || this.state.isRecording) {
         return;
       }
 
-      // Prefer late: if audio clock is still short of end, re-arm.
+      // Prefer late: if audio clock is still short of end, extend paged chunks then re-arm.
       if (this.context && this.playbackContextStartWhen > 0) {
         const now = this.getElapsedPlaybackTime(this.context);
         if (now < this.playbackEndAt - PLAYBACK_END_TOLERANCE) {
+          if (this.activeLayerPlaybacks.some((active) => active.usesPaging)) {
+            this.extendLayerPlaybackSchedule(now);
+          }
           this.armBackgroundPlaybackEndTimeout(sessionId, this.context);
           return;
         }
       }
 
       this.finishPlaybackNaturally(this.playbackEndAt, sessionId);
-    }, remainingMs);
+    }, keepAliveMs);
   }
 
   /** Stop UI RAF while inactive; native sources keep playing. */
@@ -1952,6 +2060,10 @@ export class MemoAudioEngine {
       }
 
       const nextTime = this.getElapsedPlaybackTime(context);
+
+      if (this.activeLayerPlaybacks.some((active) => active.usesPaging)) {
+        this.extendLayerPlaybackSchedule(nextTime);
+      }
 
       if (frameMs - lastUiUpdateMs >= PLAYBACK_UI_UPDATE_MS) {
         lastUiUpdateMs = frameMs;
@@ -2241,6 +2353,63 @@ export class MemoAudioEngine {
   private invalidateLayerBuffers(): void {
     this.layerBuffers.clear();
     this.resampledLayerBuffers.clear();
+    this.pcmPageCache.clear();
+  }
+
+  /**
+   * Release decoded PCM after a long pause. Never runs while playing, recording,
+   * or arming a take. Leaves WAV files on disk untouched.
+   */
+  private cancelPcmIdleEvict(): void {
+    if (this.pcmIdleEvictTimer) {
+      clearTimeout(this.pcmIdleEvictTimer);
+      this.pcmIdleEvictTimer = null;
+    }
+  }
+
+  private schedulePcmIdleEvict(): void {
+    this.cancelPcmIdleEvict();
+    if (
+      this.state.isPlaying ||
+      this.state.isRecording ||
+      this.recordingPrepared ||
+      this.recordingWarmupFinalized ||
+      this.recordingPrepareInFlight ||
+      this.recordingStartInFlight
+    ) {
+      return;
+    }
+    this.pcmIdleEvictTimer = setTimeout(() => {
+      this.pcmIdleEvictTimer = null;
+      this.evictIdleDecodedPcm();
+    }, LAYER_PCM_IDLE_EVICT_MS);
+  }
+
+  private evictIdleDecodedPcm(): void {
+    if (
+      this.state.isPlaying ||
+      this.state.isRecording ||
+      this.recordingPrepared ||
+      this.recordingWarmupFinalized ||
+      this.recordingPrepareInFlight ||
+      this.recordingStartInFlight
+    ) {
+      return;
+    }
+    if (__DEV__) {
+      const before = this.getBufferCacheStats();
+      console.log(
+        `[audio] idle PCM evict before fullPaths=${before.fullBufferPaths} pages=${before.pageCount}`
+      );
+    }
+    this.invalidateLayerBuffers();
+    this.recordingPlaybackBuffers.clear();
+    if (__DEV__) {
+      const after = this.getBufferCacheStats();
+      console.log(
+        `[audio] idle PCM evict after fullPaths=${after.fullBufferPaths} pages=${after.pageCount}`
+      );
+    }
   }
 
   private invalidateLayerBufferForPath(path: string): void {
@@ -2248,6 +2417,7 @@ export class MemoAudioEngine {
       return;
     }
     this.layerBuffers.delete(path);
+    this.pcmPageCache.clearPath(path);
     for (const key of getResampledCacheKeysForPath(
       path,
       this.resampledLayerBuffers.keys()
@@ -2371,8 +2541,16 @@ export class MemoAudioEngine {
     return resampled;
   }
 
-  /** Drop file-rate PCM once a distinct context-rate copy exists (not during recording warmup). */
+  /**
+   * Drop file-rate PCM once a distinct context-rate copy exists.
+   * During monitor-mix warmup, also drop when recordingPlaybackBuffers holds the
+   * context-rate copy (avoids dual-resident stems for the whole take).
+   */
   private dropFileRateBufferIfPlaybackCopyReady(path: string): void {
+    if (this.recordingPlaybackBuffers.has(path)) {
+      this.layerBuffers.delete(path);
+      return;
+    }
     if (this.state.isRecording || this.recordingPrepared) {
       return;
     }
@@ -2391,11 +2569,89 @@ export class MemoAudioEngine {
     );
   }
 
+  /**
+   * Resolve a schedule buffer for [fileOffset, fileOffset+length).
+   * Prefer a full decoded buffer whenever present (reliable play path).
+   * Disk pages are only used when no full buffer is cached (monitor-mix long stems).
+   */
+  private resolveScheduleBuffer(
+    layer: LoadedLayer,
+    fileOffsetSec: number,
+    playLengthSec: number,
+    loopPlayback: boolean
+  ): { buffer: AudioBuffer; bufferOffset: number } | null {
+    const full =
+      this.recordingPlaybackBuffers.get(layer.path) ?? this.getCachedPlaybackBuffer(layer);
+    if (full) {
+      return { buffer: full, bufferOffset: fileOffsetSec };
+    }
+
+    if (
+      MONITOR_MIX_PCM_PAGING_ENABLED &&
+      shouldPageLayerPcm(layer.path, layer.duration) &&
+      !loopPlayback
+    ) {
+      const covering = this.pcmPageCache.findCovering(
+        layer.path,
+        fileOffsetSec,
+        playLengthSec
+      );
+      if (covering) {
+        return {
+          buffer: covering.buffer,
+          bufferOffset: Math.max(0, fileOffsetSec - covering.startSec),
+        };
+      }
+      const aligned = this.pcmPageCache.getCached(
+        layer.path,
+        pageStartForOffset(fileOffsetSec)
+      );
+      if (aligned) {
+        return {
+          buffer: aligned.buffer,
+          bufferOffset: Math.max(0, fileOffsetSec - aligned.startSec),
+        };
+      }
+    }
+
+    return null;
+  }
+
+  private async prefetchSchedulePages(
+    context: AudioContext,
+    layer: LoadedLayer,
+    fileOffsetSec: number
+  ): Promise<void> {
+    if (!shouldPageLayerPcm(layer.path, layer.duration)) {
+      return;
+    }
+    await this.pcmPageCache.prefetchAround(context, layer.path, fileOffsetSec);
+  }
+
+  /** Dev / diagnostics: retained PCM working-set size. */
+  getBufferCacheStats(): {
+    fullBufferPaths: number;
+    pageCount: number;
+    pageSeconds: number;
+  } {
+    const pages = this.pcmPageCache.stats();
+    const fullKeys = new Set<string>([
+      ...this.layerBuffers.keys(),
+      ...this.resampledLayerBuffers.keys(),
+      ...this.recordingPlaybackBuffers.keys(),
+    ]);
+    return {
+      fullBufferPaths: fullKeys.size,
+      pageCount: pages.pageCount,
+      pageSeconds: pages.approxSeconds,
+    };
+  }
+
   private buildPlaybackPlans(
     startAt: number,
     endAt: number,
     options?: BuildLayerPlaybackPlansOptions
-  ): Omit<LayerPlaybackPlan, 'buffer'>[] {
+  ): LayerPlaybackPlanSpec[] {
     return buildLayerPlaybackPlans(
       this.loadedLayers,
       startAt,
@@ -2428,6 +2684,7 @@ export class MemoAudioEngine {
     if (!this.state.isRecording) {
       this.setPlaybackInterruptionObservation(false);
       void endMemoLiveActivity();
+      this.schedulePcmIdleEvict();
     }
   }
 
@@ -2441,6 +2698,44 @@ export class MemoAudioEngine {
     this.invalidateAndStopSources();
     this.emit({ currentTime, isPlaying: true });
     void this.play();
+  }
+
+  /**
+   * Decode any newly audible layers that were skipped at play start (mute/solo),
+   * then resync so schedulePlaySpan can arm sources.
+   */
+  private async ensureAudibleLayerBuffersThenResync(): Promise<void> {
+    const context = this.context;
+    if (!context || !this.state.isPlaying) {
+      return;
+    }
+    const sessionId = this.activePlaybackSessionId;
+    const requestId = this.playRequestId;
+    const anySoloActive = this.getAnySoloActive();
+
+    for (const layer of this.loadedLayers) {
+      if (layer.duration <= 0) {
+        continue;
+      }
+      if (!isLayerAudible(this.getLoadedLayerEffects(layer), anySoloActive)) {
+        continue;
+      }
+      if (this.getCachedPlaybackBuffer(layer)) {
+        continue;
+      }
+      await this.getLayerBuffer(context, layer);
+      if (
+        !this.state.isPlaying ||
+        sessionId !== this.activePlaybackSessionId ||
+        requestId !== this.playRequestId
+      ) {
+        return;
+      }
+    }
+
+    if (this.state.isPlaying && this.hasUnscheduledAudibleLayer()) {
+      this.resyncPlaybackAtCurrentTime();
+    }
   }
 
   private abortFailedPlaybackStart(
@@ -2458,6 +2753,7 @@ export class MemoAudioEngine {
     if (!this.state.isRecording) {
       this.setPlaybackInterruptionObservation(false);
       void endMemoLiveActivity();
+      this.schedulePcmIdleEvict();
     }
   }
 
@@ -2736,7 +3032,7 @@ export class MemoAudioEngine {
       if (audibilityChanged) {
         this.syncAllLayerGains(this.context);
         if (this.state.isPlaying && this.hasUnscheduledAudibleLayer()) {
-          this.resyncPlaybackAtCurrentTime();
+          void this.ensureAudibleLayerBuffersThenResync();
         }
         return;
       }
@@ -2871,12 +3167,14 @@ export class MemoAudioEngine {
   }
 
   unload(): void {
+    this.cancelPcmIdleEvict();
     this.stopPlayback();
     this.loadedLayers = [];
     this.metronomeSettings = DEFAULT_METRONOME_SETTINGS;
     this.disposeMixGraph();
     clearReverbIrCache();
     this.invalidateLayerBuffers();
+    this.recordingPlaybackBuffers.clear();
     this.emit({ ...initialState });
   }
 
@@ -2919,6 +3217,7 @@ export class MemoAudioEngine {
     monitorMix?: boolean;
     duckMonitorMix?: boolean;
   }): Promise<void> {
+    this.cancelPcmIdleEvict();
     if (this.state.isRecording) {
       return;
     }
@@ -3079,11 +3378,8 @@ export class MemoAudioEngine {
       }
     );
 
-    if (monitorMix && this.loadedLayers.length > 0) {
-      await Promise.all(
-        this.loadedLayers.map((layer) => this.getDecodedLayerBuffer(layer))
-      );
-    }
+    // Monitor-mix PCM is loaded in finalizeRecordingWarmup at context rate only
+    // (avoids dual file-rate + context-rate copies during prepare).
 
     this.recordingPrepared = true;
   }
@@ -3159,12 +3455,63 @@ export class MemoAudioEngine {
 
       this.recordingPlaybackBuffers.clear();
       if (monitorMix && this.loadedLayers.length > 0) {
-        await Promise.all(
-          this.loadedLayers.map(async (layer) => {
+        const contextRate = Math.round(context.sampleRate);
+        let pagedPaths = 0;
+        let fullPaths = 0;
+        for (const layer of this.loadedLayers) {
+          const effects = this.getLoadedLayerEffects(layer);
+          const fileOffset = Math.max(0, effects.trimIn);
+          let usedPaging = false;
+
+          if (
+            MONITOR_MIX_PCM_PAGING_ENABLED &&
+            shouldPageLayerPcm(layer.path, layer.duration)
+          ) {
+            await this.pcmPageCache.prefetchAround(
+              context,
+              layer.path,
+              fileOffset
+            );
+            const covering = this.pcmPageCache.findCovering(
+              layer.path,
+              fileOffset,
+              Math.min(PLAYBACK_SCHEDULE_CHUNK_SEC, Math.max(0.1, layer.duration))
+            );
+            if (
+              covering &&
+              Math.round(covering.buffer.sampleRate) === contextRate
+            ) {
+              // Drop full stems so resolveScheduleBuffer uses the page working set.
+              // Keep pages — do not clearPath here.
+              this.layerBuffers.delete(layer.path);
+              for (const key of getResampledCacheKeysForPath(
+                layer.path,
+                this.resampledLayerBuffers.keys()
+              )) {
+                this.resampledLayerBuffers.delete(key);
+              }
+              usedPaging = true;
+              pagedPaths += 1;
+            } else {
+              this.pcmPageCache.clearPath(layer.path);
+            }
+          }
+
+          if (!usedPaging) {
             const buffer = await this.getLayerBuffer(context, layer);
             this.recordingPlaybackBuffers.set(layer.path, buffer);
-          })
-        );
+            this.pcmPageCache.clearPath(layer.path);
+            this.dropFileRateBufferIfPlaybackCopyReady(layer.path);
+            fullPaths += 1;
+          }
+        }
+        if (__DEV__) {
+          const stats = this.getBufferCacheStats();
+          console.log(
+            `[audio] monitor warmup paged=${pagedPaths} full=${fullPaths} ` +
+              `cachePaths=${stats.fullBufferPaths} pages=${stats.pageCount} pageSec=${stats.pageSeconds.toFixed(1)}`
+          );
+        }
       }
 
       this.recordingWarmupFinalized = true;
@@ -3741,6 +4088,9 @@ export class MemoAudioEngine {
       this.stopMetronomeSources();
       this.stopActiveSources();
       this.recordingPlaybackBuffers.clear();
+      // Drop resident monitor-mix PCM so deferred persist/reload does not keep
+      // N−1 full stems in RAM while the new take is saved.
+      this.invalidateLayerBuffers();
       this.clearMetronomeOnlyState();
       this.clearMonitorMixDuck();
       this.playbackContextStartWhen = 0;
@@ -3767,6 +4117,11 @@ export class MemoAudioEngine {
         monitorMixActive: false,
         monitorMixReady: false,
       });
+      // Tear down the recording AudioContext now so native buffer refs can GC
+      // before addStackedLayer + loadMemoIntoEngine (deferPlaybackSetup path).
+      await this.closeContextAndDisposeGraph();
+      this.deferredPlaybackSetup = true;
+      this.sessionMode = null;
 
       if (result.status === 'error') {
         throw new Error(result.message);
@@ -3907,6 +4262,7 @@ export class MemoAudioEngine {
   }
 
   async play(options?: PlaybackOptions): Promise<void> {
+    this.cancelPcmIdleEvict();
     this.stopMetronomePreview();
     // Only coalesce onto a still-valid in-flight play. pause()/seek bump playRequestId
     // without clearing playInFlight; coalescing onto that cancelled promise would no-op.
@@ -4003,17 +4359,41 @@ export class MemoAudioEngine {
       const sessionId = this.activePlaybackSessionId;
       this.layerPlaybackDryOnly = false;
 
-      const layersToDecode = this.loadedLayers.filter((layer) => layer.duration > 0);
+      const anySoloActive = this.getAnySoloActive();
+      const layersToDecode = this.loadedLayers.filter((layer) => {
+        if (layer.duration <= 0) {
+          return false;
+        }
+        return isLayerAudible(
+          this.getLoadedLayerEffects(layer),
+          anySoloActive
+        );
+      });
       if (layersToDecode.length === 0) {
         this.abortFailedPlaybackStart(requestId, startAt);
         return;
       }
 
-      await Promise.all(
-        layersToDecode.map(async (layer) => {
-          await this.getLayerBuffer(context, layer);
-        })
-      );
+      // Full-decode audible layers only for listen-play. Inaudible (muted /
+      // soloed-out) stay cold until unmute → ensureAudibleLayerBuffersThenResync.
+      // Monitor-mix may page long WAVs separately during record warmup.
+      for (const layer of layersToDecode) {
+        if (
+          requestId !== this.playRequestId ||
+          sessionId !== this.activePlaybackSessionId ||
+          this.state.isRecording
+        ) {
+          return;
+        }
+        await this.getLayerBuffer(context, layer);
+      }
+
+      if (__DEV__) {
+        const stats = this.getBufferCacheStats();
+        console.log(
+          `[audio] play buffers fullPaths=${stats.fullBufferPaths} pages=${stats.pageCount} pageSec=${stats.pageSeconds.toFixed(1)}`
+        );
+      }
 
       // Another play()/stop may have started during buffer decode.
       if (
@@ -4113,6 +4493,7 @@ export class MemoAudioEngine {
       if (!this.state.isRecording) {
         this.invalidateAndStopSources();
         this.setPlaybackInterruptionObservation(false);
+        this.schedulePcmIdleEvict();
       }
       return;
     }
@@ -4124,6 +4505,7 @@ export class MemoAudioEngine {
     if (!this.state.isRecording) {
       this.setPlaybackInterruptionObservation(false);
       void endMemoLiveActivity();
+      this.schedulePcmIdleEvict();
     }
   }
 
@@ -4152,6 +4534,7 @@ export class MemoAudioEngine {
   }
 
   seek(time: number): void {
+    this.cancelPcmIdleEvict();
     const bounds = this.getPlaybackBounds(this.state.duration);
     const minTime =
       this.state.loopEnabled && this.hasValidLoop() ? bounds.start : this.state.trimStart;
@@ -4165,6 +4548,8 @@ export class MemoAudioEngine {
     this.emit({ currentTime: clamped, isPlaying: false });
     if (wasPlaying) {
       void this.play();
+    } else {
+      this.schedulePcmIdleEvict();
     }
   }
 
@@ -4177,6 +4562,7 @@ export class MemoAudioEngine {
       this.seek(time);
       return;
     }
+    this.cancelPcmIdleEvict();
     const bounds = this.getPlaybackBounds(this.state.duration);
     const minTime =
       this.state.loopEnabled && this.hasValidLoop() ? bounds.start : this.state.trimStart;
@@ -4186,9 +4572,11 @@ export class MemoAudioEngine {
         : this.state.trimEnd || this.state.duration;
     const clamped = Math.max(minTime, Math.min(time, maxTime));
     if (clamped === this.state.currentTime) {
+      this.schedulePcmIdleEvict();
       return;
     }
     this.emit({ currentTime: clamped });
+    this.schedulePcmIdleEvict();
   }
 
   skip(seconds: number): void {

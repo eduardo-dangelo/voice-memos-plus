@@ -61,7 +61,7 @@ import {
   isMoveSnapSelectionValid,
   type MoveSnapSelection,
 } from '@/src/audio/moveSnap';
-import { estimateMemoNodeCount } from '@/src/audio/performanceBudget';
+import { estimateMemoNodeCount, estimateMemoPcmMb } from '@/src/audio/performanceBudget';
 import {
   maybeShowPerformanceWarning,
   resetPerformanceWarningState,
@@ -148,6 +148,7 @@ import {
   getMemo,
   mergeLayers,
   permanentlyDeleteMemo,
+  scheduleWaveformPeaksRegen,
   updateLayerColor,
   updateLayerEffects,
   updateLayerLabel,
@@ -439,7 +440,12 @@ function trackFadeFields(effects: LayerEffects) {
 }
 
 function cloneLayers(layers: Layer[]): Layer[] {
-  return JSON.parse(JSON.stringify(layers)) as Layer[];
+  // Structural clone without re-serializing peak arrays (can be hundreds of KB).
+  return layers.map((layer) => ({
+    ...layer,
+    effects: layer.effects ? { ...layer.effects } : layer.effects,
+    waveformPeaks: layer.waveformPeaks,
+  }));
 }
 
 function isEditDraftDirty(snapshot: EditDraftSnapshot, current: Memo): boolean {
@@ -2697,11 +2703,21 @@ function MemoEditorInner({
       onDismiss();
       return;
     }
-    const loaded = hasRecording(next) ? await ensureWaveformPeaks(next) : next;
+    const loaded = hasRecording(next)
+      ? await ensureWaveformPeaks(next, { deferDecode: true })
+      : next;
     if (isStale()) {
       return;
     }
     setMemo(loaded);
+    if (hasRecording(loaded)) {
+      scheduleWaveformPeaksRegen(loaded.id, (updated) => {
+        if (memoRef.current?.id === updated.id) {
+          memoRef.current = updated;
+          setMemo(updated);
+        }
+      });
+    }
     const liveSession = getSession();
     const isLiveRecordingForMemo =
       engine.getState().isRecording && liveSession?.memoId === id;
@@ -2842,6 +2858,7 @@ function MemoEditorInner({
 
   const performanceWarningLayerCount = memo ? getPlayableLayers(memo).length : 0;
   const performanceWarningNodeCount = memo ? estimateMemoNodeCount(memo) : 0;
+  const performanceWarningPcmMb = memo ? estimateMemoPcmMb(memo) : 0;
   const playableLayerSignature = memo
     ? getPlayableLayers(memo)
         .map((layer) => `${layer.id}\0${layer.fileName ?? ''}`)
@@ -2859,7 +2876,12 @@ function MemoEditorInner({
     } else {
       setPerformanceWarningMessage(null);
     }
-  }, [memo?.id, performanceWarningLayerCount, performanceWarningNodeCount]);
+  }, [
+    memo?.id,
+    performanceWarningLayerCount,
+    performanceWarningNodeCount,
+    performanceWarningPcmMb,
+  ]);
 
   useEffect(() => {
     if (!memo) {
