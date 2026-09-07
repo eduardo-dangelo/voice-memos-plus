@@ -592,8 +592,7 @@ function MemoEditorInner({
   } | null>(null);
   const pendingStartTimePersist = useRef<{
     memoId: string;
-    layerId: string;
-    startTime: number;
+    startTimes: Record<string, number>;
   } | null>(null);
 
   const [memo, setMemo] = useState<Memo | null>(null);
@@ -611,6 +610,11 @@ function MemoEditorInner({
   const [armedTimelineTime, setArmedTimelineTime] = useState(0);
   const [activeLayerId, setActiveLayerId] = useState<string | null>(null);
   const [activeEditor, setActiveEditor] = useState<EditorTool | null>(null);
+  const [moveSelectedLayerIds, setMoveSelectedLayerIds] = useState<string[]>([]);
+  const moveSelectedLayerIdsRef = useRef<string[]>([]);
+  moveSelectedLayerIdsRef.current = moveSelectedLayerIds;
+  /** Manually-collapsed layers expanded for Move; restored when leaving selection. */
+  const moveExpandedFromCollapsedIdsRef = useRef<Set<string>>(new Set());
   const [editSnapSelection, setEditSnapSelection] = useState<MoveSnapSelection>('off');
   const [savingTrim, setSavingTrim] = useState(false);
   const savingTrimRef = useRef(false);
@@ -680,6 +684,7 @@ function MemoEditorInner({
   const recordingArmedRef = useRef(false);
   const pendingRecordModeRef = useRef<'stack' | 'replace' | null>(null);
   const activeLayerIdRef = useRef<string | null>(null);
+  const activeEditorRef = useRef<EditorTool | null>(null);
   const isSavingRecordingOnExit = useRef(false);
   const pendingRecordingColor = useRef<string | null>(null);
   const monitorMixRef = useRef(false);
@@ -702,6 +707,7 @@ function MemoEditorInner({
   replaceModeRef.current = replaceMode;
   recordingArmedRef.current = recordingArmed;
   activeLayerIdRef.current = activeLayerId;
+  activeEditorRef.current = activeEditor;
 
   const prevMemoIdRef = useRef<string | undefined>(undefined);
   useEffect(() => {
@@ -918,7 +924,7 @@ function MemoEditorInner({
       return;
     }
     pendingStartTimePersist.current = null;
-    void updateLayerStartTimes(pending.memoId, { [pending.layerId]: pending.startTime });
+    void updateLayerStartTimes(pending.memoId, pending.startTimes);
   }, []);
 
   const flushTrackLoopPersist = useCallback(() => {
@@ -970,6 +976,17 @@ function MemoEditorInner({
     editGestureActiveRef.current = false;
     setEditGestureActive(false);
     setActiveEditor(tool);
+    if (tool === 'move') {
+      setMoveSelectedLayerIds((currentSelection) => {
+        if (currentSelection.length > 0) {
+          return currentSelection;
+        }
+        const id = activeLayerIdRef.current;
+        const next = id ? [id] : [];
+        moveSelectedLayerIdsRef.current = next;
+        return next;
+      });
+    }
   }, []);
 
   const cancelEditDraft = useCallback(async (): Promise<void> => {
@@ -1278,15 +1295,16 @@ function MemoEditorInner({
     [activeLayerId, applyFadeUpdates]
   );
 
-  const handleLayerStartTimeChange = useCallback(
-    (startTime: number) => {
-      if (!activeLayerId) {
+  const handleLayerStartTimesChange = useCallback(
+    (updates: Record<string, number>) => {
+      const updateIds = Object.keys(updates);
+      if (updateIds.length === 0) {
         return;
       }
 
       const draftGeneration = editDraftRef.current?.generation;
       const isDraftMove = editDraftRef.current?.tool === 'move';
-      let nextStartTime: number | null = null;
+      let appliedStartTimes: Record<string, number> | null = null;
       let timeline: number | null = null;
       let nextTrimEnd: number | null = null;
       let memoId: string | null = null;
@@ -1301,28 +1319,29 @@ function MemoEditorInner({
           return prev;
         }
 
-        const layer = prev.layers.find((entry) => entry.id === activeLayerId);
-        if (!layer) {
-          return prev;
-        }
-
-        if (isLayerLocked(getLayerEffects(layer))) {
-          return prev;
-        }
-
-        const trimIn = getLayerEffects(layer).trimIn;
-        const clampedStartTime = clampLayerStartTime(startTime, trimIn);
-        const startDelta = clampedStartTime - layer.startTime;
+        const nextStartTimes: Record<string, number> = {};
         const nextLayers = prev.layers.map((entry) => {
-          if (entry.id !== activeLayerId) {
+          if (!(entry.id in updates)) {
             return entry;
           }
+          if (isLayerLocked(getLayerEffects(entry))) {
+            return entry;
+          }
+          const trimIn = getLayerEffects(entry).trimIn;
+          const clampedStartTime = clampLayerStartTime(updates[entry.id]!, trimIn);
+          const startDelta = clampedStartTime - entry.startTime;
+          nextStartTimes[entry.id] = clampedStartTime;
           const next: Layer = { ...entry, startTime: clampedStartTime };
           if (entry.loopUntil != null && Number.isFinite(entry.loopUntil) && startDelta !== 0) {
             next.loopUntil = entry.loopUntil + startDelta;
           }
           return next;
         });
+
+        if (Object.keys(nextStartTimes).length === 0) {
+          return prev;
+        }
+
         const previousDuration = prev.duration;
         const nextTimeline = getMemoTimelineDuration({ ...prev, layers: nextLayers });
         let trimEnd = prev.trimEnd;
@@ -1340,7 +1359,7 @@ function MemoEditorInner({
         }
 
         applied = true;
-        nextStartTime = clampedStartTime;
+        appliedStartTimes = nextStartTimes;
         timeline = nextTimeline;
         nextTrimEnd = trimEnd;
         memoId = prev.id;
@@ -1355,7 +1374,7 @@ function MemoEditorInner({
 
       if (
         !applied ||
-        nextStartTime === null ||
+        appliedStartTimes === null ||
         timeline === null ||
         nextTrimEnd === null ||
         !memoId
@@ -1367,7 +1386,7 @@ function MemoEditorInner({
         return;
       }
 
-      engine.updateLayerStartTime(activeLayerId, nextStartTime);
+      engine.updateLayerStartTimes(appliedStartTimes);
       engine.updateTimelineDuration(timeline, nextTrimEnd);
 
       if (isDraftMove) {
@@ -1376,18 +1395,22 @@ function MemoEditorInner({
 
       pendingStartTimePersist.current = {
         memoId,
-        layerId: activeLayerId,
-        startTime: nextStartTime,
+        startTimes: appliedStartTimes,
       };
 
       if (persistStartTimeTimeout.current) {
         clearTimeout(persistStartTimeTimeout.current);
       }
       persistStartTimeTimeout.current = setTimeout(() => {
-        void updateLayerStartTimes(memoId!, { [activeLayerId]: nextStartTime! });
+        const pending = pendingStartTimePersist.current;
+        if (!pending) {
+          return;
+        }
+        pendingStartTimePersist.current = null;
+        void updateLayerStartTimes(pending.memoId, pending.startTimes);
       }, 300);
     },
-    [activeLayerId, engine, isDraftGenerationCurrent]
+    [engine, isDraftGenerationCurrent]
   );
 
   const handleLoopChange = useCallback(
@@ -1774,9 +1797,145 @@ function MemoEditorInner({
     [engineState.isRecording]
   );
 
+  const expandLayerForMove = useCallback((layerId: string) => {
+    if (trackAccordionEnabledRef.current) {
+      return;
+    }
+    const recordingLayoutActive =
+      recordingArmedRef.current ||
+      stackModeRef.current ||
+      replaceModeRef.current ||
+      engineState.isRecording;
+    if (recordingLayoutActive) {
+      return;
+    }
+    setCollapsedLayerIds((collapsed) => {
+      if (!collapsed.has(layerId)) {
+        return collapsed;
+      }
+      moveExpandedFromCollapsedIdsRef.current.add(layerId);
+      const next = new Set(collapsed);
+      next.delete(layerId);
+      return next;
+    });
+  }, [engineState.isRecording]);
+
+  const restoreLayersCollapsedAfterMove = useCallback((layerIds: readonly string[]) => {
+    if (layerIds.length === 0) {
+      return;
+    }
+    if (trackAccordionEnabledRef.current) {
+      for (const id of layerIds) {
+        moveExpandedFromCollapsedIdsRef.current.delete(id);
+      }
+      return;
+    }
+    setCollapsedLayerIds((collapsed) => {
+      let changed = false;
+      const next = new Set(collapsed);
+      for (const id of layerIds) {
+        if (moveExpandedFromCollapsedIdsRef.current.has(id)) {
+          next.add(id);
+          moveExpandedFromCollapsedIdsRef.current.delete(id);
+          changed = true;
+        }
+      }
+      return changed ? next : collapsed;
+    });
+  }, []);
+
+  const clearMoveMultiSelect = useCallback(() => {
+    const previous = moveSelectedLayerIdsRef.current;
+    if (previous.length > 0) {
+      restoreLayersCollapsedAfterMove(previous);
+    } else if (moveExpandedFromCollapsedIdsRef.current.size > 0) {
+      restoreLayersCollapsedAfterMove([...moveExpandedFromCollapsedIdsRef.current]);
+    }
+    moveExpandedFromCollapsedIdsRef.current.clear();
+    moveSelectedLayerIdsRef.current = [];
+    setMoveSelectedLayerIds([]);
+  }, [restoreLayersCollapsedAfterMove]);
+
+  useEffect(() => {
+    if (activeEditor === 'move') {
+      for (const id of moveSelectedLayerIdsRef.current) {
+        expandLayerForMove(id);
+      }
+      return;
+    }
+    if (
+      moveSelectedLayerIdsRef.current.length > 0 ||
+      moveExpandedFromCollapsedIdsRef.current.size > 0
+    ) {
+      clearMoveMultiSelect();
+    }
+  }, [activeEditor, clearMoveMultiSelect, expandLayerForMove]);
+
   const handleTrackPress = useCallback(
     (trackId: string) => {
       if (savingTrimRef.current) {
+        return;
+      }
+
+      const moveActive = activeEditorRef.current === 'move' || editDraftRef.current?.tool === 'move';
+
+      if (moveActive) {
+        const current = memoRef.current;
+        const layer = current?.layers.find((entry) => entry.id === trackId);
+        const anySoloActive = current
+          ? hasAnySoloActive(current.layers.map((entry) => getLayerEffects(entry)))
+          : false;
+        if (layer && !isLayerSelectable(getLayerEffects(layer), anySoloActive)) {
+          return;
+        }
+        if (layer && isLayerLocked(getLayerEffects(layer))) {
+          return;
+        }
+
+        const selection = moveSelectedLayerIdsRef.current;
+        const alreadySelected = selection.includes(trackId);
+
+        if (alreadySelected) {
+          if (selection.length <= 1) {
+            expandLayerForMove(trackId);
+            return;
+          }
+          void (async () => {
+            await confirmEditDraft(true);
+            flushEffectsPersist();
+            flushStartTimePersist();
+            const nextSelection = moveSelectedLayerIdsRef.current.filter((id) => id !== trackId);
+            restoreLayersCollapsedAfterMove([trackId]);
+            moveSelectedLayerIdsRef.current = nextSelection;
+            setMoveSelectedLayerIds(nextSelection);
+            if (activeLayerIdRef.current === trackId) {
+              const nextActive = nextSelection[nextSelection.length - 1] ?? null;
+              if (isPersistingTakeRef.current) {
+                userSelectedDuringPersistRef.current = true;
+                activeLayerIdRef.current = nextActive;
+              }
+              setActiveLayerId(nextActive);
+            }
+          })();
+          return;
+        }
+
+        void (async () => {
+          await confirmEditDraft(true);
+          flushEffectsPersist();
+          flushStartTimePersist();
+          expandLayerForMove(trackId);
+          const nextSelection = moveSelectedLayerIdsRef.current.includes(trackId)
+            ? moveSelectedLayerIdsRef.current
+            : [...moveSelectedLayerIdsRef.current, trackId];
+          moveSelectedLayerIdsRef.current = nextSelection;
+          setMoveSelectedLayerIds(nextSelection);
+          if (isPersistingTakeRef.current) {
+            userSelectedDuringPersistRef.current = true;
+            activeLayerIdRef.current = trackId;
+          }
+          setActiveLayerId(trackId);
+        })();
         return;
       }
 
@@ -1814,9 +1973,11 @@ function MemoEditorInner({
     },
     [
       confirmEditDraft,
+      expandLayerForMove,
       expandManualCollapsedLayer,
       flushEffectsPersist,
       flushStartTimePersist,
+      restoreLayersCollapsedAfterMove,
     ]
   );
 
@@ -4524,16 +4685,24 @@ function MemoEditorInner({
         ? processingLayerId
         : null;
 
+    const expandedLayerIds =
+      activeEditor === 'move' && moveSelectedLayerIds.length > 0
+        ? new Set(moveSelectedLayerIds)
+        : undefined;
+
     const nextCollapsed = computeAccordionCollapsedIds({
       playableLayerIds: playableIds,
       activeLayerId,
+      expandedLayerIds,
       forceExpandedLayerId,
     });
     setCollapsedLayerIds(nextCollapsed);
   }, [
+    activeEditor,
     activeLayerId,
     isRecording,
     memo,
+    moveSelectedLayerIds,
     pendingRecordingLayout,
     processingLayerId,
     replaceMode,
@@ -4709,7 +4878,10 @@ function MemoEditorInner({
           startTime: getLayerActiveStartTime(layer),
           duration: Math.max(footprintDuration, 0.01),
           cycleDuration: Math.max(activeDuration, 0.01),
-          isActive: layer.id === activeLayerId && selectable,
+          isActive:
+            selectable &&
+            (layer.id === activeLayerId ||
+              (activeEditor === 'move' && moveSelectedLayerIds.includes(layer.id))),
           isMuted: effects.muted,
           isSoloed: effects.solo,
           isSoloedOut: anySoloActive && !effects.solo,
@@ -4724,9 +4896,11 @@ function MemoEditorInner({
         };
       });
   }, [
+    activeEditor,
     activeLayerId,
     collapsedLayerIds,
     memo,
+    moveSelectedLayerIds,
     processingLayerId,
   ]);
 
@@ -4977,27 +5151,54 @@ function MemoEditorInner({
   ]);
 
   const moveOverlay = useMemo(() => {
-    if (
-      activeEditor !== 'move' ||
-      !activeLayer ||
-      !activeLayerEffects ||
-      isLayerLocked(activeLayerEffects)
-    ) {
+    if (activeEditor !== 'move' || !memo) {
       return undefined;
     }
+
+    const selectedIds =
+      moveSelectedLayerIds.length > 0
+        ? moveSelectedLayerIds
+        : activeLayerId
+          ? [activeLayerId]
+          : [];
+    if (selectedIds.length === 0) {
+      return undefined;
+    }
+
+    const layers: { layerId: string; startTime: number; trimIn: number }[] = [];
+    for (const layerId of selectedIds) {
+      const layer = memo.layers.find((entry) => entry.id === layerId);
+      if (!layer) {
+        continue;
+      }
+      const effects = getLayerEffects(layer);
+      if (isLayerLocked(effects)) {
+        continue;
+      }
+      layers.push({
+        layerId,
+        startTime: layer.startTime,
+        trimIn: effects.trimIn,
+      });
+    }
+
+    if (layers.length === 0) {
+      return undefined;
+    }
+
     return {
-      layerId: activeLayer.id,
-      startTime: activeLayer.startTime,
-      trimIn: activeLayerEffects.trimIn,
-      onChange: handleLayerStartTimeChange,
+      layerIds: layers.map((entry) => entry.layerId),
+      layers,
+      onChange: handleLayerStartTimesChange,
       snapIntervalSec: editSnapIntervalSec,
     };
   }, [
     activeEditor,
-    activeLayer,
-    activeLayerEffects,
-    handleLayerStartTimeChange,
+    activeLayerId,
     editSnapIntervalSec,
+    handleLayerStartTimesChange,
+    memo,
+    moveSelectedLayerIds,
   ]);
 
   const fadeOverlay = useMemo(() => {

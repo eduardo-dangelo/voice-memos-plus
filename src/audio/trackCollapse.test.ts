@@ -59,6 +59,34 @@ test('computeAccordionCollapsedIds prefers forceExpanded over null active select
   assert.deepEqual([...collapsed], ['b']);
 });
 
+test('computeAccordionCollapsedIds keeps expandedLayerIds set expanded', () => {
+  const collapsed = computeAccordionCollapsedIds({
+    playableLayerIds: ['a', 'b', 'c', 'd'],
+    activeLayerId: 'a',
+    expandedLayerIds: new Set(['a', 'c']),
+  });
+  assert.deepEqual([...collapsed].sort(), ['b', 'd']);
+});
+
+test('computeAccordionCollapsedIds falls back to active when expandedLayerIds empty', () => {
+  const collapsed = computeAccordionCollapsedIds({
+    playableLayerIds: ['a', 'b', 'c'],
+    activeLayerId: 'b',
+    expandedLayerIds: new Set(),
+  });
+  assert.deepEqual([...collapsed].sort(), ['a', 'c']);
+});
+
+test('computeAccordionCollapsedIds merges forceExpanded with expandedLayerIds', () => {
+  const collapsed = computeAccordionCollapsedIds({
+    playableLayerIds: ['a', 'b', 'c', 'd'],
+    activeLayerId: 'a',
+    expandedLayerIds: new Set(['a', 'b']),
+    forceExpandedLayerId: 'd',
+  });
+  assert.deepEqual([...collapsed], ['c']);
+});
+
 test('computeTrackHeights allocates collapsed and expanded rows', () => {
   const heights = computeTrackHeights([false, true, false], 300, 1);
   assert.equal(heights[1], COLLAPSED_TRACK_HEIGHT);

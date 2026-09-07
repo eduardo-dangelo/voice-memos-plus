@@ -68,6 +68,11 @@ export function computeRecordingLayoutCollapsedIds({
 export type ComputeAccordionCollapsedIdsInput = {
   playableLayerIds: readonly string[];
   activeLayerId: string | null;
+  /**
+   * When set, every id in this set stays expanded (e.g. multi-track Move
+   * selection). Falls back to `activeLayerId` when omitted or empty.
+   */
+  expandedLayerIds?: ReadonlySet<string>;
   /** Stays expanded even when not selected (e.g. save-processing shimmer). */
   forceExpandedLayerId?: string | null;
   nonCollapsibleIds?: ReadonlySet<string>;
@@ -80,6 +85,7 @@ export type ComputeAccordionCollapsedIdsInput = {
 export function computeAccordionCollapsedIds({
   playableLayerIds,
   activeLayerId,
+  expandedLayerIds,
   forceExpandedLayerId,
   nonCollapsibleIds,
 }: ComputeAccordionCollapsedIdsInput): Set<string> {
@@ -94,7 +100,13 @@ export function computeAccordionCollapsedIds({
   if (forceExpandedLayerId && playableLayerIds.includes(forceExpandedLayerId)) {
     expanded.add(forceExpandedLayerId);
   }
-  if (activeLayerId && playableLayerIds.includes(activeLayerId)) {
+  if (expandedLayerIds && expandedLayerIds.size > 0) {
+    for (const id of expandedLayerIds) {
+      if (playableLayerIds.includes(id)) {
+        expanded.add(id);
+      }
+    }
+  } else if (activeLayerId && playableLayerIds.includes(activeLayerId)) {
     expanded.add(activeLayerId);
   }
 

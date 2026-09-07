@@ -241,11 +241,16 @@ export type TrimOverlayConfig = {
   snapIntervalSec?: number | null;
 };
 
-export type MoveOverlayConfig = {
+export type MoveOverlayLayer = {
   layerId: string;
   startTime: number;
   trimIn: number;
-  onChange: (startTime: number) => void;
+};
+
+export type MoveOverlayConfig = {
+  layerIds: string[];
+  layers: MoveOverlayLayer[];
+  onChange: (startTimes: Record<string, number>) => void;
   snapIntervalSec?: number | null;
 };
 
@@ -257,6 +262,30 @@ function resolveFadeForTrack(
     return null;
   }
   return fadeOverlay.fades;
+}
+
+function areMoveOverlayLayersEqual(
+  a: MoveOverlayLayer[] | undefined,
+  b: MoveOverlayLayer[] | undefined
+): boolean {
+  if (a === b) {
+    return true;
+  }
+  if (!a || !b || a.length !== b.length) {
+    return false;
+  }
+  for (let i = 0; i < a.length; i += 1) {
+    const left = a[i]!;
+    const right = b[i]!;
+    if (
+      left.layerId !== right.layerId ||
+      left.startTime !== right.startTime ||
+      left.trimIn !== right.trimIn
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function getLayoutDuration(
@@ -1017,8 +1046,7 @@ function TrackMoveOverlay({
   sidePadding,
   trackHeight,
   trackColor,
-  layerStartTime,
-  trimIn,
+  layers,
   pixelsPerSecond,
   layoutDuration,
   snapIntervalSec,
@@ -1029,28 +1057,27 @@ function TrackMoveOverlay({
   sidePadding: number;
   trackHeight: number;
   trackColor: string;
-  layerStartTime: number;
-  trimIn: number;
+  layers: MoveOverlayLayer[];
   pixelsPerSecond: number;
   layoutDuration: number;
   snapIntervalSec?: number | null;
-  onChange: (startTime: number) => void;
+  onChange: (startTimes: Record<string, number>) => void;
   trimScrollHelpers: TrimScrollHelpers;
 }) {
   const { styles } = useWaveformTheme();
   const segmentLeft = sidePadding + track.startTime * pixelsPerSecond;
   const segmentWidth = track.duration * pixelsPerSecond;
-  const startLayerStartTime = useRef(layerStartTime);
+  const startLayerStartTimes = useRef<Record<string, number>>({});
   const scrollXAtGrant = useRef(0);
   const onChangeRef = useRef(onChange);
   const trimScrollHelpersRef = useRef(trimScrollHelpers);
-  const trimInRef = useRef(trimIn);
+  const layersRef = useRef(layers);
   const pixelsPerSecondRef = useRef(pixelsPerSecond);
   const layoutDurationRef = useRef(layoutDuration);
   const snapIntervalRef = useRef(snapIntervalSec);
   onChangeRef.current = onChange;
   trimScrollHelpersRef.current = trimScrollHelpers;
-  trimInRef.current = trimIn;
+  layersRef.current = layers;
   pixelsPerSecondRef.current = pixelsPerSecond;
   layoutDurationRef.current = layoutDuration;
   snapIntervalRef.current = snapIntervalSec;
@@ -1058,7 +1085,9 @@ function TrackMoveOverlay({
   const beginGestureRef = useRef(() => {});
   beginGestureRef.current = () => {
     scrollXAtGrant.current = trimScrollHelpersRef.current.getScrollX();
-    startLayerStartTime.current = layerStartTime;
+    startLayerStartTimes.current = Object.fromEntries(
+      layersRef.current.map((layer) => [layer.layerId, layer.startTime])
+    );
     trimScrollHelpersRef.current.onTrimGestureActive(true);
   };
 
@@ -1076,20 +1105,53 @@ function TrackMoveOverlay({
   moveRef.current = (_event, gesture) => {
     const pps = pixelsPerSecondRef.current;
     const effectiveDx = getEffectiveDx(gesture);
-    const trimInValue = trimInRef.current;
-    let nextStartTime = startLayerStartTime.current + effectiveDx / pps;
+    const rawDelta = effectiveDx / pps;
     const interval = snapIntervalRef.current;
-    if (interval != null && interval > 0) {
-      const activeStart = nextStartTime + trimInValue;
-      const snappedActive = snapTimeToGrid(
-        activeStart,
-        interval,
-        layoutDurationRef.current
-      );
-      nextStartTime = snappedActive - trimInValue;
+    const layers = layersRef.current;
+    if (layers.length === 0) {
+      return;
     }
-    nextStartTime = Math.max(-trimInValue, nextStartTime);
-    onChangeRef.current(nextStartTime);
+
+    let maxMinDelta = Number.NEGATIVE_INFINITY;
+    for (const layer of layers) {
+      const snapshotStart = startLayerStartTimes.current[layer.layerId];
+      if (snapshotStart === undefined) {
+        continue;
+      }
+      maxMinDelta = Math.max(maxMinDelta, -layer.trimIn - snapshotStart);
+    }
+    if (!Number.isFinite(maxMinDelta)) {
+      return;
+    }
+
+    let sharedDelta = rawDelta;
+    const refLayer =
+      layers.find((layer) => layer.layerId === track.id) ?? layers[0]!;
+    const refSnapshot = startLayerStartTimes.current[refLayer.layerId];
+    if (refSnapshot !== undefined && interval != null && interval > 0) {
+      const candidate = refSnapshot + rawDelta;
+      const snapped =
+        snapTimeToGrid(
+          candidate + refLayer.trimIn,
+          interval,
+          layoutDurationRef.current
+        ) - refLayer.trimIn;
+      sharedDelta = snapped - refSnapshot;
+    }
+
+    sharedDelta = Math.max(sharedDelta, maxMinDelta);
+
+    const nextStartTimes: Record<string, number> = {};
+    for (const layer of layers) {
+      const snapshotStart = startLayerStartTimes.current[layer.layerId];
+      if (snapshotStart === undefined) {
+        continue;
+      }
+      nextStartTimes[layer.layerId] = snapshotStart + sharedDelta;
+    }
+    if (Object.keys(nextStartTimes).length > 0) {
+      onChangeRef.current(nextStartTimes);
+    }
   };
 
   const movePanCapture = {
@@ -1323,10 +1385,8 @@ function areTrackWaveformRowPropsEqual(
     return false;
   }
   if (
-    prev.moveOverlay?.layerId !== next.moveOverlay?.layerId ||
-    prev.moveOverlay?.startTime !== next.moveOverlay?.startTime ||
-    prev.moveOverlay?.trimIn !== next.moveOverlay?.trimIn ||
-    prev.moveOverlay?.snapIntervalSec !== next.moveOverlay?.snapIntervalSec
+    prev.moveOverlay?.snapIntervalSec !== next.moveOverlay?.snapIntervalSec ||
+    !areMoveOverlayLayersEqual(prev.moveOverlay?.layers, next.moveOverlay?.layers)
   ) {
     return false;
   }
@@ -1607,7 +1667,7 @@ const ExpandedTrackWaveformRow = memo(function ExpandedTrackWaveformRow({
 
   const volumeScale = dbToLinear(track.volumeDb ?? 0);
   const showTrimOverlay = trimOverlay?.layerId === track.id;
-  const showMoveOverlay = moveOverlay?.layerId === track.id;
+  const showMoveOverlay = Boolean(moveOverlay?.layerIds.includes(track.id));
   const trackFadeState = resolveFadeForTrack(fadeOverlay, track.id);
   const showFadeOverlay = fadeOverlay?.layerId === track.id && trackFadeState != null;
   const showRegionChrome =
@@ -2107,15 +2167,14 @@ const ExpandedTrackWaveformRow = memo(function ExpandedTrackWaveformRow({
       ) : null}
       {showMoveOverlay && moveOverlay && trimScrollHelpers ? (
         <TrackMoveOverlay
-          layerStartTime={moveOverlay.startTime}
           layoutDuration={layoutDuration}
+          layers={moveOverlay.layers}
           pixelsPerSecond={pixelsPerSecond}
           sidePadding={sidePadding}
           snapIntervalSec={moveOverlay.snapIntervalSec}
           track={track}
           trackColor={trackColor}
           trackHeight={trackHeight}
-          trimIn={moveOverlay.trimIn}
           trimScrollHelpers={trimScrollHelpers}
           onChange={moveOverlay.onChange}
         />
@@ -4123,13 +4182,9 @@ function areWaveformViewPropsEqual(prev: Props, next: Props): boolean {
   }
 
   if (
-    !areOverlayConfigsEqual(prev.moveOverlay, next.moveOverlay, [
-      'layerId',
-      'startTime',
-      'trimIn',
-      'onChange',
-      'snapIntervalSec',
-    ])
+    prev.moveOverlay?.onChange !== next.moveOverlay?.onChange ||
+    prev.moveOverlay?.snapIntervalSec !== next.moveOverlay?.snapIntervalSec ||
+    !areMoveOverlayLayersEqual(prev.moveOverlay?.layers, next.moveOverlay?.layers)
   ) {
     return false;
   }
