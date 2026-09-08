@@ -1144,24 +1144,43 @@ export class MemoAudioEngine {
   }
 
   /**
-   * Hardware rate for listen-playback. Matching the session rate avoids
-   * continuous native SRC (common 44.1k context on 48k devices) that cracks
-   * under App Switcher / background CPU pressure.
+   * Listen-playback context rate. Must match stored stems (44100): react-native-audio-api
+   * BufferSources play samples 1:1 with the context and do not SRC from buffer.sampleRate.
+   * A 48k context with 44.1k PCM plays ~1.09× fast even when rate tags "match" after a
+   * faulty decode-at-rate. Matching the hardware session rate is left to AVAudioEngine.
    */
   private getPlaybackContextSampleRate(): number {
-    const preferred = Math.round(AudioManager.getDevicePreferredSampleRate());
-    if (!Number.isFinite(preferred) || preferred < 8000) {
-      return RECORDING_SAMPLE_RATE;
-    }
-    return preferred;
+    return RECORDING_SAMPLE_RATE;
   }
 
   private async createAudioContextAtRate(targetRate: number): Promise<AudioContext> {
-    try {
-      return new AudioContext({ sampleRate: targetRate });
-    } catch {
-      return new AudioContext();
+    const desired = Math.round(targetRate);
+    const open = (): AudioContext => new AudioContext({ sampleRate: desired });
+
+    let context = open();
+    if (Math.round(context.sampleRate) === desired) {
+      return context;
     }
+
+    if (__DEV__) {
+      console.warn(
+        `[audio] AudioContext created at ${Math.round(context.sampleRate)} Hz ` +
+          `(wanted ${desired} Hz); retrying once`
+      );
+    }
+    try {
+      await context.close();
+    } catch {
+      // already closed
+    }
+    context = open();
+    if (Math.round(context.sampleRate) !== desired && __DEV__) {
+      console.warn(
+        `[audio] AudioContext still at ${Math.round(context.sampleRate)} Hz ` +
+          `after retry (wanted ${desired} Hz) — listen decode will JS-resample to actual rate`
+      );
+    }
+    return context;
   }
 
   private clearRecordingSampleRateState(): void {
@@ -1819,26 +1838,32 @@ export class MemoAudioEngine {
 
     await this.configureForPlayback();
 
-    const sessionRate = this.getPlaybackContextSampleRate();
+    const targetRate = this.getPlaybackContextSampleRate();
 
-    // Only recreate when leaving a leftover recording-rate context for a
-    // different hardware rate. Do not thrash when AVAudioSession.sampleRate
-    // flickers between play() calls — that broke first-play after the 48k change.
-    if (
-      this.context &&
-      Math.round(this.context.sampleRate) === RECORDING_SAMPLE_RATE &&
-      sessionRate !== RECORDING_SAMPLE_RATE
-    ) {
+    // Recreate if a leftover context is at the wrong rate (e.g. older builds used
+    // device-preferred 48k). Clear rate-specific PCM so we never schedule mismatched pages.
+    if (this.context && Math.round(this.context.sampleRate) !== targetRate) {
       await this.closeContextAndDisposeGraph();
+      this.pcmPageCache.clear();
+      this.recordingPlaybackBuffers.clear();
+      this.resampledLayerBuffers.clear();
     }
 
     if (!this.context) {
-      this.context = await this.createAudioContextAtRate(sessionRate);
+      this.context = await this.createAudioContextAtRate(targetRate);
       if (__DEV__) {
         console.log(
           `[audio] playback AudioContext at ${Math.round(this.context.sampleRate)} Hz` +
-            ` (session ${sessionRate} Hz)`
+            ` (target ${targetRate} Hz)`
         );
+      }
+      if (Math.round(this.context.sampleRate) !== targetRate) {
+        if (__DEV__) {
+          console.warn(
+            `[audio] playback context rate ${Math.round(this.context.sampleRate)} Hz ` +
+              `!= target ${targetRate} Hz — stems may play at the wrong speed`
+          );
+        }
       }
     }
 
@@ -2329,6 +2354,13 @@ export class MemoAudioEngine {
     try {
       const source = context.createBufferSource();
       source.buffer = buffer;
+      // Native BufferSources play 1:1 with the context and ignore buffer.sampleRate
+      // for SRC. Compensate when an honest-tagged buffer slips onto a mismatched context.
+      const contextRate = Math.round(context.sampleRate);
+      const bufferRate = Math.round(buffer.sampleRate);
+      if (contextRate > 0 && bufferRate > 0 && bufferRate !== contextRate) {
+        source.playbackRate.value = bufferRate / contextRate;
+      }
       if (loopRegion) {
         source.loop = true;
         source.loopStart = loopRegion.start;
@@ -2612,49 +2644,99 @@ export class MemoAudioEngine {
     cacheKey: string,
     epoch: number
   ): Promise<AudioBuffer> {
-    // Native decode-at-rate: avoids multi-second JS resample on first play when
-    // the playback context is 48k and files are 44.1k (felt like "play is broken").
-    try {
-      const decodedAtRate = await decodeAudioData(layer.path, Math.round(context.sampleRate));
-      if (Math.round(decodedAtRate.sampleRate) === Math.round(context.sampleRate)) {
-        if (epoch === this.bufferLoadEpoch) {
-          this.resampledLayerBuffers.set(cacheKey, decodedAtRate);
-          this.dropFileRateBufferIfPlaybackCopyReady(layer.path);
-        }
-        return decodedAtRate;
-      }
-    } catch {
-      // Fall through to file-rate decode + JS resample.
-    }
-
+    // Never trust native decode-at-rate tags alone — a retagged 44.1k buffer on a
+    // 48k context plays ~1.09× fast. Always decode at file rate, then JS-resample.
     const decoded = await this.getDecodedLayerBuffer(layer);
     const bufferRate = Math.round(decoded.sampleRate);
     const contextRate = Math.round(context.sampleRate);
 
+    let playbackBuffer: AudioBuffer;
     if (bufferRate === contextRate) {
-      if (epoch === this.bufferLoadEpoch) {
-        this.resampledLayerBuffers.set(cacheKey, decoded);
+      playbackBuffer = decoded;
+    } else {
+      if (__DEV__) {
+        console.log(
+          `[audio] resampling layer for playback: ${bufferRate} Hz -> ${contextRate} Hz`
+        );
       }
-      return decoded;
-    }
-
-    if (__DEV__) {
-      console.log(
-        `[audio] resampling layer for playback: ${bufferRate} Hz -> ${contextRate} Hz`
+      playbackBuffer = await resampleMonoBufferFromRateAsync(
+        decoded,
+        bufferRate,
+        contextRate,
+        context
       );
     }
 
-    const resampled = await resampleMonoBufferFromRateAsync(
-      decoded,
-      bufferRate,
-      contextRate,
-      context
+    playbackBuffer = await this.ensurePlaybackBufferDuration(
+      context,
+      layer,
+      playbackBuffer,
+      decoded
     );
+
     if (epoch === this.bufferLoadEpoch) {
-      this.resampledLayerBuffers.set(cacheKey, resampled);
-      this.dropFileRateBufferIfPlaybackCopyReady(layer.path);
+      this.resampledLayerBuffers.set(cacheKey, playbackBuffer);
+      if (playbackBuffer !== decoded) {
+        this.dropFileRateBufferIfPlaybackCopyReady(layer.path);
+      }
     }
-    return resampled;
+    return playbackBuffer;
+  }
+
+  /**
+   * Reject lying rate tags: buffer.length/sampleRate must track layer.duration.
+   * On failure, force a fresh file-rate decode + JS resample (or return the
+   * resampled result). Relative error >5% catches 44.1→48 retag (~9% short).
+   */
+  private async ensurePlaybackBufferDuration(
+    context: AudioContext,
+    layer: LoadedLayer,
+    candidate: AudioBuffer,
+    fileRateDecoded: AudioBuffer
+  ): Promise<AudioBuffer> {
+    if (this.playbackBufferDurationOk(layer, candidate)) {
+      return candidate;
+    }
+
+    console.warn(
+      `[audio] playback buffer duration mismatch layer=${layer.id} ` +
+        `buffer=${(candidate.length / Math.max(1, candidate.sampleRate)).toFixed(3)}s ` +
+        `layer=${layer.duration.toFixed(3)}s rate=${Math.round(candidate.sampleRate)}Hz — ` +
+        `forcing JS resample from file rate`
+    );
+
+    const fileRate = Math.round(fileRateDecoded.sampleRate);
+    const contextRate = Math.round(context.sampleRate);
+    let repaired: AudioBuffer;
+    if (fileRate === contextRate) {
+      repaired = fileRateDecoded;
+    } else {
+      repaired = await resampleMonoBufferFromRateAsync(
+        fileRateDecoded,
+        fileRate,
+        contextRate,
+        context
+      );
+    }
+
+    if (!this.playbackBufferDurationOk(layer, repaired)) {
+      console.warn(
+        `[audio] playback buffer still mismatched after JS resample layer=${layer.id} ` +
+          `buffer=${(repaired.length / Math.max(1, repaired.sampleRate)).toFixed(3)}s ` +
+          `layer=${layer.duration.toFixed(3)}s`
+      );
+    }
+    return repaired;
+  }
+
+  private playbackBufferDurationOk(layer: LoadedLayer, buffer: AudioBuffer): boolean {
+    const rate = Math.round(buffer.sampleRate);
+    if (!(rate > 0) || !(layer.duration > 0.05) || buffer.length <= 0) {
+      return true;
+    }
+    const bufferDuration = buffer.length / rate;
+    const relErr = Math.abs(bufferDuration - layer.duration) / layer.duration;
+    return relErr <= 0.05;
   }
 
   /**

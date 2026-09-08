@@ -1,0 +1,12 @@
+---
+description: Never create git commits unless the user explicitly pre-approves
+alwaysApply: true
+---
+
+# No commits without pre-approval
+
+- **Never** run `git commit` (or amend/create commits another way) unless the user has **explicitly** asked to commit in the current turn.
+- Plan language such as “commit buildNumber”, “ship”, or implementing a plan that mentions committing is **not** approval — still ask first.
+- When work is ready to commit, say so and wait for a clear yes (e.g. “commit this”, “create a commit”).
+- Staging (`git add`) without committing is fine when needed for the user’s requested workflow; do not commit afterward without approval.
+- Pushing remains separately gated: never push unless the user explicitly asks.
