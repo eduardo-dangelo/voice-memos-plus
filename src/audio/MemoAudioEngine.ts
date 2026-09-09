@@ -324,6 +324,8 @@ export class MemoAudioEngine {
   private bufferLoadEpoch = 0;
   /** Bumped to cancel background warmPlaybackBuffers. */
   private warmGeneration = 0;
+  /** Serializes listen ensureContext so warm+play cannot race session/context setup. */
+  private ensureContextInFlight: Promise<AudioContext> | null = null;
   /** Disk-paged PCM for long WAV stems (working set, not full-file). */
   private pcmPageCache = new LayerPcmPageCache();
   /** Clears decoded PCM after a long pause (see LAYER_PCM_IDLE_EVICT_MS). */
@@ -1144,13 +1146,20 @@ export class MemoAudioEngine {
   }
 
   /**
-   * Listen-playback context rate. Must match stored stems (44100): react-native-audio-api
-   * BufferSources play samples 1:1 with the context and do not SRC from buffer.sampleRate.
-   * A 48k context with 44.1k PCM plays ~1.09× fast even when rate tags "match" after a
-   * faulty decode-at-rate. Matching the hardware session rate is left to AVAudioEngine.
+   * Listen-playback context rate must match stored stems (44100). BufferSources play
+   * samples 1:1 with the context; a 48k context forces O(duration) JS resample and
+   * crackly linear SRC on cold mini-row play. Race/poison is handled by ensureContext
+   * mutex + loadMemo awaiting context + cache clear on mismatch — not by matching
+   * the hardware preferred rate.
    */
   private getPlaybackContextSampleRate(): number {
     return RECORDING_SAMPLE_RATE;
+  }
+
+  private clearListenRateCaches(): void {
+    this.pcmPageCache.clear();
+    this.recordingPlaybackBuffers.clear();
+    this.resampledLayerBuffers.clear();
   }
 
   private async createAudioContextAtRate(targetRate: number): Promise<AudioContext> {
@@ -1836,32 +1845,49 @@ export class MemoAudioEngine {
       return this.ensureRecordingContext();
     }
 
+    if (this.ensureContextInFlight) {
+      return this.ensureContextInFlight;
+    }
+
+    const run = this.ensureContextUnlocked();
+    this.ensureContextInFlight = run;
+    try {
+      return await run;
+    } finally {
+      if (this.ensureContextInFlight === run) {
+        this.ensureContextInFlight = null;
+      }
+    }
+  }
+
+  private async ensureContextUnlocked(): Promise<AudioContext> {
     await this.configureForPlayback();
 
-    const targetRate = this.getPlaybackContextSampleRate();
+    // Re-read after session activate — preferred rate can change with the route.
+    const desiredRate = this.getPlaybackContextSampleRate();
 
-    // Recreate if a leftover context is at the wrong rate (e.g. older builds used
-    // device-preferred 48k). Clear rate-specific PCM so we never schedule mismatched pages.
-    if (this.context && Math.round(this.context.sampleRate) !== targetRate) {
+    // Recreate on any mismatch (e.g. leftover 44100 recording context, or a
+    // context created before the session settled at the hardware rate).
+    if (this.context && Math.round(this.context.sampleRate) !== desiredRate) {
       await this.closeContextAndDisposeGraph();
-      this.pcmPageCache.clear();
-      this.recordingPlaybackBuffers.clear();
-      this.resampledLayerBuffers.clear();
+      this.clearListenRateCaches();
     }
 
     if (!this.context) {
-      this.context = await this.createAudioContextAtRate(targetRate);
+      this.context = await this.createAudioContextAtRate(desiredRate);
       if (__DEV__) {
         console.log(
           `[audio] playback AudioContext at ${Math.round(this.context.sampleRate)} Hz` +
-            ` (target ${targetRate} Hz)`
+            ` (desired ${desiredRate} Hz)`
         );
       }
-      if (Math.round(this.context.sampleRate) !== targetRate) {
+      if (Math.round(this.context.sampleRate) !== desiredRate) {
+        // Actual rate won — clear rate-keyed caches and resample to actual.
+        this.clearListenRateCaches();
         if (__DEV__) {
           console.warn(
             `[audio] playback context rate ${Math.round(this.context.sampleRate)} Hz ` +
-              `!= target ${targetRate} Hz — stems may play at the wrong speed`
+              `!= desired ${desiredRate} Hz — JS-resampling stems to actual context rate`
           );
         }
       }
@@ -3108,6 +3134,16 @@ export class MemoAudioEngine {
       isPlaying: false,
     });
 
+    // Establish listen context before returning so mini-row play cannot race warm.
+    if (!this.state.isRecording) {
+      try {
+        await this.ensureContext();
+      } catch (error) {
+        if (__DEV__) {
+          console.warn('[audio] loadMemo ensureContext failed', error);
+        }
+      }
+    }
     void this.warmPlaybackBuffers();
   }
 

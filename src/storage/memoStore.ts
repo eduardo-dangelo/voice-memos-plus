@@ -120,7 +120,7 @@ function ensureLayerColors(memo: Memo): boolean {
   return changed;
 }
 
-function readManifest(file: File): Memo | null {
+function readManifest(file: File, options?: { includePeaks?: boolean }): Memo | null {
   if (!file.exists) {
     return null;
   }
@@ -137,6 +137,14 @@ function readManifest(file: File): Memo | null {
       memo.trimEnd = timeline;
     }
     normalizeLoopRegion(memo, timeline);
+
+    // List paths skip peak sidecars (sync FS per layer) — expand/editor hydrate via getMemo.
+    if (!options?.includePeaks) {
+      for (const layer of memo.layers) {
+        layer.waveformPeaks = undefined;
+      }
+      return memo;
+    }
 
     // Prefer peak sidecars; migrate legacy in-manifest peaks on first write.
     const memoDir = resolveMemoDir(memo.id) ?? getMemoDir(memo.id);
@@ -247,7 +255,7 @@ function listMemosFromRoot(root: Directory): Memo[] {
     if (!(entry instanceof Directory)) {
       continue;
     }
-    const manifest = readManifest(new File(entry, 'manifest.json'));
+    const manifest = readManifest(new File(entry, 'manifest.json'), { includePeaks: false });
     if (manifest) {
       memos.push(manifest);
     }
@@ -282,7 +290,7 @@ export async function getMemo(memoId: string): Promise<Memo | null> {
   if (!file) {
     return null;
   }
-  const memo = readManifest(file);
+  const memo = readManifest(file, { includePeaks: true });
   if (memo && ensureLayerColors(memo)) {
     writeManifest(memo);
   }

@@ -15,6 +15,7 @@ import { useIsRegularWidth } from '@/src/hooks/useIsRegularWidth';
 import {
   deleteMemo,
   duplicateMemo,
+  getMemo,
   permanentlyDeleteMemo,
   recoverMemo,
   updateTitle,
@@ -112,6 +113,8 @@ function RecordingRowComponent({
   const playback = useRowPlayback(memo.id);
   const [isExporting, setIsExporting] = useState(false);
   const [renameVisible, setRenameVisible] = useState(false);
+  /** List memos omit peaks; hydrate on expand for mini waveforms. */
+  const [waveformMemo, setWaveformMemo] = useState<Memo | null>(null);
   const isActive = playback.isActive;
   const duration =
     isActive && playback.duration > 0 ? playback.duration : memo.duration;
@@ -128,11 +131,28 @@ function RecordingRowComponent({
     }
   }, [expanded, isActive, engine]);
 
+  useEffect(() => {
+    if (!expanded || isRegularWidth) {
+      setWaveformMemo(null);
+      return;
+    }
+    let cancelled = false;
+    void getMemo(memo.id).then((full) => {
+      if (!cancelled && full) {
+        setWaveformMemo(full);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [expanded, isRegularWidth, memo.id, memo.updatedAt]);
+
   const ensureLoaded = async () => {
     if (!playable) {
       return false;
     }
     if (!isActive) {
+      // List memo has layer paths/meta for play; peaks hydrate separately on expand.
       const { layers, duration: timelineDuration, trimStart, trimEnd } =
         getMemoPlaybackTimeline(memo);
       await engine.loadMemo(memo.id, memo.title, layers, trimStart, trimEnd, timelineDuration);
@@ -376,7 +396,7 @@ function RecordingRowComponent({
               <MiniWaveformTracks
                 currentTime={displayTime}
                 duration={duration}
-                memo={memo}
+                memo={waveformMemo ?? memo}
                 onPress={isTrash ? undefined : onOpenEditor}
                 onScrubEnd={handleMiniScrubEnd}
                 onScrubStart={handleMiniScrubStart}
