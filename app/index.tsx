@@ -309,7 +309,15 @@ export default function FoldersHomeScreen() {
                   showChevron={!editMode}
                   showCount={!editMode}
                   title={folder.name}
-                  onPress={editMode ? undefined : () => router.push(`/folder/${folder.id}`)}
+                  onPress={
+                    editMode
+                      ? undefined
+                      : () =>
+                          router.push({
+                            pathname: '/folder/[id]',
+                            params: { id: folder.id, name: folder.name },
+                          })
+                  }
                 />
               ))}
             </GroupedListSection>

@@ -4,33 +4,37 @@ import { useCallback, useLayoutEffect, useMemo, useState } from 'react';
 import { FloatingHeaderButton } from '@/src/components/FloatingHeaderButton';
 import { NamePromptDialog } from '@/src/components/NamePromptDialog';
 import { RecordingsSplitView } from '@/src/components/RecordingsSplitView';
-import { getFolder, renameFolder } from '@/src/storage/folderStore';
+import { getFolderSync, renameFolder } from '@/src/storage/folderStore';
+
+function paramString(value: string | string[] | undefined): string | undefined {
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (Array.isArray(value) && typeof value[0] === 'string') {
+    return value[0];
+  }
+  return undefined;
+}
 
 export default function FolderRecordingsScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id: idParam, name: nameParam } = useLocalSearchParams<{
+    id: string;
+    name?: string;
+  }>();
+  const id = paramString(idParam);
+  const nameFromRoute = paramString(nameParam)?.trim();
   const navigation = useNavigation();
-  const [folderName, setFolderName] = useState('Folder');
+  const [folderName, setFolderName] = useState(nameFromRoute || 'Folder');
   const [renameVisible, setRenameVisible] = useState(false);
 
-  const loadFolder = useCallback(async () => {
+  useLayoutEffect(() => {
     if (!id) {
       return;
     }
-    const folder = await getFolder(id);
-    if (folder) {
-      setFolderName(folder.name);
-    }
-  }, [id]);
-
-  useLayoutEffect(() => {
-    void loadFolder();
-  }, [loadFolder]);
-
-  useLayoutEffect(() => {
-    navigation.setOptions({
-      title: folderName,
-    });
-  }, [folderName, navigation]);
+    const resolved = getFolderSync(id)?.name ?? nameFromRoute ?? 'Folder';
+    setFolderName(resolved);
+    navigation.setOptions({ title: resolved });
+  }, [id, nameFromRoute, navigation]);
 
   const showRenamePrompt = useCallback(() => {
     setRenameVisible(true);
@@ -68,6 +72,7 @@ export default function FolderRecordingsScreen() {
           if (value.trim() && id) {
             void renameFolder(id, value.trim()).then((folder) => {
               setFolderName(folder.name);
+              navigation.setOptions({ title: folder.name });
             });
           }
         }}

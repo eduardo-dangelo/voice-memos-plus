@@ -21,8 +21,12 @@ export async function listFolders(): Promise<Folder[]> {
   return readFolders();
 }
 
-export async function getFolder(folderId: string): Promise<Folder | null> {
+export function getFolderSync(folderId: string): Folder | null {
   return readFolders().find((folder) => folder.id === folderId) ?? null;
+}
+
+export async function getFolder(folderId: string): Promise<Folder | null> {
+  return getFolderSync(folderId);
 }
 
 export async function createFolder(name: string): Promise<Folder> {
