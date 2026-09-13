@@ -326,6 +326,12 @@ export class MemoAudioEngine {
   private warmGeneration = 0;
   /** Serializes listen ensureContext so warm+play cannot race session/context setup. */
   private ensureContextInFlight: Promise<AudioContext> | null = null;
+  /**
+   * Serializes cold unmute/solo expansion (decode + additive arm). Coalesce with
+   * ensureAudibleDirty so rapid mute flips do not stack restarts.
+   */
+  private ensureAudibleInFlight: Promise<void> | null = null;
+  private ensureAudibleDirty = false;
   /** Disk-paged PCM for long WAV stems (working set, not full-file). */
   private pcmPageCache = new LayerPcmPageCache();
   /** Clears decoded PCM after a long pause (see LAYER_PCM_IDLE_EVICT_MS). */
@@ -2948,9 +2954,31 @@ export class MemoAudioEngine {
 
   /**
    * Decode any newly audible layers that were skipped at play start (mute/solo),
-   * then resync so schedulePlaySpan can arm sources.
+   * then arm them into the live session (or fall back to a full resync).
+   * Coalesces concurrent unmute/solo flips onto one in-flight run.
    */
-  private async ensureAudibleLayerBuffersThenResync(): Promise<void> {
+  private requestEnsureAudibleLayerBuffers(): void {
+    if (this.ensureAudibleInFlight) {
+      this.ensureAudibleDirty = true;
+      return;
+    }
+    const run = this.runEnsureAudibleLayerBuffers();
+    this.ensureAudibleInFlight = run;
+    void run.finally(() => {
+      if (this.ensureAudibleInFlight === run) {
+        this.ensureAudibleInFlight = null;
+      }
+      if (!this.ensureAudibleDirty) {
+        return;
+      }
+      this.ensureAudibleDirty = false;
+      if (this.state.isPlaying && this.hasUnscheduledAudibleLayer()) {
+        this.requestEnsureAudibleLayerBuffers();
+      }
+    });
+  }
+
+  private async runEnsureAudibleLayerBuffers(): Promise<void> {
     const context = this.context;
     if (!context || !this.state.isPlaying) {
       return;
@@ -2979,9 +3007,134 @@ export class MemoAudioEngine {
       }
     }
 
+    if (!this.state.isPlaying || !this.hasUnscheduledAudibleLayer()) {
+      return;
+    }
+
+    const armed = this.scheduleMissingAudibleLayers();
+    if (armed >= 0 && !this.hasUnscheduledAudibleLayer()) {
+      return;
+    }
+
+    // Additive arm unsafe or incomplete — one legacy full resync (clear dirty to avoid spin).
+    this.ensureAudibleDirty = false;
     if (this.state.isPlaying && this.hasUnscheduledAudibleLayer()) {
       this.resyncPlaybackAtCurrentTime();
     }
+  }
+
+  /**
+   * Arm newly audible layers into the live play session without stopping existing
+   * sources. Returns scheduled source count, or -1 when the live clock/session is
+   * unsafe and the caller should fall back to full resync.
+   */
+  private scheduleMissingAudibleLayers(): number {
+    const context = this.context;
+    if (
+      !context ||
+      !this.state.isPlaying ||
+      this.playbackContextStartWhen <= 0 ||
+      context.state !== 'running'
+    ) {
+      return -1;
+    }
+
+    const elapsed = this.getElapsedPlaybackTime(context);
+    const endAt = this.getPlaybackEnd(this.state.duration);
+    if (endAt <= elapsed + PLAYBACK_END_TOLERANCE) {
+      return 0;
+    }
+
+    const delayBias = elapsed - this.playbackStartAt;
+    const planSpecs = this.buildPlaybackPlans(elapsed, endAt, {
+      expandLoopCycles: false,
+    });
+    const anySoloActive = this.getAnySoloActive();
+    const scheduledLayerIds = new Set(
+      this.activeLayerPlaybacks.map((entry) => entry.layerId)
+    );
+    const contextRate = Math.round(context.sampleRate);
+    const now = context.currentTime;
+    const minWhen = now + PLAYBACK_SCHEDULE_LEAD;
+
+    let scheduledSources = 0;
+    let missingStillNeeded = false;
+
+    for (const plan of planSpecs) {
+      if (!isLayerAudible(plan.playbackEffects, anySoloActive)) {
+        continue;
+      }
+      if (scheduledLayerIds.has(plan.layer.id)) {
+        continue;
+      }
+
+      const standby = this.recordingPlaybackBuffers.get(plan.layer.path);
+      const bufferCandidate =
+        this.getCachedPlaybackBuffer(plan.layer) ??
+        (standby && Math.round(standby.sampleRate) === contextRate ? standby : null);
+      if (!bufferCandidate) {
+        missingStillNeeded = true;
+        continue;
+      }
+
+      const resolved = resolvePlanAgainstBuffer(plan, bufferCandidate.duration);
+      if (!resolved) {
+        continue;
+      }
+
+      let delay = resolved.delay + delayBias;
+      let bufferOffset = resolved.bufferOffset;
+      let layerPlayLength = resolved.layerPlayLength;
+      const layerStartWhen = this.playbackContextStartWhen + delay;
+
+      if (layerStartWhen < minWhen) {
+        const lag = minWhen - layerStartWhen;
+        if (resolved.loopPlayback) {
+          delay = minWhen - this.playbackContextStartWhen;
+        } else {
+          bufferOffset += lag;
+          layerPlayLength -= lag;
+          const trimOut = resolved.playbackEffects.trimOut;
+          if (
+            layerPlayLength <= PLAYBACK_END_TOLERANCE ||
+            bufferOffset >= trimOut - PLAYBACK_END_TOLERANCE
+          ) {
+            continue;
+          }
+          layerPlayLength = Math.min(layerPlayLength, trimOut - bufferOffset);
+          delay = minWhen - this.playbackContextStartWhen;
+        }
+      }
+
+      const loaded = this.loadedLayers.find((entry) => entry.id === plan.layer.id);
+      const effects = loaded
+        ? this.getLoadedLayerEffects(loaded)
+        : plan.playbackEffects;
+      this.mixGraph.applyLayerEffects(context, plan.layer.id, effects, anySoloActive);
+
+      const armed = this.scheduleResolvedLayerPlan(context, {
+        layer: plan.layer,
+        buffer: bufferCandidate,
+        playbackEffects: resolved.playbackEffects,
+        bufferOffset,
+        fileBufferOffset: bufferOffset,
+        delay,
+        layerPlayLength,
+        loopPlayback: resolved.loopPlayback,
+        usesPaging: false,
+      });
+      if (armed > 0) {
+        scheduledSources += armed;
+        scheduledLayerIds.add(plan.layer.id);
+      } else {
+        missingStillNeeded = true;
+      }
+    }
+
+    if (missingStillNeeded) {
+      return -1;
+    }
+    return scheduledSources;
   }
 
   private abortFailedPlaybackStart(
@@ -3292,7 +3445,7 @@ export class MemoAudioEngine {
       if (audibilityChanged) {
         this.syncAllLayerGains(this.context);
         if (this.state.isPlaying && this.hasUnscheduledAudibleLayer()) {
-          void this.ensureAudibleLayerBuffersThenResync();
+          this.requestEnsureAudibleLayerBuffers();
         }
         return;
       }
@@ -4659,7 +4812,7 @@ export class MemoAudioEngine {
       }
 
       // Full-decode audible layers only for listen-play. Inaudible (muted /
-      // soloed-out) stay cold until unmute → ensureAudibleLayerBuffersThenResync.
+      // soloed-out) stay cold until unmute → requestEnsureAudibleLayerBuffers.
       // Monitor-mix may page long WAVs separately during record warmup.
       const preloadedBuffers = new Map<string, AudioBuffer>();
       for (const layer of layersToDecode) {
