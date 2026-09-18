@@ -15,6 +15,8 @@
 
 import type { AudioBuffer, AudioContext } from 'react-native-audio-api';
 
+import { resampleMonoSamplesFromRate } from '@/src/audio/resampleMonoSamples';
+
 /** Page length in seconds (covers one PLAYBACK_SCHEDULE_CHUNK_SEC + lead). */
 export const LAYER_PCM_PAGE_SEC = 16;
 /** Keep this many pages per path (before/current/ahead). */
@@ -40,6 +42,23 @@ export function shouldPageLayerPcm(path: string, durationSec: number): boolean {
 export function pageStartForOffset(fileOffsetSec: number): number {
   const pageIndex = Math.floor(Math.max(0, fileOffsetSec) / LAYER_PCM_PAGE_SEC);
   return pageIndex * LAYER_PCM_PAGE_SEC;
+}
+
+/**
+ * File offset for monitor-mix paging at a timeline playhead.
+ * Clamped into [trimIn, trimOut - epsilon] so pages cover audible content.
+ */
+export function monitorMixFileOffset(
+  monitorStartTime: number,
+  layerStartTime: number,
+  trimIn: number,
+  trimOut: number,
+  epsilon = 0.05
+): number {
+  const relative = monitorStartTime - layerStartTime;
+  const lo = Math.max(0, trimIn);
+  const hi = Math.max(lo, trimOut - epsilon);
+  return Math.max(lo, Math.min(relative, hi));
 }
 
 export class LayerPcmPageCache {
@@ -119,18 +138,19 @@ export class LayerPcmPageCache {
     }
 
     const contextRate = Math.round(context.sampleRate);
-    // Native createBuffer may coerce sampleRate to the context rate. Only page
-    // when the WAV rate already matches — otherwise content plays fast/slow.
-    if (Math.round(window.sampleRate) !== contextRate) {
-      return null;
-    }
-
-    const buffer = context.createBuffer(1, window.samples.length, contextRate);
-    const channel =
-      window.samples.buffer.byteLength === window.samples.length * 4 &&
-      window.samples.byteOffset === 0
+    const fileRate = Math.round(window.sampleRate);
+    // Native createBuffer may coerce sampleRate to the context rate. When the
+    // WAV rate differs, JS-resample this window only (never the full stem).
+    const samples =
+      fileRate === contextRate
         ? window.samples
-        : new Float32Array(window.samples);
+        : resampleMonoSamplesFromRate(window.samples, fileRate, contextRate);
+
+    const buffer = context.createBuffer(1, samples.length, contextRate);
+    const channel =
+      samples.buffer.byteLength === samples.length * 4 && samples.byteOffset === 0
+        ? samples
+        : new Float32Array(samples);
     buffer.copyToChannel(channel, 0);
 
     const page: LayerPcmPage = {

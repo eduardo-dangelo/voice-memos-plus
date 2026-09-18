@@ -5,6 +5,10 @@ import { AppState } from 'react-native';
 import { loadMemoIntoEngine } from '@/src/audio/loadMemoIntoEngine';
 import type { MemoAudioEngine } from '@/src/audio/MemoAudioEngine';
 import { getRecordingLatencySkipSeconds } from '@/src/audio/recordingLatency';
+import {
+  MIN_SALVAGE_WAV_DURATION_SEC,
+  salvageIncompleteWavHeader,
+} from '@/src/audio/wavLeadingRead';
 import { shouldUseCapturedPeaks } from '@/src/audio/waveform';
 import { notifyLibraryChanged } from '@/src/recording/memoUpdateEvents';
 import {
@@ -282,8 +286,12 @@ async function tryRecoverPendingCapture(
     return false;
   }
 
+  const duration = await salvageIncompleteWavHeader(path);
+  if (duration == null || duration < MIN_SALVAGE_WAV_DURATION_SEC) {
+    return false;
+  }
+
   const peaks = currentSession.pendingCapturePeaks ?? [];
-  const duration = currentSession.pendingCaptureDuration ?? 0;
   const memo = await getMemo(currentSession.memoId);
   if (!memo) {
     return false;
@@ -291,24 +299,34 @@ async function tryRecoverPendingCapture(
 
   try {
     if (currentSession.mode === 'stack') {
-      await addStackedLayer(
+      const updated = await addStackedLayer(
         currentSession.memoId,
         currentSession.startTime,
         path,
         peaks,
         currentSession.trackColor ?? undefined,
-        { duration: duration > 0 ? duration : undefined }
+        { duration }
       );
+      const layerId = updated.layers[updated.layers.length - 1]?.id;
+      await ensureWaveformPeaks(updated, {
+        onlyLayerIds: layerId ? [layerId] : undefined,
+      });
+      deleteCaptureFileIfExists(path);
       return true;
     }
 
     if (currentSession.mode === 'new') {
-      await saveRecording(
+      const updated = await saveRecording(
         currentSession.memoId,
         path,
-        duration > 0 ? duration : 0.01,
+        duration,
         peaks
       );
+      const layerId = updated.layers[0]?.id;
+      await ensureWaveformPeaks(updated, {
+        onlyLayerIds: layerId ? [layerId] : undefined,
+      });
+      deleteCaptureFileIfExists(path);
       return true;
     }
 
@@ -319,6 +337,22 @@ async function tryRecoverPendingCapture(
       console.warn('[activeRecordingSession] pending capture recover failed', error);
     }
     return false;
+  }
+}
+
+export function deleteCaptureFileIfExists(path: string | null | undefined): void {
+  if (!path || path.includes('/memos/')) {
+    return;
+  }
+  try {
+    const file = new File(path);
+    if (file.exists) {
+      file.delete();
+    }
+  } catch (error) {
+    if (__DEV__) {
+      console.warn('[activeRecordingSession] delete capture file failed', error);
+    }
   }
 }
 

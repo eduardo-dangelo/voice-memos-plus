@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { parseWavPcm16MonoLayout, wavDurationSecFromLayout } from './wavPcmLayout';
+import {
+  parseWavPcm16MonoLayout,
+  wavDurationSecFromFileSize,
+  wavDurationSecFromLayout,
+  wavHeaderNeedsSalvage,
+  wavSalvageSizePatches,
+} from './wavPcmLayout';
 
 function buildPcm16MonoWavBytes(
   sampleCount: number,
@@ -67,5 +73,25 @@ describe('wavDurationSecFromLayout', () => {
     const layout = parseWavPcm16MonoLayout(bytes);
     assert.ok(layout);
     assert.equal(wavDurationSecFromLayout(layout!), 2);
+  });
+});
+
+describe('wav salvage from stale streaming header', () => {
+  it('computes duration from file size when dataSize is zero', () => {
+    const sampleRate = 44100;
+    const sampleCount = 44100; // 1.0s
+    const bytes = buildPcm16MonoWavBytes(sampleCount, sampleRate);
+    const view = new DataView(bytes.buffer);
+    view.setUint32(40, 0, true); // stale data chunk size
+    const layout = parseWavPcm16MonoLayout(bytes);
+    assert.ok(layout);
+    assert.equal(layout!.dataSize, 0);
+    assert.equal(wavDurationSecFromFileSize(layout!, bytes.byteLength), 1);
+    assert.equal(wavHeaderNeedsSalvage(layout!, bytes.byteLength), true);
+    const patches = wavSalvageSizePatches(layout!, bytes.byteLength);
+    assert.ok(patches);
+    assert.equal(patches!.dataChunkSize, sampleCount * 2);
+    assert.equal(patches!.riffChunkSize, bytes.byteLength - 8);
+    assert.equal(patches!.dataSizeFieldOffset, 40);
   });
 });

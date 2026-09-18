@@ -21,6 +21,8 @@ export {
   TARGET_SAMPLE_RATE,
 } from '@/src/audio/normalizeRecordingLogic';
 
+export { resampleMonoSamplesFromRate } from '@/src/audio/resampleMonoSamples';
+
 export {
   applySpliceEdgeFades,
   SPLICE_EDGE_FADE_SECONDS,

@@ -4440,6 +4440,7 @@ function MemoEditorInner({
           await engine.finalizeRecordingWarmup({
             monitorMix: useMonitorMix,
             duckMonitorMix: useMonitorMix && duckMonitorMix,
+            monitorStartTime: startTime,
           });
         };
 

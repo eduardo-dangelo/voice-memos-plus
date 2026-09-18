@@ -82,3 +82,45 @@ export function wavDurationSecFromLayout(layout: WavPcmLayout): number {
   const frames = Math.floor(layout.dataSize / bytesPerFrame);
   return frames > 0 && layout.sampleRate > 0 ? frames / layout.sampleRate : 0;
 }
+
+/** Ignore recoveries shorter than this (precount / empty file). */
+export const MIN_SALVAGE_WAV_DURATION_SEC = 0.3;
+
+/** PCM16 mono data bytes present on disk (header `dataSize` may be stale). */
+export function wavDataBytesOnDisk(layout: WavPcmLayout, fileSize: number): number {
+  return Math.max(0, fileSize - layout.dataOffset);
+}
+
+/** Duration from on-disk bytes, ignoring a stale/zero data-chunk size. */
+export function wavDurationSecFromFileSize(
+  layout: WavPcmLayout,
+  fileSize: number
+): number {
+  const dataSize = wavDataBytesOnDisk(layout, fileSize);
+  const frames = Math.floor(dataSize / 2);
+  return frames > 0 && layout.sampleRate > 0 ? frames / layout.sampleRate : 0;
+}
+
+export function wavHeaderNeedsSalvage(
+  layout: WavPcmLayout,
+  fileSize: number
+): boolean {
+  const actual = wavDataBytesOnDisk(layout, fileSize);
+  return actual > 0 && layout.dataSize !== actual;
+}
+
+/** RIFF/data size fields to patch for a streaming WAV killed before stop(). */
+export function wavSalvageSizePatches(
+  layout: WavPcmLayout,
+  fileSize: number
+): { riffChunkSize: number; dataChunkSize: number; dataSizeFieldOffset: number } | null {
+  const dataChunkSize = wavDataBytesOnDisk(layout, fileSize);
+  if (dataChunkSize < 2 || layout.dataOffset < 8) {
+    return null;
+  }
+  return {
+    riffChunkSize: Math.max(0, fileSize - 8),
+    dataChunkSize,
+    dataSizeFieldOffset: layout.dataOffset - 4,
+  };
+}
