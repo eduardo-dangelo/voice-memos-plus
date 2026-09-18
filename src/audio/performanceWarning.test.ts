@@ -3,8 +3,10 @@ import { test } from 'node:test';
 
 import { PERFORMANCE_LAYER_WARN_COUNT } from '@/src/audio/performanceBudget';
 import {
+  MERGE_LAYERS_PERFORMANCE_TIP_MESSAGE,
   maybeShowPerformanceWarning,
   resetPerformanceWarningState,
+  shouldShowMergeLayersTipAfterPerformanceAck,
 } from '@/src/audio/performanceWarning';
 import type { Memo } from '@/src/storage/types';
 
@@ -61,4 +63,16 @@ test('maybeShowPerformanceWarning shows again after dropping below layer thresho
   assert.equal(maybeShowPerformanceWarning(heavy).message, null);
   assert.equal(maybeShowPerformanceWarning(light).message, null);
   assert.ok(maybeShowPerformanceWarning(heavy).message);
+});
+
+test('shouldShowMergeLayersTipAfterPerformanceAck requires mergeable layers', () => {
+  assert.equal(shouldShowMergeLayersTipAfterPerformanceAck(null, false), false);
+  assert.equal(shouldShowMergeLayersTipAfterPerformanceAck(makeMemo(1), false), false);
+  assert.equal(shouldShowMergeLayersTipAfterPerformanceAck(makeMemo(2), false), true);
+  assert.equal(shouldShowMergeLayersTipAfterPerformanceAck(makeMemo(2), true), false);
+});
+
+test('MERGE_LAYERS_PERFORMANCE_TIP_MESSAGE mentions merge and file size', () => {
+  assert.match(MERGE_LAYERS_PERFORMANCE_TIP_MESSAGE, /merge layers/i);
+  assert.match(MERGE_LAYERS_PERFORMANCE_TIP_MESSAGE, /file size/i);
 });

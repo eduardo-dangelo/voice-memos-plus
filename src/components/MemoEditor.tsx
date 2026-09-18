@@ -63,8 +63,10 @@ import {
 } from '@/src/audio/moveSnap';
 import { estimateMemoNodeCount, estimateMemoPcmMb } from '@/src/audio/performanceBudget';
 import {
+  MERGE_LAYERS_PERFORMANCE_TIP_MESSAGE,
   maybeShowPerformanceWarning,
   resetPerformanceWarningState,
+  shouldShowMergeLayersTipAfterPerformanceAck,
 } from '@/src/audio/performanceWarning';
 import {
   computePostPrecountContextWhen,
@@ -645,6 +647,7 @@ function MemoEditorInner({
   const [performanceWarningMessage, setPerformanceWarningMessage] = useState<
     string | null
   >(null);
+  const [mergeLayersTipVisible, setMergeLayersTipVisible] = useState(false);
   const [collapseWarningVisible, setCollapseWarningVisible] = useState(false);
   const [cueOutputRoute, setCueOutputRoute] =
     useState<CueOutputRoute>('wired');
@@ -3042,11 +3045,16 @@ function MemoEditorInner({
   useEffect(() => {
     if (!memo || !hasRecording(memo)) {
       setPerformanceWarningMessage(null);
+      setMergeLayersTipVisible(false);
       return;
+    }
+    if (!canMergeLayers(memo.layers)) {
+      setMergeLayersTipVisible(false);
     }
     const result = maybeShowPerformanceWarning(memo);
     if (result.message) {
       setPerformanceWarningMessage(result.message);
+      setMergeLayersTipVisible(false);
     } else {
       setPerformanceWarningMessage(null);
     }
@@ -3056,6 +3064,18 @@ function MemoEditorInner({
     performanceWarningNodeCount,
     performanceWarningPcmMb,
   ]);
+
+  const acknowledgePerformanceWarning = useCallback(() => {
+    setPerformanceWarningMessage(null);
+    if (
+      shouldShowMergeLayersTipAfterPerformanceAck(
+        memoRef.current ?? memo,
+        engineState.isRecording
+      )
+    ) {
+      setMergeLayersTipVisible(true);
+    }
+  }, [engineState.isRecording, memo]);
 
   useEffect(() => {
     if (!memo) {
@@ -3732,6 +3752,7 @@ function MemoEditorInner({
       loadGenerationRef.current += 1;
       resetLayoutReady();
       resetPerformanceWarningState();
+      setMergeLayersTipVisible(false);
       engine.pause();
       if (!engine.getState().isRecording && engine.isPreparedForRecording()) {
         engine.abortRecordingStartCommit();
@@ -5520,8 +5541,18 @@ function MemoEditorInner({
         heroIcon="gauge.with.dots.needle.33percent"
         message={performanceWarningMessage ?? ''}
         actions="continue"
-        onDismiss={() => setPerformanceWarningMessage(null)}
-        onContinue={() => setPerformanceWarningMessage(null)}
+        onDismiss={acknowledgePerformanceWarning}
+        onContinue={acknowledgePerformanceWarning}
+      />
+      <RecordingPromptDialog
+        visible={mergeLayersTipVisible}
+        title="Merge layers"
+        titleIcon="info"
+        heroIcon="square.stack.3d.up"
+        message={MERGE_LAYERS_PERFORMANCE_TIP_MESSAGE}
+        actions="continue"
+        onDismiss={() => setMergeLayersTipVisible(false)}
+        onContinue={() => setMergeLayersTipVisible(false)}
       />
       <RecordingPromptDialog
         visible={collapseWarningVisible}
