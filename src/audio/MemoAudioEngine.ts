@@ -366,6 +366,8 @@ export class MemoAudioEngine {
   private activeRecordingSampleRate: number | null = null;
   private recordingUsedWavFormat = false;
   private recordingTimer: ReturnType<typeof setInterval> | null = null;
+  /** RAF for smooth recordingDuration UI (~50ms); separate from 150ms peaks/mix tick. */
+  private recordingUiRafId: number | null = null;
   private captureCheckpointTimer: ReturnType<typeof setInterval> | null = null;
   /** In-progress capture WAV (durable); checkpointed for mid-take recovery. */
   private liveCapturePath: string | null = null;
@@ -2513,6 +2515,45 @@ export class MemoAudioEngine {
       clearInterval(this.recordingTimer);
       this.recordingTimer = null;
     }
+    this.clearRecordingUiTimer();
+  }
+
+  private clearRecordingUiTimer(): void {
+    if (this.recordingUiRafId !== null) {
+      cancelAnimationFrame(this.recordingUiRafId);
+      this.recordingUiRafId = null;
+    }
+  }
+
+  /**
+   * Smooth hundredths on the main timer during capture (matches playback UI rate).
+   * Peaks + monitor-mix stay on the coarser 150ms interval.
+   */
+  private startRecordingUiTimer(): void {
+    this.clearRecordingUiTimer();
+    let lastUiUpdateMs = 0;
+
+    const tick = (frameMs: number) => {
+      if (!this.state.isRecording || !this.recorder) {
+        this.recordingUiRafId = null;
+        return;
+      }
+
+      if (frameMs - lastUiUpdateMs >= PLAYBACK_UI_UPDATE_MS) {
+        lastUiUpdateMs = frameMs;
+        const duration = this.recorder.getCurrentDuration();
+        if (duration !== this.state.recordingDuration) {
+          this.emit({ recordingDuration: duration });
+        }
+      }
+
+      this.recordingUiRafId = requestAnimationFrame(tick);
+    };
+
+    if (this.recorder) {
+      this.emit({ recordingDuration: this.recorder.getCurrentDuration() });
+    }
+    this.recordingUiRafId = requestAnimationFrame(tick);
   }
 
   private invalidateLayerBuffers(): void {
@@ -3388,14 +3429,12 @@ export class MemoAudioEngine {
       this.lastEmittedRecordingPeakCount = next.count;
     }
 
-    if (
-      peaks === this.state.recordingPeaks &&
-      Math.abs(duration - this.state.recordingDuration) < 0.05
-    ) {
+    // Duration UI is owned by startRecordingUiTimer; only emit when peaks change.
+    if (peaks === this.state.recordingPeaks) {
       return;
     }
 
-    this.emit({ recordingDuration: duration, recordingPeaks: peaks });
+    this.emit({ recordingPeaks: peaks, recordingDuration: duration });
   }
 
   async requestPermission(): Promise<boolean> {
@@ -4425,9 +4464,11 @@ export class MemoAudioEngine {
     }
 
     // 150ms balances live waveform growth vs JS wakeups on long stacked takes.
+    // Smooth timer hundredths come from startRecordingUiTimer (~50ms RAF).
     this.recordingTimer = setInterval(() => {
       this.emitRecordingProgress();
     }, 150);
+    this.startRecordingUiTimer();
 
     if (monitorMix && this.playbackContextStartWhen > 0) {
       const sessionId = this.activePlaybackSessionId;
@@ -4659,6 +4700,8 @@ export class MemoAudioEngine {
       this.clearRecordingTimer();
       this.releaseLiveCaptureWithoutDelete();
       this.setRecordingInterruptionObservation(false);
+      // Final duration sync after stopping the smooth UI clock.
+      this.emit({ recordingDuration: this.recorder.getCurrentDuration() });
       this.emitRecordingProgress();
       const trimmed = this.trimRawPeaksToDuration(
         this.recordingPeaksBuffer,
