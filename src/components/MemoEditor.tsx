@@ -63,6 +63,7 @@ import {
 } from '@/src/audio/moveSnap';
 import { estimateMemoNodeCount, estimateMemoPcmMb } from '@/src/audio/performanceBudget';
 import {
+  COLLAPSE_TRACKS_PERFORMANCE_TIP_MESSAGE,
   MERGE_LAYERS_PERFORMANCE_TIP_MESSAGE,
   maybeShowPerformanceWarning,
   resetPerformanceWarningState,
@@ -648,6 +649,7 @@ function MemoEditorInner({
     string | null
   >(null);
   const [mergeLayersTipVisible, setMergeLayersTipVisible] = useState(false);
+  const [collapseTracksTipVisible, setCollapseTracksTipVisible] = useState(false);
   const [collapseWarningVisible, setCollapseWarningVisible] = useState(false);
   const [cueOutputRoute, setCueOutputRoute] =
     useState<CueOutputRoute>('wired');
@@ -3046,15 +3048,18 @@ function MemoEditorInner({
     if (!memo || !hasRecording(memo)) {
       setPerformanceWarningMessage(null);
       setMergeLayersTipVisible(false);
+      setCollapseTracksTipVisible(false);
       return;
     }
     if (!canMergeLayers(memo.layers)) {
       setMergeLayersTipVisible(false);
+      setCollapseTracksTipVisible(false);
     }
     const result = maybeShowPerformanceWarning(memo);
     if (result.message) {
       setPerformanceWarningMessage(result.message);
       setMergeLayersTipVisible(false);
+      setCollapseTracksTipVisible(false);
     } else {
       setPerformanceWarningMessage(null);
     }
@@ -3074,6 +3079,18 @@ function MemoEditorInner({
       )
     ) {
       setMergeLayersTipVisible(true);
+    }
+  }, [engineState.isRecording, memo]);
+
+  const acknowledgeMergeLayersTip = useCallback(() => {
+    setMergeLayersTipVisible(false);
+    if (
+      shouldShowMergeLayersTipAfterPerformanceAck(
+        memoRef.current ?? memo,
+        engineState.isRecording
+      )
+    ) {
+      setCollapseTracksTipVisible(true);
     }
   }, [engineState.isRecording, memo]);
 
@@ -3753,6 +3770,7 @@ function MemoEditorInner({
       resetLayoutReady();
       resetPerformanceWarningState();
       setMergeLayersTipVisible(false);
+      setCollapseTracksTipVisible(false);
       engine.pause();
       if (!engine.getState().isRecording && engine.isPreparedForRecording()) {
         engine.abortRecordingStartCommit();
@@ -5551,8 +5569,18 @@ function MemoEditorInner({
         heroIcon="square.stack.3d.up"
         message={MERGE_LAYERS_PERFORMANCE_TIP_MESSAGE}
         actions="continue"
-        onDismiss={() => setMergeLayersTipVisible(false)}
-        onContinue={() => setMergeLayersTipVisible(false)}
+        onDismiss={acknowledgeMergeLayersTip}
+        onContinue={acknowledgeMergeLayersTip}
+      />
+      <RecordingPromptDialog
+        visible={collapseTracksTipVisible}
+        title="Collapse tracks"
+        titleIcon="info"
+        heroIcon="rectangle.compress.vertical"
+        message={COLLAPSE_TRACKS_PERFORMANCE_TIP_MESSAGE}
+        actions="continue"
+        onDismiss={() => setCollapseTracksTipVisible(false)}
+        onContinue={() => setCollapseTracksTipVisible(false)}
       />
       <RecordingPromptDialog
         visible={collapseWarningVisible}

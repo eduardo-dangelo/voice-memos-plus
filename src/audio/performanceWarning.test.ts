@@ -3,6 +3,7 @@ import { test } from 'node:test';
 
 import { PERFORMANCE_LAYER_WARN_COUNT } from '@/src/audio/performanceBudget';
 import {
+  COLLAPSE_TRACKS_PERFORMANCE_TIP_MESSAGE,
   MERGE_LAYERS_PERFORMANCE_TIP_MESSAGE,
   maybeShowPerformanceWarning,
   resetPerformanceWarningState,
@@ -75,4 +76,9 @@ test('shouldShowMergeLayersTipAfterPerformanceAck requires mergeable layers', ()
 test('MERGE_LAYERS_PERFORMANCE_TIP_MESSAGE mentions merge and file size', () => {
   assert.match(MERGE_LAYERS_PERFORMANCE_TIP_MESSAGE, /merge layers/i);
   assert.match(MERGE_LAYERS_PERFORMANCE_TIP_MESSAGE, /file size/i);
+});
+
+test('COLLAPSE_TRACKS_PERFORMANCE_TIP_MESSAGE mentions collapse and unselected tracks', () => {
+  assert.match(COLLAPSE_TRACKS_PERFORMANCE_TIP_MESSAGE, /collapse/i);
+  assert.match(COLLAPSE_TRACKS_PERFORMANCE_TIP_MESSAGE, /unselected tracks/i);
 });

@@ -1,12 +1,15 @@
+import { canMergeLayers } from '@/src/audio/mergeLayersLogic';
 import {
   assessMemoPerformance,
   getPerformanceWarningMessage,
 } from '@/src/audio/performanceBudget';
-import { canMergeLayers } from '@/src/audio/mergeLayersLogic';
 import type { Memo } from '@/src/storage/types';
 
 export const MERGE_LAYERS_PERFORMANCE_TIP_MESSAGE =
   'You can merge layers to reduce file size.';
+
+export const COLLAPSE_TRACKS_PERFORMANCE_TIP_MESSAGE =
+  'You can collapse unselected tracks to improve app performance.';
 
 type WarnState = {
   memoId: string;
