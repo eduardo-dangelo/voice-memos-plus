@@ -45,6 +45,8 @@ const REVERB_DURATION: Record<Exclude<ReverbPreset, 'off' | 'custom'>, number> =
 };
 
 const REVERB_IR_THROTTLE_MS = 80;
+/** Cap IR buffers so scrubbing decay cannot grow RAM unboundedly. */
+const REVERB_IR_CACHE_MAX = 16;
 
 const reverbIrCache = new Map<string, AudioBuffer>();
 const lastReverbIrKey = new WeakMap<ConvolverNode, string>();
@@ -127,6 +129,9 @@ export function getOrCreateImpulseResponse(
   const key = reverbIrKey(preset, decay);
   const cached = reverbIrCache.get(key);
   if (cached) {
+    // Refresh LRU order.
+    reverbIrCache.delete(key);
+    reverbIrCache.set(key, cached);
     return cached;
   }
   const impulse = createImpulseResponse(
@@ -135,6 +140,13 @@ export function getOrCreateImpulseResponse(
     decay
   );
   reverbIrCache.set(key, impulse);
+  while (reverbIrCache.size > REVERB_IR_CACHE_MAX) {
+    const oldest = reverbIrCache.keys().next().value;
+    if (oldest === undefined) {
+      break;
+    }
+    reverbIrCache.delete(oldest);
+  }
   return impulse;
 }
 
@@ -227,13 +239,25 @@ export function syncReverbConvolver(
 }
 
 /** Replace live param without filling the 64-event automation queue. */
-function setAudioParamValue(
-  param: { cancelScheduledValues: (time: number) => void; setValueAtTime: (value: number, time: number) => void },
+export function setAudioParamValue(
+  param: {
+    cancelScheduledValues: (time: number) => void;
+    setValueAtTime: (value: number, time: number) => void;
+  },
   value: number,
   time: number
 ): void {
   param.cancelScheduledValues(time);
   param.setValueAtTime(value, time);
+}
+
+/** Drop a pending throttled IR assign so released convolvers cannot be revived. */
+export function clearPendingReverbIrSync(convolver: ConvolverNode): void {
+  const pending = pendingReverbIrSync.get(convolver);
+  if (pending) {
+    clearTimeout(pending);
+    pendingReverbIrSync.delete(convolver);
+  }
 }
 
 export function applyPathInputEffects(

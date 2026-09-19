@@ -9,6 +9,7 @@ import type {
 import {
   applyPathInputEffects,
   buildInputEqPath,
+  clearPendingReverbIrSync,
   delayBusKey,
   getDelayTimeSec,
   getEffectiveReverbMix,
@@ -16,6 +17,7 @@ import {
   isReverbPathActive,
   reverbBusKey,
   requiredDelayMaxSec,
+  setAudioParamValue,
   syncReverbConvolver,
   type LayerEffectPathNodes,
   type LayerReverbNodes,
@@ -65,12 +67,13 @@ function applyDelayBusParams(bus: DelayBus, effects: LayerEffects, context: Audi
   const now = context.currentTime;
   const delayTimeSec = Math.min(bus.maxDelayTime, Math.max(0, getDelayTimeSec(effects)));
 
-  bus.delayNode.delayTime.setValueAtTime(delayTimeSec, now);
-  bus.delayFeedback.gain.setValueAtTime(
+  setAudioParamValue(bus.delayNode.delayTime, delayTimeSec, now);
+  setAudioParamValue(
+    bus.delayFeedback.gain,
     Math.min(0.85, Math.max(0, effects.delay.feedback / 100)),
     now
   );
-  bus.wet.gain.setValueAtTime(1, now);
+  setAudioParamValue(bus.wet.gain, 1, now);
 }
 
 export class MemoMixGraph {
@@ -190,6 +193,9 @@ export class MemoMixGraph {
     try {
       path.gain.disconnect();
       path.fadeGain.disconnect();
+      for (const filter of path.eqFilters) {
+        filter.disconnect();
+      }
       path.panner.disconnect();
       path.send.disconnect();
     } catch {
@@ -350,7 +356,7 @@ export class MemoMixGraph {
     input.connect(convolver);
     convolver.connect(wet);
     wet.connect(master);
-    wet.gain.setValueAtTime(1, context.currentTime);
+    setAudioParamValue(wet.gain, 1, context.currentTime);
 
     return { key, input, convolver, wet, refCount: 0 };
   }
@@ -372,28 +378,13 @@ export class MemoMixGraph {
     return bus;
   }
 
-  private recreateReverbBus(
-    context: AudioContext,
-    previous: ReverbBus,
-    key: string,
-    effects: LayerEffects,
-    channel: LayerChannel
-  ): ReverbBus {
-    const subscribers = previous.refCount;
-    this.reverbBuses.delete(previous.key);
-    try {
-      previous.input.disconnect();
-      previous.convolver.disconnect();
-      previous.wet.disconnect();
-    } catch {
-      // Already torn down.
+  private rekeyReverbBus(bus: ReverbBus, nextKey: string): void {
+    if (bus.key === nextKey) {
+      return;
     }
-
-    const bus = this.createReverbBusNodes(context, key, effects);
-    bus.refCount = subscribers;
-    this.reverbBuses.set(key, bus);
-    this.connectReverbSend(channel, bus);
-    return bus;
+    this.reverbBuses.delete(bus.key);
+    bus.key = nextKey;
+    this.reverbBuses.set(nextKey, bus);
   }
 
   private releaseReverbBus(key: string): void {
@@ -407,6 +398,7 @@ export class MemoMixGraph {
       return;
     }
 
+    clearPendingReverbIrSync(bus.convolver);
     try {
       bus.input.disconnect();
       bus.convolver.disconnect();
@@ -511,7 +503,13 @@ export class MemoMixGraph {
 
     const current = this.reverbBuses.get(channel.reverbBusKey);
     if (current && current.refCount === 1) {
-      this.recreateReverbBus(context, current, nextKey, effects, channel);
+      // Sole subscriber: update IR in place (avoids scrub thrash / node churn).
+      const reverbNodes: LayerReverbNodes = {
+        reverbConvolver: current.convolver,
+        reverbWet: current.wet,
+      };
+      syncReverbConvolver(reverbNodes, effects, context);
+      this.rekeyReverbBus(current, nextKey);
       channel.reverbBusKey = nextKey;
       return;
     }
@@ -539,17 +537,18 @@ export class MemoMixGraph {
 
     applyPathInputEffects(channel.dry, effects, context, anySoloActive);
     // Send-style: dry stays full; wet is additive.
-    channel.dry.dryGain.gain.setValueAtTime(1, now);
+    setAudioParamValue(channel.dry.dryGain.gain, 1, now);
 
     if (delayActive) {
       channel.delay = this.ensureWetPath(context, channel.delay);
       applyPathInputEffects(channel.delay, effects, context, anySoloActive);
       this.syncDelayBus(context, channel, effects);
-      channel.delay.send.gain.setValueAtTime(delayMix, now);
+      setAudioParamValue(channel.delay.send.gain, delayMix, now);
     } else {
       this.releaseChannelDelay(channel);
       if (channel.delay) {
-        channel.delay.send.gain.setValueAtTime(0, now);
+        this.teardownWetPath(channel.delay);
+        channel.delay = null;
       }
     }
 
@@ -557,11 +556,12 @@ export class MemoMixGraph {
       channel.reverb = this.ensureWetPath(context, channel.reverb);
       applyPathInputEffects(channel.reverb, effects, context, anySoloActive);
       this.syncReverbBus(context, channel, effects);
-      channel.reverb.send.gain.setValueAtTime(reverbMix, now);
+      setAudioParamValue(channel.reverb.send.gain, reverbMix, now);
     } else {
       this.releaseChannelReverb(channel);
       if (channel.reverb) {
-        channel.reverb.send.gain.setValueAtTime(0, now);
+        this.teardownWetPath(channel.reverb);
+        channel.reverb = null;
       }
     }
   }

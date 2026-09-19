@@ -481,6 +481,10 @@ export class MemoAudioEngine {
       if (nextState !== 'active') {
         // App Switcher / background: stop UI RAF; keep native audio scheduled.
         this.freezePlaybackUiForBackground();
+        // If nothing is playing, free wet DSP (delay feedback / convolvers).
+        if (!this.state.isPlaying) {
+          this.releaseWetMixGraph();
+        }
         return;
       }
 
@@ -551,6 +555,7 @@ export class MemoAudioEngine {
     void endMemoLiveActivity();
     this.sessionMode = null;
     this.playbackInterrupted = true;
+    this.releaseWetMixGraph();
   }
 
   private async healPlaybackAfterInterruption(): Promise<void> {
@@ -2375,6 +2380,29 @@ export class MemoAudioEngine {
     this.mixGraph = new MemoMixGraph();
   }
 
+  /**
+   * Drop delay/reverb buses + IR cache while keeping PCM and AudioContext.
+   * Call after listen-play stops so FX scrubbing cannot ratchet native DSP cost.
+   */
+  private canReleaseWetMixGraph(): boolean {
+    return (
+      !this.state.isRecording &&
+      !this.state.monitorMixActive &&
+      !this.recordingPrepared &&
+      !this.recordingWarmupFinalized &&
+      !this.recordingPrepareInFlight &&
+      !this.recordingStartInFlight
+    );
+  }
+
+  private releaseWetMixGraph(): void {
+    if (!this.canReleaseWetMixGraph()) {
+      return;
+    }
+    this.disposeMixGraph();
+    clearReverbIrCache();
+  }
+
   private setMasterOutputGain(gain: number): void {
     if (!this.context) {
       return;
@@ -2595,6 +2623,7 @@ export class MemoAudioEngine {
     }
     this.invalidateLayerBuffers();
     this.recordingPlaybackBuffers.clear();
+    this.releaseWetMixGraph();
     if (__DEV__) {
       const after = this.getBufferCacheStats();
       console.log(
@@ -3079,6 +3108,7 @@ export class MemoAudioEngine {
     if (!this.state.isRecording) {
       this.setPlaybackInterruptionObservation(false);
       void endMemoLiveActivity();
+      this.releaseWetMixGraph();
       this.schedulePcmIdleEvict();
     }
   }
@@ -3379,6 +3409,7 @@ export class MemoAudioEngine {
     if (!this.state.isRecording) {
       this.setPlaybackInterruptionObservation(false);
       void endMemoLiveActivity();
+      this.releaseWetMixGraph();
     }
   }
 
@@ -5093,6 +5124,7 @@ export class MemoAudioEngine {
       if (!this.state.isRecording) {
         this.invalidateAndStopSources();
         this.setPlaybackInterruptionObservation(false);
+        this.releaseWetMixGraph();
         this.schedulePcmIdleEvict();
       }
       return;
@@ -5105,6 +5137,7 @@ export class MemoAudioEngine {
     if (!this.state.isRecording) {
       this.setPlaybackInterruptionObservation(false);
       void endMemoLiveActivity();
+      this.releaseWetMixGraph();
       this.schedulePcmIdleEvict();
     }
   }
@@ -5149,6 +5182,7 @@ export class MemoAudioEngine {
     if (wasPlaying) {
       void this.play();
     } else {
+      this.releaseWetMixGraph();
       this.schedulePcmIdleEvict();
     }
   }
