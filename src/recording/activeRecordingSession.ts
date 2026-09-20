@@ -18,9 +18,13 @@ import {
   getMemo,
   replaceLayerSegment,
   saveRecording,
+  updateLayerEffects,
+  updateLayerStartTimes,
 } from '@/src/storage/memoStore';
 import type { Memo } from '@/src/storage/types';
 import {
+  clampLayerStartTime,
+  getLayerEffects,
   getReplaceSpliceParams,
   MIN_REPLACE_EFFECTIVE_DURATION_SEC,
 } from '@/src/storage/types';
@@ -485,15 +489,20 @@ export async function stopAndSave(
         if (!replaceLayer || replaceLayer.duration <= 0) {
           throw new Error('No active layer');
         }
-        const { trimStart: fileTrimStart, trimEnd: fileTrimEnd, leadingPadSeconds } =
-          getReplaceSpliceParams(
-            replaceLayer,
-            capturedStartTime,
-            duration,
-            replacementSkipSeconds
-          );
+        const {
+          trimStart: fileTrimStart,
+          trimEnd: fileTrimEnd,
+          leadingPadSeconds,
+          startTimeDelta,
+        } = getReplaceSpliceParams(
+          replaceLayer,
+          capturedStartTime,
+          duration,
+          replacementSkipSeconds
+        );
         if (
           leadingPadSeconds <= 0 &&
+          startTimeDelta === 0 &&
           fileTrimEnd - fileTrimStart < MIN_REPLACE_EFFECTIVE_DURATION_SEC
         ) {
           throw new Error('Replacement too short');
@@ -510,6 +519,37 @@ export async function stopAndSave(
         );
         updated = replaceResult.memo;
         replaceLayerPath = replaceResult.prime?.path;
+
+        if (startTimeDelta !== 0) {
+          const spliced = updated.layers.find((layer) => layer.id === replaceLayer.id);
+          if (spliced) {
+            const effects = getLayerEffects(spliced);
+            const nextStart = clampLayerStartTime(
+              spliced.startTime + startTimeDelta,
+              effects.trimIn
+            );
+            updated = await updateLayerStartTimes(currentMemo.id, {
+              [replaceLayer.id]: nextStart,
+            });
+            // Non-full keep regions grow on the left by preGap; full trimOut
+            // already expanded to the new file duration in replaceLayerFile.
+            const preGap = -startTimeDelta;
+            if (preGap > 0.001) {
+              const shifted = updated.layers.find((layer) => layer.id === replaceLayer.id);
+              if (shifted) {
+                const shiftedEffects = getLayerEffects(shifted);
+                if (shiftedEffects.trimOut < shifted.duration - 0.001) {
+                  updated = await updateLayerEffects(currentMemo.id, replaceLayer.id, {
+                    trimOut: Math.min(
+                      shifted.duration,
+                      shiftedEffects.trimOut + preGap
+                    ),
+                  });
+                }
+              }
+            }
+          }
+        }
       } else {
         updated = await saveRecording(currentMemo.id, path, duration, peaks, latencyOptions);
         activeLayerId = updated.layers[0]?.id ?? null;

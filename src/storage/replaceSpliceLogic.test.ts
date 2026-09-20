@@ -36,6 +36,7 @@ describe('getReplaceSpliceParams', () => {
       trimStart: 5,
       trimEnd: 7,
       leadingPadSeconds: 0,
+      startTimeDelta: 0,
     });
   });
 
@@ -47,6 +48,7 @@ describe('getReplaceSpliceParams', () => {
     assert.equal(result.trimStart, 5);
     assert.equal(result.trimEnd, 5 + (recordingDuration - skip));
     assert.equal(result.leadingPadSeconds, 0);
+    assert.equal(result.startTimeDelta, 0);
     assert.equal(result.trimEnd - result.trimStart, recordingDuration - skip);
   });
 
@@ -56,6 +58,7 @@ describe('getReplaceSpliceParams', () => {
     const result = getReplaceSpliceParams(layer, 9, 2, 0.12);
     assert.equal(result.trimStart, 9);
     assert.equal(result.trimEnd, 10);
+    assert.equal(result.startTimeDelta, 0);
   });
 
   it('inserts at active end with leading silence when playhead is past track', () => {
@@ -65,6 +68,7 @@ describe('getReplaceSpliceParams', () => {
       trimStart: 10,
       trimEnd: 10,
       leadingPadSeconds: 2,
+      startTimeDelta: 0,
     });
   });
 
@@ -80,6 +84,7 @@ describe('getReplaceSpliceParams', () => {
       trimStart: 5,
       trimEnd: 6.5,
       leadingPadSeconds: 0,
+      startTimeDelta: 0,
     });
   });
 
@@ -94,6 +99,55 @@ describe('getReplaceSpliceParams', () => {
       trimStart: 0.12,
       trimEnd: 2.12,
       leadingPadSeconds: 0,
+      startTimeDelta: 0,
+    });
+  });
+
+  it('extends left when playhead is before late-start track', () => {
+    const layer = makeLayer({
+      startTime: 5,
+      duration: 12,
+      effects: { trimIn: 0, trimOut: 10 },
+    });
+    // preGap 5; record 8 → hole 3 at trimIn; shift start left by 5
+    const result = getReplaceSpliceParams(layer, 0, 8);
+    assert.deepEqual(result, {
+      trimStart: 0,
+      trimEnd: 3,
+      leadingPadSeconds: 0,
+      startTimeDelta: -5,
+    });
+  });
+
+  it('punches at trimIn when playhead is before activeStart with trimIn', () => {
+    const layer = makeLayer({
+      startTime: 2,
+      duration: 15,
+      effects: { trimIn: 1, trimOut: 9 },
+    });
+    // activeStart = 3; playhead 1 → preGap 2; record 5 → hole 3 from trimIn
+    const result = getReplaceSpliceParams(layer, 1, 5);
+    assert.deepEqual(result, {
+      trimStart: 1,
+      trimEnd: 4,
+      leadingPadSeconds: 0,
+      startTimeDelta: -2,
+    });
+  });
+
+  it('allows pre-gap-only takes with a zero-length hole', () => {
+    const layer = makeLayer({
+      startTime: 5,
+      duration: 12,
+      effects: { trimIn: 0, trimOut: 10 },
+    });
+    // Record only 3s before the track — no overlap into keep region
+    const result = getReplaceSpliceParams(layer, 2, 3);
+    assert.deepEqual(result, {
+      trimStart: 0,
+      trimEnd: 0,
+      leadingPadSeconds: 0,
+      startTimeDelta: -3,
     });
   });
 

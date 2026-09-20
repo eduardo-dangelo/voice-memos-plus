@@ -4423,14 +4423,7 @@ function MemoEditorInner({
       }
 
       engine.pause();
-      let startTime = engine.getPlaybackTime();
-      if (mode === 'replace' && activeLayerId) {
-        const replaceLayer = memo.layers.find((layer) => layer.id === activeLayerId);
-        if (replaceLayer) {
-          const activeStart = getLayerActiveStartTime(replaceLayer);
-          startTime = Math.max(activeStart, startTime);
-        }
-      }
+      const startTime = engine.getPlaybackTime();
 
       recordingStartTime.current = startTime;
       setArmedTimelineTime(startTime);
@@ -5022,23 +5015,28 @@ function MemoEditorInner({
             return inactivePlayableById.get(track.id) ?? { ...track, isActive: false };
           }
 
-          const keptDuration = Math.max(0.01, replaceStart - track.startTime);
+          const keptDuration =
+            replaceStart < track.startTime
+              ? 0
+              : Math.max(0.01, replaceStart - track.startTime);
           const prefixPeaks =
-            keptDuration < track.duration && track.peaks && track.peaks.length > 0
-              ? track.peaks.slice(
-                  0,
-                  Math.max(
-                    1,
-                    Math.ceil((keptDuration / track.duration) * track.peaks.length)
+            keptDuration <= 0
+              ? []
+              : keptDuration < track.duration && track.peaks && track.peaks.length > 0
+                ? track.peaks.slice(
+                    0,
+                    Math.max(
+                      1,
+                      Math.ceil((keptDuration / track.duration) * track.peaks.length)
+                    )
                   )
-                )
-              : track.peaks;
+                : track.peaks;
 
           return {
             ...track,
             isActive: true,
             peaks: prefixPeaks,
-            duration: Math.min(track.duration, keptDuration),
+            duration: keptDuration <= 0 ? 0 : Math.min(track.duration, keptDuration),
             ...(showLiveRecording
               ? {
                   liveRecording: {

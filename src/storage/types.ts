@@ -364,29 +364,51 @@ export function getReplaceSpliceParams(
   timelineStart: number,
   recordingDuration: number,
   replacementSkipSeconds = 0
-): { trimStart: number; trimEnd: number; leadingPadSeconds: number } {
+): {
+  trimStart: number;
+  trimEnd: number;
+  leadingPadSeconds: number;
+  startTimeDelta: number;
+} {
   const effects = getLayerEffects(layer);
   const footprintEnd = getLayerFootprintEndTime(layer);
+  const activeStart = getLayerActiveStartTime(layer);
   const timelineGap = Math.max(0, timelineStart - footprintEnd);
+  const skip = Math.max(0, replacementSkipSeconds);
+  const effectiveDuration = Math.max(0, recordingDuration - skip);
 
   if (timelineGap > 0) {
     return {
       trimStart: effects.trimOut,
       trimEnd: effects.trimOut,
       leadingPadSeconds: timelineGap,
+      startTimeDelta: 0,
+    };
+  }
+
+  const preGap = Math.max(0, activeStart - timelineStart);
+  if (preGap > 0) {
+    // Extend left of the keep region: punch from trimIn; hole is only the
+    // portion of the take that overlaps the old audible track.
+    const trimStart = effects.trimIn;
+    const overlapDuration = Math.max(0, effectiveDuration - preGap);
+    const trimEnd = Math.min(trimStart + overlapDuration, effects.trimOut, layer.duration);
+    return {
+      trimStart,
+      trimEnd,
+      leadingPadSeconds: 0,
+      startTimeDelta: -preGap,
     };
   }
 
   const trimStart = getLayerFileOffsetAtTimeline(layer, timelineStart);
   // Hole must match skip-trimmed fill so post-punch audio is not pulled early.
-  const skip = Math.max(0, replacementSkipSeconds);
-  const effectiveDuration = Math.max(0, recordingDuration - skip);
   const trimEnd = Math.min(
     trimStart + effectiveDuration,
     effects.trimOut,
     layer.duration
   );
-  return { trimStart, trimEnd, leadingPadSeconds: 0 };
+  return { trimStart, trimEnd, leadingPadSeconds: 0, startTimeDelta: 0 };
 }
 
 export function getLayerEndTime(layer: Layer): number {
