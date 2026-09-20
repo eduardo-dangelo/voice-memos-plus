@@ -2948,12 +2948,12 @@ function MemoEditorInner({
           beginRecordingInFlight.current ||
           engine.isPreparedForRecording() ||
           engine.hasRecordingCaptureStarted();
+        // Only skip unload while arming — always sync metro so a late loadMemo
+        // cannot leave the engine on defaults when the UI shows metro on.
         if (!armingOrPrepared) {
           engine.unload();
-          // unload() resets engine metronome to defaults; restore memo settings so
-          // brand-new recordings still arm clicks when the UI shows metro on.
-          engine.setMetronome(getMemoMetronomeSettings(loaded));
         }
+        engine.setMetronome(getMemoMetronomeSettings(loaded));
       }
     }
     setLoading(false);
@@ -3320,12 +3320,18 @@ function MemoEditorInner({
       const memoId = refreshed.id;
       const memoTitle = refreshed.title;
       const precountMode = getMemoPrecountMode(refreshed);
-      const bpm = getMemoMetronomeSettings(refreshed).bpm;
+      const metro = getMemoMetronomeSettings(refreshed);
+      const bpm = metro.bpm;
       let nextBeatDeadlineMs: number | undefined;
       let nextBeatContextWhen: number | undefined;
       try {
         await confirmEditDraft(false);
         setActiveEditor(null);
+
+        // Auto-record never goes through loadMemoIntoEngine; sync before prepare
+        // so armAudibleOutput sees enabled when the memo/UI have metro on.
+        engine.setMetronome(metro);
+        setLiveMetronomeSettings(metro);
 
         recordingStartTime.current = 0;
         setArmedTimelineTime(0);
