@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, StyleSheet, View } from 'react-native';
 
 import {
@@ -18,6 +18,7 @@ import {
   DEFAULT_METRONOME_SETTINGS,
   nextMetronomeMode,
   nextPrecountMode,
+  settingsForMetronomeMode,
   type MetronomeSettings,
   type PrecountMode,
 } from '@/src/storage/types';
@@ -69,9 +70,31 @@ export function RecordFabCluster({ disabled, bottomOffset = 32, onRecord }: Prop
   );
   const [metronome, setMetronome] = useState<MetronomeSettings>(metronomeFromDefaults);
   const [metronomeSettingsVisible, setMetronomeSettingsVisible] = useState(false);
-  const [headphonesConnected, setHeadphonesConnected] = useState(false);
+  // null until first headphone probe — avoid demoting clicks while status is unknown.
+  const [headphonesConnected, setHeadphonesConnected] = useState<boolean | null>(null);
+  const precountRef = useRef(precount);
+  precountRef.current = precount;
 
   useEffect(() => subscribeHeadphonesConnected(setHeadphonesConnected), []);
+
+  // Clicks require headphones. Unplug (or cold start without HP) → grid-only.
+  // Never restore clicks when headphones reconnect.
+  useEffect(() => {
+    if (ALLOW_METRONOME_WITHOUT_HEADPHONES) {
+      return;
+    }
+    if (headphonesConnected !== false) {
+      return;
+    }
+    setMetronome((current) => {
+      if (!current.enabled) {
+        return current;
+      }
+      const next = { ...current, ...settingsForMetronomeMode('grid') };
+      persistSettings(precountRef.current, next);
+      return next;
+    });
+  }, [headphonesConnected]);
 
   useEffect(() => {
     if (disabled) {
@@ -89,12 +112,12 @@ export function RecordFabCluster({ disabled, bottomOffset = 32, onRecord }: Prop
 
   const handleMetronomeCycle = () => {
     void (async () => {
-      const headphonesConnected =
+      const connected =
         ALLOW_METRONOME_WITHOUT_HEADPHONES || (await isHeadphonesConnected());
       setMetronome((current) => {
         const next = {
           ...current,
-          ...nextMetronomeMode(current, { headphonesConnected }),
+          ...nextMetronomeMode(current, { headphonesConnected: connected }),
         };
         persistSettings(precount, next);
         return next;
@@ -134,7 +157,7 @@ export function RecordFabCluster({ disabled, bottomOffset = 32, onRecord }: Prop
           <View style={styles.side}>
             <MetronomeButton
               disabled={disabled}
-              headphonesConnected={headphonesConnected}
+              headphonesConnected={headphonesConnected === true}
               settings={metronome}
               onCycle={handleMetronomeCycle}
               onOpenSettings={() => setMetronomeSettingsVisible(true)}
