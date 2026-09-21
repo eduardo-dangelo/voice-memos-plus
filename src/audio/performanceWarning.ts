@@ -4,6 +4,7 @@ import {
   getPerformanceWarningMessage,
 } from '@/src/audio/performanceBudget';
 import type { Memo } from '@/src/storage/types';
+import { getPlayableLayers } from '@/src/storage/types';
 
 export const MERGE_LAYERS_PERFORMANCE_TIP_MESSAGE =
   'You can merge layers to reduce file size.';
@@ -77,12 +78,64 @@ export function maybeShowPerformanceWarning(memo: Memo): PerformanceWarningResul
 /** True when acknowledging a performance warning should offer the merge tip. */
 export function shouldShowMergeLayersTipAfterPerformanceAck(
   memo: Memo | null | undefined,
-  isRecording: boolean
+  isRecording: boolean,
+  options?: { hideTip?: boolean }
 ): boolean {
   if (!memo || isRecording) {
     return false;
   }
+  if (options?.hideTip) {
+    return false;
+  }
   return canMergeLayers(memo.layers);
+}
+
+export type CollapseTracksTipOptions = {
+  activeLayerId: string | null;
+  collapsedLayerIds: ReadonlySet<string>;
+  hideTip?: boolean;
+};
+
+/** True when any playable layer other than the selection is already collapsed. */
+export function hasCollapsedUnselectedTracks(
+  memo: Memo,
+  activeLayerId: string | null,
+  collapsedLayerIds: ReadonlySet<string>
+): boolean {
+  if (memo.trackAccordionEnabled === true) {
+    return true;
+  }
+  const playable = getPlayableLayers(memo);
+  return playable.some(
+    (layer) => layer.id !== activeLayerId && collapsedLayerIds.has(layer.id)
+  );
+}
+
+/** True when acknowledging the merge tip should offer the collapse tip. */
+export function shouldShowCollapseTracksTipAfterMergeAck(
+  memo: Memo | null | undefined,
+  isRecording: boolean,
+  options: CollapseTracksTipOptions
+): boolean {
+  if (!memo || isRecording) {
+    return false;
+  }
+  if (options.hideTip) {
+    return false;
+  }
+  if (!canMergeLayers(memo.layers)) {
+    return false;
+  }
+  if (
+    hasCollapsedUnselectedTracks(
+      memo,
+      options.activeLayerId,
+      options.collapsedLayerIds
+    )
+  ) {
+    return false;
+  }
+  return true;
 }
 
 export function resetPerformanceWarningState(): void {

@@ -1,7 +1,8 @@
 import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
 import { SymbolView } from 'expo-symbols';
-import { useMemo, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import type { SFSymbol } from 'sf-symbols-typescript';
 
 import { useColorScheme } from '@/components/useColorScheme';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
@@ -9,6 +10,10 @@ import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 const useGlass = isGlassEffectAPIAvailable();
 
 export type RecordingPromptTitleIcon = 'warning' | 'info' | 'none';
+
+export type RecordingPromptDismissOptions = {
+  dontShowAgain?: boolean;
+};
 
 export type RecordingPromptDialogProps = {
   visible: boolean;
@@ -18,10 +23,12 @@ export type RecordingPromptDialogProps = {
   compact?: boolean;
   titleIcon?: RecordingPromptTitleIcon;
   actions?: 'ok' | 'confirm' | 'continue';
-  onDismiss: () => void;
-  onContinue?: () => void;
+  /** Shows a "Don't show this message again" checkbox above the actions. */
+  showDontShowAgain?: boolean;
+  onDismiss: (options?: RecordingPromptDismissOptions) => void;
+  onContinue?: (options?: RecordingPromptDismissOptions) => void;
   /** Backdrop tap; defaults to `onDismiss` when omitted. */
-  onBackdropDismiss?: () => void;
+  onBackdropDismiss?: (options?: RecordingPromptDismissOptions) => void;
 };
 
 export function RecordingPromptDialog({
@@ -32,6 +39,7 @@ export function RecordingPromptDialog({
   compact = false,
   titleIcon = 'warning',
   actions = 'confirm',
+  showDontShowAgain = false,
   onDismiss,
   onContinue,
   onBackdropDismiss,
@@ -39,6 +47,7 @@ export function RecordingPromptDialog({
   const colors = useVoiceMemosColors();
   const colorScheme = useColorScheme();
   const styles = useStyles(colors, colorScheme, compact);
+  const [dontShowAgain, setDontShowAgain] = useState(false);
   const titleIconName =
     titleIcon === 'info'
       ? 'info.circle.fill'
@@ -48,20 +57,29 @@ export function RecordingPromptDialog({
   const titleIconColor =
     titleIcon === 'info' ? colors.accent : '#FF9F0A';
 
+  useEffect(() => {
+    if (visible) {
+      setDontShowAgain(false);
+    }
+  }, [visible]);
+
+  const dismissOptions = (): RecordingPromptDismissOptions | undefined =>
+    showDontShowAgain ? { dontShowAgain } : undefined;
+
   return (
     <Modal
       animationType={useGlass ? 'none' : 'fade'}
       transparent
       visible={visible}
-      onRequestClose={onDismiss}>
+      onRequestClose={() => onDismiss(dismissOptions())}>
       <Pressable
         style={[styles.backdrop, useGlass && styles.backdropGlass]}
-        onPress={onBackdropDismiss ?? onDismiss}>
+        onPress={() => (onBackdropDismiss ?? onDismiss)(dismissOptions())}>
         <DialogCard styles={styles} colorScheme={colorScheme}>
           <View style={styles.titleRow}>
             {titleIconName ? (
               <SymbolView
-                name={{ ios: titleIconName }}
+                name={{ ios: titleIconName as SFSymbol }}
                 size={compact ? 16 : 18}
                 tintColor={titleIconColor}
               />
@@ -70,12 +88,29 @@ export function RecordingPromptDialog({
           </View>
           <View style={styles.iconWrap}>
             <SymbolView
-              name={{ ios: heroIcon }}
+              name={{ ios: heroIcon as SFSymbol }}
               size={compact ? 44 : 56}
               tintColor={colors.text}
             />
           </View>
           <Text style={styles.message}>{message}</Text>
+          {showDontShowAgain ? (
+            <Pressable
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: dontShowAgain }}
+              hitSlop={8}
+              style={styles.dontShowRow}
+              onPress={() => setDontShowAgain((current) => !current)}>
+              <SymbolView
+                name={{
+                  ios: (dontShowAgain ? 'checkmark.circle.fill' : 'circle') as SFSymbol,
+                }}
+                size={20}
+                tintColor={dontShowAgain ? colors.accent : colors.secondaryText}
+              />
+              <Text style={styles.dontShowLabel}>Don't show this message again</Text>
+            </Pressable>
+          ) : null}
           <View style={styles.actions}>
             {actions === 'confirm' ? (
               <>
@@ -83,14 +118,14 @@ export function RecordingPromptDialog({
                   accessibilityRole="button"
                   hitSlop={8}
                   style={styles.actionButton}
-                  onPress={onDismiss}>
+                  onPress={() => onDismiss(dismissOptions())}>
                   <Text style={styles.cancelText}>Cancel</Text>
                 </Pressable>
                 <Pressable
                   accessibilityRole="button"
                   hitSlop={8}
                   style={styles.actionButton}
-                  onPress={onContinue}>
+                  onPress={() => onContinue?.(dismissOptions())}>
                   <Text style={styles.continueText}>Continue</Text>
                 </Pressable>
               </>
@@ -99,7 +134,7 @@ export function RecordingPromptDialog({
                 accessibilityRole="button"
                 hitSlop={8}
                 style={styles.actionButton}
-                onPress={onContinue}>
+                onPress={() => onContinue?.(dismissOptions())}>
                 <Text style={styles.continueText}>Continue</Text>
               </Pressable>
             ) : (
@@ -107,7 +142,7 @@ export function RecordingPromptDialog({
                 accessibilityRole="button"
                 hitSlop={8}
                 style={styles.actionButton}
-                onPress={onDismiss}>
+                onPress={() => onDismiss(dismissOptions())}>
                 <Text style={styles.continueText}>OK</Text>
               </Pressable>
             )}
@@ -210,6 +245,18 @@ function useStyles(
           lineHeight: compact ? 19 : 21,
           color: colors.secondaryText,
           textAlign: 'left',
+        },
+        dontShowRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          alignSelf: 'stretch',
+          gap: 10,
+        },
+        dontShowLabel: {
+          flex: 1,
+          fontSize: compact ? 13 : 14,
+          lineHeight: compact ? 18 : 19,
+          color: colors.secondaryText,
         },
         actions: {
           flexDirection: 'row',

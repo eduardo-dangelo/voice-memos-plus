@@ -67,6 +67,7 @@ import {
   MERGE_LAYERS_PERFORMANCE_TIP_MESSAGE,
   maybeShowPerformanceWarning,
   resetPerformanceWarningState,
+  shouldShowCollapseTracksTipAfterMergeAck,
   shouldShowMergeLayersTipAfterPerformanceAck,
 } from '@/src/audio/performanceWarning';
 import {
@@ -114,6 +115,12 @@ import {
   type TrackData,
 } from '@/src/components/WaveformView';
 import { applyLocationTitleIfEnabled } from '@/src/location/locationNaming';
+import {
+  setHideCollapseTracksPerformanceTip,
+  setHideMergeLayersPerformanceTip,
+  getHideCollapseTracksPerformanceTipSync,
+  getHideMergeLayersPerformanceTipSync,
+} from '@/src/settings/appSettings';
 import {
   awaitSaveInFlight,
   beginSession,
@@ -3075,24 +3082,46 @@ function MemoEditorInner({
     if (
       shouldShowMergeLayersTipAfterPerformanceAck(
         memoRef.current ?? memo,
-        engineState.isRecording
+        engineState.isRecording,
+        { hideTip: getHideMergeLayersPerformanceTipSync() }
       )
     ) {
       setMergeLayersTipVisible(true);
     }
   }, [engineState.isRecording, memo]);
 
-  const acknowledgeMergeLayersTip = useCallback(() => {
-    setMergeLayersTipVisible(false);
-    if (
-      shouldShowMergeLayersTipAfterPerformanceAck(
-        memoRef.current ?? memo,
-        engineState.isRecording
-      )
-    ) {
-      setCollapseTracksTipVisible(true);
-    }
-  }, [engineState.isRecording, memo]);
+  const acknowledgeMergeLayersTip = useCallback(
+    (options?: { dontShowAgain?: boolean }) => {
+      if (options?.dontShowAgain) {
+        void setHideMergeLayersPerformanceTip(true);
+      }
+      setMergeLayersTipVisible(false);
+      if (
+        shouldShowCollapseTracksTipAfterMergeAck(
+          memoRef.current ?? memo,
+          engineState.isRecording,
+          {
+            activeLayerId,
+            collapsedLayerIds,
+            hideTip: getHideCollapseTracksPerformanceTipSync(),
+          }
+        )
+      ) {
+        setCollapseTracksTipVisible(true);
+      }
+    },
+    [activeLayerId, collapsedLayerIds, engineState.isRecording, memo]
+  );
+
+  const acknowledgeCollapseTracksTip = useCallback(
+    (options?: { dontShowAgain?: boolean }) => {
+      if (options?.dontShowAgain) {
+        void setHideCollapseTracksPerformanceTip(true);
+      }
+      setCollapseTracksTipVisible(false);
+    },
+    []
+  );
 
   useEffect(() => {
     if (!memo) {
@@ -5573,6 +5602,7 @@ function MemoEditorInner({
         heroIcon="square.stack.3d.up"
         message={MERGE_LAYERS_PERFORMANCE_TIP_MESSAGE}
         actions="continue"
+        showDontShowAgain
         onDismiss={acknowledgeMergeLayersTip}
         onContinue={acknowledgeMergeLayersTip}
       />
@@ -5583,8 +5613,9 @@ function MemoEditorInner({
         heroIcon="rectangle.compress.vertical"
         message={COLLAPSE_TRACKS_PERFORMANCE_TIP_MESSAGE}
         actions="continue"
-        onDismiss={() => setCollapseTracksTipVisible(false)}
-        onContinue={() => setCollapseTracksTipVisible(false)}
+        showDontShowAgain
+        onDismiss={acknowledgeCollapseTracksTip}
+        onContinue={acknowledgeCollapseTracksTip}
       />
       <RecordingPromptDialog
         visible={collapseWarningVisible}

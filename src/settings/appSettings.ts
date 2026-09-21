@@ -24,6 +24,8 @@ export type AppSettings = {
   locationBasedNaming: boolean;
   themePreference: ThemePreference;
   recordingDefaults: RecordingDefaults;
+  hideMergeLayersPerformanceTip: boolean;
+  hideCollapseTracksPerformanceTip: boolean;
 };
 
 const THEME_PREFERENCES: readonly ThemePreference[] = ['system', 'light', 'dark'];
@@ -42,6 +44,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   locationBasedNaming: true,
   themePreference: 'system',
   recordingDefaults: DEFAULT_RECORDING_DEFAULTS,
+  hideMergeLayersPerformanceTip: false,
+  hideCollapseTracksPerformanceTip: false,
 };
 
 function isThemePreference(value: unknown): value is ThemePreference {
@@ -89,6 +93,14 @@ function readSettings(): AppSettings {
         ? parsed.themePreference
         : DEFAULT_SETTINGS.themePreference,
       recordingDefaults: normalizeRecordingDefaults(parsed.recordingDefaults),
+      hideMergeLayersPerformanceTip:
+        typeof parsed.hideMergeLayersPerformanceTip === 'boolean'
+          ? parsed.hideMergeLayersPerformanceTip
+          : DEFAULT_SETTINGS.hideMergeLayersPerformanceTip,
+      hideCollapseTracksPerformanceTip:
+        typeof parsed.hideCollapseTracksPerformanceTip === 'boolean'
+          ? parsed.hideCollapseTracksPerformanceTip
+          : DEFAULT_SETTINGS.hideCollapseTracksPerformanceTip,
     };
   } catch {
     return {
@@ -134,6 +146,30 @@ export async function setRecordingDefaults(
     ...readSettings(),
     recordingDefaults: normalizeRecordingDefaults(defaults),
   };
+  writeSettings(next);
+  return next;
+}
+
+export function getHideMergeLayersPerformanceTipSync(): boolean {
+  return readSettings().hideMergeLayersPerformanceTip;
+}
+
+export function getHideCollapseTracksPerformanceTipSync(): boolean {
+  return readSettings().hideCollapseTracksPerformanceTip;
+}
+
+export async function setHideMergeLayersPerformanceTip(
+  hide: boolean
+): Promise<AppSettings> {
+  const next = { ...readSettings(), hideMergeLayersPerformanceTip: hide };
+  writeSettings(next);
+  return next;
+}
+
+export async function setHideCollapseTracksPerformanceTip(
+  hide: boolean
+): Promise<AppSettings> {
+  const next = { ...readSettings(), hideCollapseTracksPerformanceTip: hide };
   writeSettings(next);
   return next;
 }
