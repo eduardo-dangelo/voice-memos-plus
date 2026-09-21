@@ -304,7 +304,7 @@ export type EngineState = {
 
 export type PlaybackOptions = {
   loopRestart?: boolean;
-  /** When false, never schedule click audio during this playback session. Default: follow metronomeSettings.enabled */
+  /** When false, never schedule click audio during this playback session. Default: true (live enabled still gates clicks). */
   includeMetronome?: boolean;
 };
 
@@ -4963,8 +4963,8 @@ export class MemoAudioEngine {
       return;
     }
 
-    this.playbackIncludeMetronome =
-      options?.includeMetronome ?? this.metronomeSettings.enabled;
+    // Allow mid-play enable via setMetronome; list preview passes false to suppress.
+    this.playbackIncludeMetronome = options?.includeMetronome ?? true;
 
     // Flip the transport icon immediately; audio arms after decode below.
     this.emit({ isPlaying: true });

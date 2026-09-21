@@ -189,6 +189,7 @@ import {
   nextPrecountMode,
   normalizeLayerLoopUntil,
   normalizeMetronomeSettings,
+  settingsForMetronomeMode,
 } from '@/src/storage/types';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 import { formatDurationWithTenths } from '@/src/utils/format';
@@ -648,7 +649,8 @@ function MemoEditorInner({
   const [timeSeekInitial, setTimeSeekInitial] = useState('00:00.00');
   const [metronomeSettingsVisible, setMetronomeSettingsVisible] = useState(false);
   const [metronomeGridProcessing, setMetronomeGridProcessing] = useState(false);
-  const [headphonesConnected, setHeadphonesConnected] = useState(false);
+  // null until first headphone probe — avoid demoting clicks while status is unknown.
+  const [headphonesConnected, setHeadphonesConnected] = useState<boolean | null>(null);
   const [headphonesWarningMode, setHeadphonesWarningMode] = useState<
     'replace' | 'stack' | null
   >(null);
@@ -4785,6 +4787,22 @@ function MemoEditorInner({
   }, [isRecording]);
 
   useEffect(() => subscribeHeadphonesConnected(setHeadphonesConnected), []);
+
+  // Clicks require headphones. Unplug (or open with clicks on and no HP) → grid-only.
+  // Never restore clicks when headphones reconnect.
+  useEffect(() => {
+    if (ALLOW_METRONOME_WITHOUT_HEADPHONES) {
+      return;
+    }
+    if (headphonesConnected !== false) {
+      return;
+    }
+    if (!liveMetronomeSettingsRef.current.enabled) {
+      return;
+    }
+    handleMetronomeChange(settingsForMetronomeMode('grid'));
+  }, [handleMetronomeChange, headphonesConnected]);
+
   useEffect(() => subscribeCueOutputRoute(setCueOutputRoute), []);
   useEffect(() => subscribeMonitorPath(setMonitorPath), []);
 
@@ -5488,7 +5506,7 @@ function MemoEditorInner({
                 <View style={styles.timeDisplaySide}>
                   <MetronomeButton
                     disabled={isRecording}
-                    headphonesConnected={headphonesConnected}
+                    headphonesConnected={headphonesConnected === true}
                     settings={metronomeSettings}
                     onCycle={handleMetronomeCycle}
                     onOpenSettings={() => setMetronomeSettingsVisible(true)}
