@@ -20,6 +20,7 @@ export {
   METRONOME_GRID_PLAYBACK_BUFFER_VIEWPORTS,
   PLACEHOLDER_TIMELINE_DURATION_SEC,
   resolvePlaybackBarPaintRange,
+  resolveRecordingBarPaintRange,
   shouldReseedPlaybackViewport,
   type MetronomeGridBuffer,
 } from './metronomeGridViewport';

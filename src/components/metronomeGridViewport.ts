@@ -97,6 +97,48 @@ export function resolvePlaybackBarPaintRange(
   );
 }
 
+/**
+ * Stable paint window while recording follow-scrolls. Reuses a buffered range
+ * until the playhead nears the edge so sibling track SVGs are not remounted on
+ * every live-peak React commit (stack flicker).
+ */
+export const RECORDING_BAR_PAINT_BUFFER_VIEWPORTS = METRONOME_GRID_PLAYBACK_BUFFER_VIEWPORTS;
+
+/** Invalidate before the tight follow overscan (0.2) would show blank bars. */
+export const RECORDING_BAR_PAINT_VALIDITY_MARGIN_VIEWPORTS = 1;
+
+export function resolveRecordingBarPaintRange(
+  buffer: MetronomeGridBuffer | null,
+  scrollX: number,
+  viewportWidth: number,
+  pixelsPerSecond: number,
+  bufferViewports = RECORDING_BAR_PAINT_BUFFER_VIEWPORTS,
+  validityMarginViewports = RECORDING_BAR_PAINT_VALIDITY_MARGIN_VIEWPORTS
+): MetronomeGridBuffer {
+  if (viewportWidth <= 0 || pixelsPerSecond <= 0) {
+    return buffer != null && buffer.end > buffer.start ? buffer : { start: 0, end: 0 };
+  }
+  if (
+    isMetronomeGridBufferValid(
+      buffer,
+      scrollX,
+      viewportWidth,
+      pixelsPerSecond,
+      validityMarginViewports
+    )
+  ) {
+    return buffer!;
+  }
+  // Unbounded duration — memo length lags the growing capture timeline.
+  return getMetronomeGridBufferRange(
+    scrollX,
+    viewportWidth,
+    pixelsPerSecond,
+    Number.POSITIVE_INFINITY,
+    bufferViewports
+  );
+}
+
 /** True when first layout/duration catch-up must reseed (not every recording tick). */
 export function shouldReseedPlaybackViewport(
   buffer: MetronomeGridBuffer | null,

@@ -10,6 +10,7 @@ import {
   METRONOME_GRID_BUFFER_VIEWPORTS,
   METRONOME_GRID_PLAYBACK_BUFFER_VIEWPORTS,
   resolvePlaybackBarPaintRange,
+  resolveRecordingBarPaintRange,
   shouldReseedPlaybackViewport,
 } from './metronomeGridViewport';
 import { getVisibleMarkerSeconds } from './waveformViewport';
@@ -181,4 +182,30 @@ test('shouldReseedPlaybackViewport is false when width is 0 or duration is 0', (
 test('shouldReseedPlaybackViewport is false for a valid buffer and stable duration', () => {
   const buffer = getMetronomeGridBufferRange(0, VIEWPORT, PPS, 45);
   assert.equal(shouldReseedPlaybackViewport(buffer, VIEWPORT, PPS, 45, 45), false);
+});
+
+test('resolveRecordingBarPaintRange seeds a wide buffer from null', () => {
+  const scrollX = 10 * PPS;
+  const seeded = resolveRecordingBarPaintRange(null, scrollX, VIEWPORT, PPS);
+  const tight = getFollowBarPaintTimeRange(scrollX, VIEWPORT, PPS);
+  assert.ok(seeded.start <= tight.start);
+  assert.ok(seeded.end >= tight.end);
+});
+
+test('resolveRecordingBarPaintRange reuses buffer while playhead stays inside margin', () => {
+  const startScrollX = 10 * PPS;
+  const buffer = resolveRecordingBarPaintRange(null, startScrollX, VIEWPORT, PPS);
+  // Small advance — still well inside a 3-viewport playback buffer.
+  const near = resolveRecordingBarPaintRange(buffer, startScrollX + 20, VIEWPORT, PPS);
+  assert.equal(near, buffer);
+});
+
+test('resolveRecordingBarPaintRange reseeds when playhead nears the buffer edge', () => {
+  const startScrollX = 10 * PPS;
+  const buffer = resolveRecordingBarPaintRange(null, startScrollX, VIEWPORT, PPS);
+  // Jump far ahead so the visible window exits the validity margin.
+  const farScrollX = startScrollX + VIEWPORT * 4;
+  const next = resolveRecordingBarPaintRange(buffer, farScrollX, VIEWPORT, PPS);
+  assert.notEqual(next, buffer);
+  assert.ok(next.end > buffer.end);
 });

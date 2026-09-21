@@ -90,6 +90,7 @@ import {
   METRONOME_GRID_PLAYBACK_BUFFER_VIEWPORTS,
   MetronomeTrackGrid,
   resolvePlaybackBarPaintRange,
+  resolveRecordingBarPaintRange,
   shouldReseedPlaybackViewport,
   type MetronomeGridBuffer,
 } from '@/src/components/MetronomeGridOverlay';
@@ -1343,7 +1344,19 @@ function areTrackWaveformRowPropsEqual(
     (prev.visibleTimeStart !== next.visibleTimeStart ||
       prev.visibleTimeEnd !== next.visibleTimeEnd)
   ) {
-    return false;
+    const prevIdleSibling =
+      prev.track.id !== '__recording__' && !prev.track.liveRecording;
+    const nextIdleSibling =
+      next.track.id !== '__recording__' && !next.track.liveRecording;
+    // Idle stack siblings: keep memo hit when the new paint window is still
+    // covered by the previous buffered range (recording paint buffer advances
+    // only on invalidation; avoid remounting on any residual churn).
+    const newRangeCoveredByPrev =
+      next.visibleTimeStart >= prev.visibleTimeStart &&
+      next.visibleTimeEnd <= prev.visibleTimeEnd;
+    if (!(prevIdleSibling && nextIdleSibling && newRangeCoveredByPrev)) {
+      return false;
+    }
   }
   // contentWidth/bandWidth grow with layout headroom; ignore when bar counts are unchanged.
   if (prev.contentWidth !== next.contentWidth || prev.bandWidth !== next.bandWidth) {
@@ -2510,6 +2523,8 @@ function WaveformViewComponent({
     end: 0,
   });
   const viewportTimeBufferRef = useRef<MetronomeGridBuffer | null>(null);
+  /** Stable bar-paint window during capture — avoids remounting sibling SVGs every peak. */
+  const recordingBarPaintBufferRef = useRef<MetronomeGridBuffer | null>(null);
 
   const [metronomeGridLines, setMetronomeGridLines] = useState<MetronomeGridLine[]>([]);
   const metronomeGridBufferRef = useRef<MetronomeGridBuffer | null>(null);
@@ -2847,6 +2862,7 @@ function WaveformViewComponent({
       prevPlaybackDurationRef.current = duration;
       return;
     }
+    recordingBarPaintBufferRef.current = null;
     const previousDuration = prevPlaybackDurationRef.current;
     prevPlaybackDurationRef.current = duration;
     if (
@@ -2866,6 +2882,7 @@ function WaveformViewComponent({
   useLayoutEffect(() => {
     const wasFollowing = prevFollowRecordingScrollRef.current;
     if (followRecordingScroll && !wasFollowing) {
+      recordingBarPaintBufferRef.current = null;
       const bounds = zoomBoundsRef.current;
       // Clamp first, then cap at capture density. Cap-after-clamp so an inflated
       // bounds.min cannot re-raise pps above WAVEFORM_PIXELS_PER_SECOND (live
@@ -3858,37 +3875,51 @@ function WaveformViewComponent({
     setFollowLayoutDuration(0);
   }, [followRecordingScroll]);
 
-  // During capture or playback follow, paint the visible viewport plus a small
-  // overscan so virtualization edges stay off-screen between React refreshes.
+  // During capture, keep a buffered paint window so sibling tracks are not
+  // remounted on every live-peak tick. Playback follow stays tight per-frame.
   // Idle/scrub keep the larger buffered overscan.
-  const barPaintTimeRange =
-    (isRecording || isPlaying) && viewportWidth > 0 && layoutPixelsPerSecond > 0
-      ? getFollowBarPaintTimeRange(
-          Math.max(
-            0,
-            isRecording
-              ? (getRecordingTimeRef.current?.() ?? currentTime) *
-                  layoutPixelsPerSecond
-              : scrollOffsetRef.current
-          ),
-          viewportWidth,
-          layoutPixelsPerSecond
-        )
-      : isUserScrolling && viewportWidth > 0 && layoutPixelsPerSecond > 0
-        ? getMetronomeGridBufferRange(
-            userScrollX,
-            viewportWidth,
-            layoutPixelsPerSecond,
-            Math.max(duration, layoutDuration),
-            METRONOME_GRID_BUFFER_VIEWPORTS
-          )
-        : resolvePlaybackBarPaintRange(
-            viewportTimeBuffer,
-            scrollX,
-            viewportWidth,
-            layoutPixelsPerSecond,
-            Math.max(duration, layoutDuration)
-          );
+  const barPaintTimeRange = (() => {
+    if (viewportWidth <= 0 || layoutPixelsPerSecond <= 0) {
+      return { start: 0, end: 0 };
+    }
+    if (isRecording) {
+      const recordingScrollX = Math.max(
+        0,
+        (getRecordingTimeRef.current?.() ?? currentTime) * layoutPixelsPerSecond
+      );
+      const next = resolveRecordingBarPaintRange(
+        recordingBarPaintBufferRef.current,
+        recordingScrollX,
+        viewportWidth,
+        layoutPixelsPerSecond
+      );
+      recordingBarPaintBufferRef.current = next;
+      return next;
+    }
+    if (isPlaying) {
+      return getFollowBarPaintTimeRange(
+        Math.max(0, scrollOffsetRef.current),
+        viewportWidth,
+        layoutPixelsPerSecond
+      );
+    }
+    if (isUserScrolling) {
+      return getMetronomeGridBufferRange(
+        userScrollX,
+        viewportWidth,
+        layoutPixelsPerSecond,
+        Math.max(duration, layoutDuration),
+        METRONOME_GRID_BUFFER_VIEWPORTS
+      );
+    }
+    return resolvePlaybackBarPaintRange(
+      viewportTimeBuffer,
+      scrollX,
+      viewportWidth,
+      layoutPixelsPerSecond,
+      Math.max(duration, layoutDuration)
+    );
+  })();
 
   const zoomMultipliers = getTimelineZoomDisplayMultipliers(
     layoutPixelsPerSecond,
