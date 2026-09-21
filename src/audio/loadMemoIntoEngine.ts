@@ -42,7 +42,8 @@ async function performLoadMemoIntoEngine(
     duration,
     memo.loopStart ?? 0,
     memo.loopEnd ?? 0,
-    memo.loopEnabled ?? false
+    memo.loopEnabled ?? false,
+    seekTime
   );
   if (seekTime !== undefined) {
     engine.seek(seekTime);

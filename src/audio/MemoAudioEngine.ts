@@ -881,7 +881,8 @@ export class MemoAudioEngine {
               duration,
               pending.memo.loopStart ?? 0,
               pending.memo.loopEnd ?? 0,
-              pending.memo.loopEnabled ?? false
+              pending.memo.loopEnabled ?? false,
+              pending.seekTime
             );
             if (pending.seekTime !== undefined) {
               this.seek(pending.seekTime);
@@ -3461,7 +3462,8 @@ export class MemoAudioEngine {
     timelineDuration: number,
     loopStart = 0,
     loopEnd = 0,
-    loopEnabled = false
+    loopEnabled = false,
+    initialTime?: number
   ): Promise<void> {
     void endMemoLiveActivity();
     this.cancelPlaybackWarm();
@@ -3486,6 +3488,13 @@ export class MemoAudioEngine {
     const trimEndResolved = trimEnd > 0
       ? Math.min(trimEnd, timelineDuration)
       : timelineDuration;
+    // Prefer caller seek target so stack/replace reload does not flash trimStart (0)
+    // during the await ensureContext() gap before a follow-up seek.
+    const playheadMax = trimEndResolved || timelineDuration;
+    const playhead =
+      initialTime !== undefined && Number.isFinite(initialTime)
+        ? Math.max(trimStart, Math.min(initialTime, playheadMax))
+        : trimStart;
 
     this.emit({
       memoId,
@@ -3496,7 +3505,7 @@ export class MemoAudioEngine {
       loopStart,
       loopEnd,
       loopEnabled,
-      currentTime: trimStart,
+      currentTime: playhead,
       isPlaying: false,
     });
 
