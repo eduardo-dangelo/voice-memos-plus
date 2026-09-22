@@ -168,6 +168,19 @@ describe('buildExportableManifest', () => {
     assert.equal(exported.accordionAutoEnablePromptSeen, true);
   });
 
+  it('includes memo tip hide flags when set', () => {
+    const exported = buildExportableManifest(
+      makeMemo({
+        hidePerformanceWarning: true,
+        hideMergeLayersPerformanceTip: true,
+        hideCollapseTracksPerformanceTip: true,
+      })
+    );
+    assert.equal(exported.hidePerformanceWarning, true);
+    assert.equal(exported.hideMergeLayersPerformanceTip, true);
+    assert.equal(exported.hideCollapseTracksPerformanceTip, true);
+  });
+
   it('omits trackAccordionEnabled when disabled on the memo', () => {
     const exported = buildExportableManifest(makeMemo({ trackAccordionEnabled: false }));
     assert.equal(exported.trackAccordionEnabled, undefined);
@@ -268,6 +281,22 @@ describe('remapImportedMemo', () => {
       { newMemoId: 'memo-accordion', now: '2026-08-01T15:00:00.000Z' }
     );
     assert.equal(remapped.trackAccordionEnabled, true);
+  });
+
+  it('preserves tip hide flags on import', () => {
+    const remapped = remapImportedMemo(
+      buildExportableManifest(
+        makeMemo({
+          hidePerformanceWarning: true,
+          hideMergeLayersPerformanceTip: true,
+          hideCollapseTracksPerformanceTip: true,
+        })
+      ),
+      { newMemoId: 'memo-tips', now: '2026-08-01T15:00:00.000Z' }
+    );
+    assert.equal(remapped.hidePerformanceWarning, true);
+    assert.equal(remapped.hideMergeLayersPerformanceTip, true);
+    assert.equal(remapped.hideCollapseTracksPerformanceTip, true);
   });
 });
 

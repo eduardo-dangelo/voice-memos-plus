@@ -460,6 +460,39 @@ export async function markAccordionAutoEnablePromptSeen(memoId: string): Promise
   return memo;
 }
 
+/** Persist tip don't-show-again without bumping updatedAt (library order). */
+async function setMemoTipHideFlag(
+  memoId: string,
+  flag:
+    | 'hidePerformanceWarning'
+    | 'hideMergeLayersPerformanceTip'
+    | 'hideCollapseTracksPerformanceTip'
+): Promise<Memo> {
+  const memo = await getMemo(memoId);
+  if (!memo) {
+    throw new Error('Memo not found');
+  }
+  memo[flag] = true;
+  writeManifest(memo);
+  return memo;
+}
+
+export async function setMemoHidePerformanceWarning(memoId: string): Promise<Memo> {
+  return setMemoTipHideFlag(memoId, 'hidePerformanceWarning');
+}
+
+export async function setMemoHideMergeLayersPerformanceTip(
+  memoId: string
+): Promise<Memo> {
+  return setMemoTipHideFlag(memoId, 'hideMergeLayersPerformanceTip');
+}
+
+export async function setMemoHideCollapseTracksPerformanceTip(
+  memoId: string
+): Promise<Memo> {
+  return setMemoTipHideFlag(memoId, 'hideCollapseTracksPerformanceTip');
+}
+
 export async function updateTrackAccordionEnabled(
   memoId: string,
   enabled: boolean
@@ -1299,6 +1332,10 @@ export async function duplicateMemo(memoId: string): Promise<Memo> {
     updatedAt: new Date().toISOString(),
     deletedAt: undefined,
   };
+  // Fresh copy should offer tips again even if the source muted them.
+  delete updated.hidePerformanceWarning;
+  delete updated.hideMergeLayersPerformanceTip;
+  delete updated.hideCollapseTracksPerformanceTip;
   writeManifest(updated);
   return updated;
 }

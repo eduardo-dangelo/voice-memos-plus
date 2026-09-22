@@ -246,6 +246,12 @@ export type Memo = {
   accordionAutoEnablePromptSeen?: boolean;
   /** When true, unselected playable tracks collapse to header height. Default: off. */
   trackAccordionEnabled?: boolean;
+  /** User chose don't-show-again on the performance warning for this memo. */
+  hidePerformanceWarning?: boolean;
+  /** User chose don't-show-again on the merge-layers tip for this memo. */
+  hideMergeLayersPerformanceTip?: boolean;
+  /** User chose don't-show-again on the collapse-tracks tip for this memo. */
+  hideCollapseTracksPerformanceTip?: boolean;
   layers: Layer[];
 };
 

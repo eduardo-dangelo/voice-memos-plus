@@ -8,8 +8,9 @@ import {
   hasCollapsedUnselectedTracks,
   maybeShowPerformanceWarning,
   resetPerformanceWarningState,
-  shouldShowCollapseTracksTipAfterMergeAck,
-  shouldShowMergeLayersTipAfterPerformanceAck,
+  resolvePerformanceRelatedTips,
+  shouldShowCollapseTracksTip,
+  shouldShowMergeLayersTip,
 } from '@/src/audio/performanceWarning';
 import type { Memo } from '@/src/storage/types';
 
@@ -69,16 +70,21 @@ test('maybeShowPerformanceWarning shows again after dropping below layer thresho
   assert.ok(maybeShowPerformanceWarning(heavy).message);
 });
 
-test('shouldShowMergeLayersTipAfterPerformanceAck requires mergeable layers', () => {
-  assert.equal(shouldShowMergeLayersTipAfterPerformanceAck(null, false), false);
-  assert.equal(shouldShowMergeLayersTipAfterPerformanceAck(makeMemo(1), false), false);
+test('maybeShowPerformanceWarning is suppressed when memo hid the warning', () => {
+  resetPerformanceWarningState();
+  const heavy = makeMemo(PERFORMANCE_LAYER_WARN_COUNT, {
+    hidePerformanceWarning: true,
+  });
+  assert.equal(maybeShowPerformanceWarning(heavy).message, null);
+});
+
+test('shouldShowMergeLayersTip requires mergeable layers', () => {
+  assert.equal(shouldShowMergeLayersTip(null, false), false);
+  assert.equal(shouldShowMergeLayersTip(makeMemo(1), false), false);
+  assert.equal(shouldShowMergeLayersTip(makeMemo(2), false), true);
+  assert.equal(shouldShowMergeLayersTip(makeMemo(2), true), false);
   assert.equal(
-    shouldShowMergeLayersTipAfterPerformanceAck(makeMemo(2), false, { hideTip: false }),
-    true
-  );
-  assert.equal(shouldShowMergeLayersTipAfterPerformanceAck(makeMemo(2), true), false);
-  assert.equal(
-    shouldShowMergeLayersTipAfterPerformanceAck(makeMemo(2), false, { hideTip: true }),
+    shouldShowMergeLayersTip(makeMemo(2, { hideMergeLayersPerformanceTip: true }), false),
     false
   );
 });
@@ -100,52 +106,116 @@ test('hasCollapsedUnselectedTracks is true when a non-active playable layer is c
   );
 });
 
-test('shouldShowCollapseTracksTipAfterMergeAck skips when unselected tracks already collapsed', () => {
+test('shouldShowCollapseTracksTip skips when unselected tracks already collapsed', () => {
   const memo = makeMemo(2);
   assert.equal(
-    shouldShowCollapseTracksTipAfterMergeAck(memo, false, {
+    shouldShowCollapseTracksTip(memo, false, {
       activeLayerId: 'layer-0',
       collapsedLayerIds: new Set(),
-      hideTip: false,
     }),
     true
   );
   assert.equal(
-    shouldShowCollapseTracksTipAfterMergeAck(memo, false, {
+    shouldShowCollapseTracksTip(memo, false, {
       activeLayerId: 'layer-0',
       collapsedLayerIds: new Set(['layer-1']),
-      hideTip: false,
     }),
     false
   );
   assert.equal(
-    shouldShowCollapseTracksTipAfterMergeAck(
+    shouldShowCollapseTracksTip(
       makeMemo(2, { trackAccordionEnabled: true }),
       false,
       {
         activeLayerId: 'layer-0',
         collapsedLayerIds: new Set(),
-        hideTip: false,
       }
     ),
     false
   );
   assert.equal(
-    shouldShowCollapseTracksTipAfterMergeAck(memo, true, {
+    shouldShowCollapseTracksTip(memo, true, {
       activeLayerId: 'layer-0',
       collapsedLayerIds: new Set(),
-      hideTip: false,
     }),
     false
   );
   assert.equal(
-    shouldShowCollapseTracksTipAfterMergeAck(memo, false, {
-      activeLayerId: 'layer-0',
-      collapsedLayerIds: new Set(),
-      hideTip: true,
-    }),
+    shouldShowCollapseTracksTip(
+      makeMemo(2, { hideCollapseTracksPerformanceTip: true }),
+      false,
+      {
+        activeLayerId: 'layer-0',
+        collapsedLayerIds: new Set(),
+      }
+    ),
     false
   );
+});
+
+test('resolvePerformanceRelatedTips prefers performance then merge then collapse', () => {
+  resetPerformanceWarningState();
+  const heavy = makeMemo(PERFORMANCE_LAYER_WARN_COUNT);
+  const first = resolvePerformanceRelatedTips({
+    memo: heavy,
+    isRecording: false,
+    activeLayerId: 'layer-0',
+    collapsedLayerIds: new Set(),
+  });
+  assert.equal(first.kind, 'performance');
+
+  const second = resolvePerformanceRelatedTips({
+    memo: heavy,
+    isRecording: false,
+    activeLayerId: 'layer-0',
+    collapsedLayerIds: new Set(),
+  });
+  assert.equal(second.kind, 'merge');
+
+  const third = resolvePerformanceRelatedTips({
+    memo: heavy,
+    isRecording: false,
+    activeLayerId: 'layer-0',
+    collapsedLayerIds: new Set(),
+  });
+  assert.equal(third.kind, 'collapse');
+
+  const fourth = resolvePerformanceRelatedTips({
+    memo: heavy,
+    isRecording: false,
+    activeLayerId: 'layer-0',
+    collapsedLayerIds: new Set(),
+  });
+  assert.equal(fourth.kind, null);
+});
+
+test('resolvePerformanceRelatedTips shows merge when performance is hidden', () => {
+  resetPerformanceWarningState();
+  const memo = makeMemo(PERFORMANCE_LAYER_WARN_COUNT, {
+    hidePerformanceWarning: true,
+  });
+  const result = resolvePerformanceRelatedTips({
+    memo,
+    isRecording: false,
+    activeLayerId: 'layer-0',
+    collapsedLayerIds: new Set(),
+  });
+  assert.equal(result.kind, 'merge');
+});
+
+test('resolvePerformanceRelatedTips shows collapse when merge is hidden', () => {
+  resetPerformanceWarningState();
+  const memo = makeMemo(2, {
+    hidePerformanceWarning: true,
+    hideMergeLayersPerformanceTip: true,
+  });
+  const result = resolvePerformanceRelatedTips({
+    memo,
+    isRecording: false,
+    activeLayerId: 'layer-0',
+    collapsedLayerIds: new Set(),
+  });
+  assert.equal(result.kind, 'collapse');
 });
 
 test('MERGE_LAYERS_PERFORMANCE_TIP_MESSAGE mentions merge and file size', () => {

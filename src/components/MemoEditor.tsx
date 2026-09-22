@@ -65,10 +65,9 @@ import { estimateMemoNodeCount, estimateMemoPcmMb } from '@/src/audio/performanc
 import {
   COLLAPSE_TRACKS_PERFORMANCE_TIP_MESSAGE,
   MERGE_LAYERS_PERFORMANCE_TIP_MESSAGE,
-  maybeShowPerformanceWarning,
   resetPerformanceWarningState,
-  shouldShowCollapseTracksTipAfterMergeAck,
-  shouldShowMergeLayersTipAfterPerformanceAck,
+  resolvePerformanceRelatedTips,
+  type ResolveEditorTipsResult,
 } from '@/src/audio/performanceWarning';
 import {
   computePostPrecountContextWhen,
@@ -102,7 +101,10 @@ import { NamePromptDialog } from '@/src/components/NamePromptDialog';
 import { PlaybackControls } from '@/src/components/PlaybackControls';
 import { PrecountButton } from '@/src/components/PrecountButton';
 import { PrecountOverlay } from '@/src/components/PrecountOverlay';
-import { RecordingPromptDialog } from '@/src/components/RecordingPromptDialog';
+import {
+  RecordingPromptDialog,
+  type RecordingPromptDismissOptions,
+} from '@/src/components/RecordingPromptDialog';
 import { TimeSeekDialog } from '@/src/components/TimeSeekDialog';
 import { TrackEditorShell } from '@/src/components/track-editor/TrackEditorShell';
 import type { FadeRegionState } from '@/src/components/track-editor/TrackFadeOverlay';
@@ -115,12 +117,6 @@ import {
   type TrackData,
 } from '@/src/components/WaveformView';
 import { applyLocationTitleIfEnabled } from '@/src/location/locationNaming';
-import {
-  setHideCollapseTracksPerformanceTip,
-  setHideMergeLayersPerformanceTip,
-  getHideCollapseTracksPerformanceTipSync,
-  getHideMergeLayersPerformanceTipSync,
-} from '@/src/settings/appSettings';
 import {
   awaitSaveInFlight,
   beginSession,
@@ -159,6 +155,9 @@ import {
   mergeLayers,
   permanentlyDeleteMemo,
   scheduleWaveformPeaksRegen,
+  setMemoHideCollapseTracksPerformanceTip,
+  setMemoHideMergeLayersPerformanceTip,
+  setMemoHidePerformanceWarning,
   updateLayerColor,
   updateLayerEffects,
   updateLayerLabel,
@@ -3035,76 +3034,150 @@ function MemoEditorInner({
         .join('\n')
     : '';
 
+  const applyEditorTipResult = useCallback((result: ResolveEditorTipsResult) => {
+    setPerformanceWarningMessage(
+      result.kind === 'performance' ? result.message : null
+    );
+    setMergeLayersTipVisible(result.kind === 'merge');
+    setCollapseTracksTipVisible(result.kind === 'collapse');
+  }, []);
+
   useEffect(() => {
-    if (!memo || !hasRecording(memo)) {
+    const current = memoRef.current;
+    if (!current || !hasRecording(current)) {
       setPerformanceWarningMessage(null);
       setMergeLayersTipVisible(false);
       setCollapseTracksTipVisible(false);
       return;
     }
-    if (!canMergeLayers(memo.layers)) {
-      setMergeLayersTipVisible(false);
-      setCollapseTracksTipVisible(false);
+    // A tip is already up — don't replace it when unrelated deps change.
+    if (
+      performanceWarningMessage != null ||
+      mergeLayersTipVisible ||
+      collapseTracksTipVisible
+    ) {
+      return;
     }
-    const result = maybeShowPerformanceWarning(memo);
-    if (result.message) {
-      setPerformanceWarningMessage(result.message);
-      setMergeLayersTipVisible(false);
-      setCollapseTracksTipVisible(false);
-    } else {
-      setPerformanceWarningMessage(null);
-    }
+    applyEditorTipResult(
+      resolvePerformanceRelatedTips({
+        memo: current,
+        isRecording: engineState.isRecording,
+        activeLayerId,
+        collapsedLayerIds,
+      })
+    );
   }, [
+    applyEditorTipResult,
     memo?.id,
+    memo?.hidePerformanceWarning,
+    memo?.hideMergeLayersPerformanceTip,
+    memo?.hideCollapseTracksPerformanceTip,
+    memo?.trackAccordionEnabled,
     performanceWarningLayerCount,
     performanceWarningNodeCount,
     performanceWarningPcmMb,
+    engineState.isRecording,
+    activeLayerId,
+    collapsedLayerIds,
+    performanceWarningMessage,
+    mergeLayersTipVisible,
+    collapseTracksTipVisible,
   ]);
 
-  const acknowledgePerformanceWarning = useCallback(() => {
-    setPerformanceWarningMessage(null);
-    if (
-      shouldShowMergeLayersTipAfterPerformanceAck(
-        memoRef.current ?? memo,
-        engineState.isRecording,
-        { hideTip: getHideMergeLayersPerformanceTipSync() }
-      )
-    ) {
-      setMergeLayersTipVisible(true);
-    }
-  }, [engineState.isRecording, memo]);
+  const acknowledgePerformanceWarning = useCallback(
+    (options?: RecordingPromptDismissOptions) => {
+      const current = memoRef.current ?? memo;
+      if (options?.dontShowAgain && current) {
+        const nextMemo = { ...current, hidePerformanceWarning: true };
+        memoRef.current = nextMemo;
+        setMemo(nextMemo);
+        void setMemoHidePerformanceWarning(current.id);
+      }
+      const tipMemo = memoRef.current ?? memo;
+      if (!tipMemo) {
+        setPerformanceWarningMessage(null);
+        return;
+      }
+      applyEditorTipResult(
+        resolvePerformanceRelatedTips({
+          memo: tipMemo,
+          isRecording: engineState.isRecording,
+          activeLayerId,
+          collapsedLayerIds,
+        })
+      );
+    },
+    [
+      activeLayerId,
+      applyEditorTipResult,
+      collapsedLayerIds,
+      engineState.isRecording,
+      memo,
+    ]
+  );
 
   const acknowledgeMergeLayersTip = useCallback(
-    (options?: { dontShowAgain?: boolean }) => {
-      if (options?.dontShowAgain) {
-        void setHideMergeLayersPerformanceTip(true);
+    (options?: RecordingPromptDismissOptions) => {
+      const current = memoRef.current ?? memo;
+      if (options?.dontShowAgain && current) {
+        const nextMemo = { ...current, hideMergeLayersPerformanceTip: true };
+        memoRef.current = nextMemo;
+        setMemo(nextMemo);
+        void setMemoHideMergeLayersPerformanceTip(current.id);
       }
-      setMergeLayersTipVisible(false);
-      if (
-        shouldShowCollapseTracksTipAfterMergeAck(
-          memoRef.current ?? memo,
-          engineState.isRecording,
-          {
-            activeLayerId,
-            collapsedLayerIds,
-            hideTip: getHideCollapseTracksPerformanceTipSync(),
-          }
-        )
-      ) {
-        setCollapseTracksTipVisible(true);
+      const tipMemo = memoRef.current ?? memo;
+      if (!tipMemo) {
+        setMergeLayersTipVisible(false);
+        return;
       }
+      applyEditorTipResult(
+        resolvePerformanceRelatedTips({
+          memo: tipMemo,
+          isRecording: engineState.isRecording,
+          activeLayerId,
+          collapsedLayerIds,
+        })
+      );
     },
-    [activeLayerId, collapsedLayerIds, engineState.isRecording, memo]
+    [
+      activeLayerId,
+      applyEditorTipResult,
+      collapsedLayerIds,
+      engineState.isRecording,
+      memo,
+    ]
   );
 
   const acknowledgeCollapseTracksTip = useCallback(
-    (options?: { dontShowAgain?: boolean }) => {
-      if (options?.dontShowAgain) {
-        void setHideCollapseTracksPerformanceTip(true);
+    (options?: RecordingPromptDismissOptions) => {
+      const current = memoRef.current ?? memo;
+      if (options?.dontShowAgain && current) {
+        const nextMemo = { ...current, hideCollapseTracksPerformanceTip: true };
+        memoRef.current = nextMemo;
+        setMemo(nextMemo);
+        void setMemoHideCollapseTracksPerformanceTip(current.id);
       }
-      setCollapseTracksTipVisible(false);
+      const tipMemo = memoRef.current ?? memo;
+      if (!tipMemo) {
+        setCollapseTracksTipVisible(false);
+        return;
+      }
+      applyEditorTipResult(
+        resolvePerformanceRelatedTips({
+          memo: tipMemo,
+          isRecording: engineState.isRecording,
+          activeLayerId,
+          collapsedLayerIds,
+        })
+      );
     },
-    []
+    [
+      activeLayerId,
+      applyEditorTipResult,
+      collapsedLayerIds,
+      engineState.isRecording,
+      memo,
+    ]
   );
 
   useEffect(() => {
@@ -5592,6 +5665,7 @@ function MemoEditorInner({
         heroIcon="gauge.with.dots.needle.33percent"
         message={performanceWarningMessage ?? ''}
         actions="continue"
+        showDontShowAgain
         onDismiss={acknowledgePerformanceWarning}
         onContinue={acknowledgePerformanceWarning}
       />

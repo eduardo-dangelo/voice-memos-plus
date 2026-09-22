@@ -100,7 +100,10 @@ export function RecordingPromptDialog({
               accessibilityState={{ checked: dontShowAgain }}
               hitSlop={8}
               style={styles.dontShowRow}
-              onPress={() => setDontShowAgain((current) => !current)}>
+              onPress={(event) => {
+                event.stopPropagation();
+                setDontShowAgain((current) => !current);
+              }}>
               <SymbolView
                 name={{
                   ios: (dontShowAgain ? 'checkmark.circle.fill' : 'circle') as SFSymbol,
@@ -163,12 +166,14 @@ function DialogCard({
   children: ReactNode;
 }) {
   return (
-    <Pressable style={styles.cardPressable} onPress={() => {}}>
+    <Pressable
+      style={styles.cardPressable}
+      onPress={(event) => event.stopPropagation()}>
       {useGlass ? (
         <GlassView
           colorScheme={colorScheme === 'dark' ? 'dark' : 'light'}
           glassEffectStyle="regular"
-          isInteractive
+          isInteractive={false}
           style={styles.cardGlass}>
           {children}
         </GlassView>

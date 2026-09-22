@@ -116,6 +116,15 @@ export function buildExportableManifest(memo: Memo): Memo {
   if (memo.trackAccordionEnabled === true) {
     exported.trackAccordionEnabled = true;
   }
+  if (memo.hidePerformanceWarning === true) {
+    exported.hidePerformanceWarning = true;
+  }
+  if (memo.hideMergeLayersPerformanceTip === true) {
+    exported.hideMergeLayersPerformanceTip = true;
+  }
+  if (memo.hideCollapseTracksPerformanceTip === true) {
+    exported.hideCollapseTracksPerformanceTip = true;
+  }
 
   return exported;
 }
@@ -218,6 +227,15 @@ export function remapImportedMemo(
   }
   if (packaged.trackAccordionEnabled === true) {
     memo.trackAccordionEnabled = true;
+  }
+  if (packaged.hidePerformanceWarning === true) {
+    memo.hidePerformanceWarning = true;
+  }
+  if (packaged.hideMergeLayersPerformanceTip === true) {
+    memo.hideMergeLayersPerformanceTip = true;
+  }
+  if (packaged.hideCollapseTracksPerformanceTip === true) {
+    memo.hideCollapseTracksPerformanceTip = true;
   }
   if (options.folderId) {
     memo.folderId = options.folderId;
