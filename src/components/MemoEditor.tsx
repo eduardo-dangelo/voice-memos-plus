@@ -1102,6 +1102,10 @@ function MemoEditorInner({
           const updated = await updateLayerStartTimes(persistMemo.id, startTimes);
           memoRef.current = updated;
           setMemo(updated);
+          // Harden: ensure engine duration matches persisted timeline after draft
+          // confirm (covers any missed mid-drag updateTimelineDuration).
+          engine.updateLayerStartTimes(startTimes);
+          engine.updateTimelineDuration(updated.duration, updated.trimEnd);
           if (nextKeepTool) {
             beginEditDraft(snapshot.tool);
           } else {
@@ -1144,7 +1148,7 @@ function MemoEditorInner({
         confirmInFlightRef.current = null;
       }
     },
-    [beginEditDraft, cancelEditDraft, clearDraftPersistTimers]
+    [beginEditDraft, cancelEditDraft, clearDraftPersistTimers, engine]
   );
 
   confirmEditDraftRef.current = confirmEditDraft;
@@ -1316,100 +1320,78 @@ function MemoEditorInner({
         return;
       }
 
-      const draftGeneration = editDraftRef.current?.generation;
-      const isDraftMove = editDraftRef.current?.tool === 'move';
-      let appliedStartTimes: Record<string, number> | null = null;
-      let timeline: number | null = null;
-      let nextTrimEnd: number | null = null;
-      let memoId: string | null = null;
-      let applied = false;
-
-      setMemo((prev) => {
-        if (!prev) {
-          return prev;
-        }
-
-        if (isDraftMove && !isDraftGenerationCurrent(draftGeneration)) {
-          return prev;
-        }
-
-        const nextStartTimes: Record<string, number> = {};
-        const nextLayers = prev.layers.map((entry) => {
-          if (!(entry.id in updates)) {
-            return entry;
-          }
-          if (isLayerLocked(getLayerEffects(entry))) {
-            return entry;
-          }
-          const trimIn = getLayerEffects(entry).trimIn;
-          const clampedStartTime = clampLayerStartTime(updates[entry.id]!, trimIn);
-          const startDelta = clampedStartTime - entry.startTime;
-          nextStartTimes[entry.id] = clampedStartTime;
-          const next: Layer = { ...entry, startTime: clampedStartTime };
-          if (entry.loopUntil != null && Number.isFinite(entry.loopUntil) && startDelta !== 0) {
-            next.loopUntil = entry.loopUntil + startDelta;
-          }
-          return next;
-        });
-
-        if (Object.keys(nextStartTimes).length === 0) {
-          return prev;
-        }
-
-        const previousDuration = prev.duration;
-        const nextTimeline = getMemoTimelineDuration({ ...prev, layers: nextLayers });
-        let trimEnd = prev.trimEnd;
-        if (nextTimeline <= 0) {
-          trimEnd = 0;
-        } else if (trimEnd === 0) {
-          trimEnd = nextTimeline;
-        } else if (trimEnd > nextTimeline) {
-          trimEnd = nextTimeline;
-        } else {
-          const trimWasAtPreviousEnd = prev.trimEnd >= previousDuration - 0.05;
-          if (nextTimeline > previousDuration && trimWasAtPreviousEnd) {
-            trimEnd = nextTimeline;
-          }
-        }
-
-        applied = true;
-        appliedStartTimes = nextStartTimes;
-        timeline = nextTimeline;
-        nextTrimEnd = trimEnd;
-        memoId = prev.id;
-
-        return {
-          ...prev,
-          layers: nextLayers,
-          duration: nextTimeline,
-          trimEnd,
-        };
-      });
-
-      if (
-        !applied ||
-        appliedStartTimes === null ||
-        timeline === null ||
-        nextTrimEnd === null ||
-        !memoId
-      ) {
+      // Compute from memoRef — React 19 may defer setState updaters, so side effects
+      // must not depend on the updater running synchronously (stale engine duration
+      // would crop tracks until play/reload).
+      const prev = memoRef.current;
+      if (!prev) {
         return;
       }
 
+      const draftGeneration = editDraftRef.current?.generation;
+      const isDraftMove = editDraftRef.current?.tool === 'move';
       if (isDraftMove && !isDraftGenerationCurrent(draftGeneration)) {
         return;
       }
 
-      engine.updateLayerStartTimes(appliedStartTimes);
-      engine.updateTimelineDuration(timeline, nextTrimEnd);
+      const nextStartTimes: Record<string, number> = {};
+      const nextLayers = prev.layers.map((entry) => {
+        if (!(entry.id in updates)) {
+          return entry;
+        }
+        if (isLayerLocked(getLayerEffects(entry))) {
+          return entry;
+        }
+        const trimIn = getLayerEffects(entry).trimIn;
+        const clampedStartTime = clampLayerStartTime(updates[entry.id]!, trimIn);
+        const startDelta = clampedStartTime - entry.startTime;
+        nextStartTimes[entry.id] = clampedStartTime;
+        const next: Layer = { ...entry, startTime: clampedStartTime };
+        if (entry.loopUntil != null && Number.isFinite(entry.loopUntil) && startDelta !== 0) {
+          next.loopUntil = entry.loopUntil + startDelta;
+        }
+        return next;
+      });
+
+      if (Object.keys(nextStartTimes).length === 0) {
+        return;
+      }
+
+      const previousDuration = prev.duration;
+      const nextTimeline = getMemoTimelineDuration({ ...prev, layers: nextLayers });
+      let trimEnd = prev.trimEnd;
+      if (nextTimeline <= 0) {
+        trimEnd = 0;
+      } else if (trimEnd === 0) {
+        trimEnd = nextTimeline;
+      } else if (trimEnd > nextTimeline) {
+        trimEnd = nextTimeline;
+      } else {
+        const trimWasAtPreviousEnd = prev.trimEnd >= previousDuration - 0.05;
+        if (nextTimeline > previousDuration && trimWasAtPreviousEnd) {
+          trimEnd = nextTimeline;
+        }
+      }
+
+      const nextMemo = {
+        ...prev,
+        layers: nextLayers,
+        duration: nextTimeline,
+        trimEnd,
+      };
+      memoRef.current = nextMemo;
+      setMemo(nextMemo);
+
+      engine.updateLayerStartTimes(nextStartTimes);
+      engine.updateTimelineDuration(nextTimeline, trimEnd);
 
       if (isDraftMove) {
         return;
       }
 
       pendingStartTimePersist.current = {
-        memoId,
-        startTimes: appliedStartTimes,
+        memoId: prev.id,
+        startTimes: nextStartTimes,
       };
 
       if (persistStartTimeTimeout.current) {

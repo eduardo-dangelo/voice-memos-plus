@@ -11,6 +11,7 @@ import type { VoiceMemosColorScheme } from '@/constants/VoiceMemosColors';
 import { AudioEngineProvider } from '@/src/audio/AudioEngineContext';
 import { memoAudioEngine } from '@/src/audio/MemoAudioEngine';
 import { ImportSuccessHost } from '@/src/components/ImportSuccessDialog';
+import { LowBatteryWarningHost } from '@/src/components/LowBatteryWarningHost';
 import { useIsRegularWidth } from '@/src/hooks/useIsRegularWidth';
 import { awaitSaveInFlight } from '@/src/recording/activeRecordingSession';
 import { ensureRecordingBootstrapComplete } from '@/src/recording/recordingBootstrap';
@@ -170,6 +171,7 @@ export default function RootLayout() {
         <AudioEngineProvider>
           {/* Host before navigator so its layout effect registers before route effects. */}
           <ImportSuccessHost />
+          <LowBatteryWarningHost />
           <RootNavigator />
         </AudioEngineProvider>
       </SafeAreaProvider>

@@ -103,6 +103,11 @@ test('isMetronomeGridBufferValid is false when scrolled outside overscan', () =>
   );
 });
 
+test('isMetronomeGridBufferValid is false when buffer.end exceeds duration', () => {
+  const buffer = { start: 0, end: 60 };
+  assert.equal(isMetronomeGridBufferValid(buffer, 0, VIEWPORT, PPS, 0.5, 40), false);
+});
+
 test('getVisibleMarkerSeconds respects interval', () => {
   assert.deepEqual(getVisibleMarkerSeconds(0, 10, 60, 5), [0, 5, 10]);
 });
@@ -158,8 +163,26 @@ test('resolvePlaybackBarPaintRange keeps {0,0} when width or duration is invalid
 });
 
 test('resolvePlaybackBarPaintRange keeps an already-valid buffer', () => {
-  const existing = { start: 1, end: 8 };
+  const existing = getMetronomeGridBufferRange(0, VIEWPORT, PPS, 60);
   assert.equal(resolvePlaybackBarPaintRange(existing, 0, VIEWPORT, PPS, 60), existing);
+});
+
+test('resolvePlaybackBarPaintRange reseeds when duration-capped buffer no longer covers viewport', () => {
+  // Seed near the old timeline end so the buffer is clamped to duration.
+  const nearEndScrollX = 28 * PPS;
+  const old = getMetronomeGridBufferRange(nearEndScrollX, VIEWPORT, PPS, 30);
+  assert.ok(Math.abs(old.end - 30) < 1e-6);
+  const next = resolvePlaybackBarPaintRange(old, nearEndScrollX, VIEWPORT, PPS, 90);
+  assert.notEqual(next, old);
+  assert.ok(next.end > old.end);
+});
+
+test('resolvePlaybackBarPaintRange reseeds when scroll leaves the buffer', () => {
+  const old = getMetronomeGridBufferRange(0, VIEWPORT, PPS, 120);
+  const farScrollX = VIEWPORT * 6;
+  const next = resolvePlaybackBarPaintRange(old, farScrollX, VIEWPORT, PPS, 120);
+  assert.notEqual(next, old);
+  assert.ok(next.end > old.end);
 });
 
 test('shouldReseedPlaybackViewport is true for an uninitialized buffer once layout is valid', () => {
@@ -172,6 +195,16 @@ test('shouldReseedPlaybackViewport is true when duration catches up from a place
     shouldReseedPlaybackViewport({ start: 0, end: 0.01 }, VIEWPORT, PPS, 45, 0.01),
     true
   );
+});
+
+test('shouldReseedPlaybackViewport is true when duration grows', () => {
+  const buffer = getMetronomeGridBufferRange(0, VIEWPORT, PPS, 45);
+  assert.equal(shouldReseedPlaybackViewport(buffer, VIEWPORT, PPS, 60, 45), true);
+});
+
+test('shouldReseedPlaybackViewport is true when duration shrinks', () => {
+  const buffer = getMetronomeGridBufferRange(0, VIEWPORT, PPS, 60);
+  assert.equal(shouldReseedPlaybackViewport(buffer, VIEWPORT, PPS, 40, 60), true);
 });
 
 test('shouldReseedPlaybackViewport is false when width is 0 or duration is 0', () => {

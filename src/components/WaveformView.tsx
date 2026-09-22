@@ -2933,16 +2933,19 @@ function WaveformViewComponent({
   };
 
   const handleTrackPress = (trackId: string, locationX: number) => {
+    const outside = isOutsideTimelinePress(locationX, sidePadding, contentWidth);
     const track = tracks.find((entry) => entry.id === trackId);
     const isSelectable = track && !track.isMuted && !track.isSoloedOut;
     if (isSelectable) {
-      if (isOutsideTimelinePress(locationX, sidePadding, contentWidth)) {
+      if (outside) {
         onTrackDeselectRef.current?.();
       } else {
         onTrackPressRef.current(trackId);
       }
     }
-    if (isPlaying || duration <= 0 || contentWidth <= 0) {
+    // Outside the waveform content: deselect only — seeking past the end can
+    // leave scrollX outside a sticky paint buffer and blank the bars.
+    if (outside || isPlaying || duration <= 0 || contentWidth <= 0) {
       return;
     }
     const waveformX = locationX - sidePadding;

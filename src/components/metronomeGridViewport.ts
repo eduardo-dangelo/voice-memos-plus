@@ -73,6 +73,8 @@ export function isViewportTimeBufferUninitialized(
 /**
  * Playback paint window: keep an already-valid buffer, otherwise seed a bounded
  * overscan range. Never expands to the full timeline (stack-arm remount freeze).
+ * Reseeds when the playhead leaves the window (seek / duration-capped expand)
+ * so SVG bars are not cropped or blanked.
  */
 export function resolvePlaybackBarPaintRange(
   buffer: MetronomeGridBuffer,
@@ -82,11 +84,21 @@ export function resolvePlaybackBarPaintRange(
   duration: number,
   bufferViewports = METRONOME_GRID_BUFFER_VIEWPORTS
 ): MetronomeGridBuffer {
-  if (buffer.end > buffer.start) {
-    return buffer;
-  }
   if (viewportWidth <= 0 || pixelsPerSecond <= 0 || duration <= 0) {
     return buffer.start === 0 && buffer.end === 0 ? buffer : { start: 0, end: 0 };
+  }
+  const needsReseed =
+    isViewportTimeBufferUninitialized(buffer) ||
+    !isMetronomeGridBufferValid(
+      buffer,
+      scrollX,
+      viewportWidth,
+      pixelsPerSecond,
+      0.5,
+      duration
+    );
+  if (!needsReseed) {
+    return buffer;
   }
   return getMetronomeGridBufferRange(
     scrollX,
@@ -153,6 +165,11 @@ export function shouldReseedPlaybackViewport(
   if (isViewportTimeBufferUninitialized(buffer)) {
     return true;
   }
+  // Move expand/retract — force sync while gestureOverlay would otherwise
+  // block the idle scroll path (stale grid lines past the new end).
+  if (Math.abs(duration - previousDuration) > 1e-6) {
+    return true;
+  }
   return (
     previousDuration <= PLACEHOLDER_TIMELINE_DURATION_SEC &&
     duration > PLACEHOLDER_TIMELINE_DURATION_SEC
@@ -192,6 +209,10 @@ export function isMetronomeGridBufferValid(
   const margin = (viewportWidth / pixelsPerSecond) * validityMarginViewports;
   const durationCap =
     Number.isFinite(duration) && duration > 0 ? duration : Number.POSITIVE_INFINITY;
+  // Stale buffer from a longer timeline (Move retract) — force clamp/rebuild.
+  if (Number.isFinite(durationCap) && buffer.end > durationCap + 1e-6) {
+    return false;
+  }
   const visibleStart = Math.max(0, visible.start);
   const visibleEnd = Math.min(visible.end, durationCap);
 
