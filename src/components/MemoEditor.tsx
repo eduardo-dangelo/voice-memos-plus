@@ -126,6 +126,7 @@ import {
   stopAndSave,
   subscribeRecordingSave,
   subscribeRecordingSaveProgress,
+  updateSessionStartTime,
   type RecordingSavePhase,
 } from '@/src/recording/activeRecordingSession';
 import { decideAutoRecord } from '@/src/recording/autoRecordGate';
@@ -574,6 +575,10 @@ function MemoEditorInner({
   const recordingStartErrorDismissRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingLocationNamingRef = useRef(false);
   const recordingStartTime = useRef(0);
+  /** Latched at Stack/Replace intent (before headphones/accordion awaits). */
+  const intendedStartTimeRef = useRef<number | null>(null);
+  /** Once commit/capture starts, ignore armed seeks for punch-in. */
+  const recordingStartLockedRef = useRef(false);
   const liveRecordingSnapshot = useRef<{
     startTime: number;
     duration: number;
@@ -2778,6 +2783,8 @@ function MemoEditorInner({
     pendingRecordModeRef.current = null;
     pendingRecordingColor.current = null;
     liveRecordingSnapshot.current = null;
+    intendedStartTimeRef.current = null;
+    recordingStartLockedRef.current = false;
   }, []);
 
   const clearPostPrecountWatchdog = useCallback(() => {
@@ -3420,6 +3427,8 @@ function MemoEditorInner({
         setLiveMetronomeSettings(metro);
 
         recordingStartTime.current = 0;
+        intendedStartTimeRef.current = null;
+        recordingStartLockedRef.current = false;
         setArmedTimelineTime(0);
         setRecordingArmed(true);
         beginSession({
@@ -3465,6 +3474,8 @@ function MemoEditorInner({
         }
 
         startPostPrecountWatchdog();
+        recordingStartLockedRef.current = true;
+        updateSessionStartTime(recordingStartTime.current);
         const commitPromise = engine.commitRecordingStart({
           nextBeatDeadlineMs,
           nextBeatContextWhen,
@@ -4305,10 +4316,17 @@ function MemoEditorInner({
         (recordingArmedRef.current ||
           stackModeRef.current ||
           replaceModeRef.current) &&
-        !engine.getState().isRecording
+        !engine.getState().isRecording &&
+        !recordingStartLockedRef.current &&
+        !engine.hasRecordingCaptureStarted()
       ) {
         recordingStartTime.current = time;
+        intendedStartTimeRef.current = time;
         setArmedTimelineTime(time);
+        updateSessionStartTime(time);
+        if (__DEV__) {
+          console.log('[MemoEditor] armed seek startTime', { startTime: time });
+        }
       }
     },
     [engine]
@@ -4382,6 +4400,18 @@ function MemoEditorInner({
       }
     }
 
+    // Freeze punch-in before headphones/accordion awaits (playback may still be running).
+    engine.pause();
+    const intendedStartTime = engine.getPlaybackTime();
+    intendedStartTimeRef.current = intendedStartTime;
+    recordingStartLockedRef.current = false;
+    if (__DEV__) {
+      console.log('[MemoEditor] latch intendedStartTime', {
+        mode,
+        startTime: intendedStartTime,
+      });
+    }
+
     const useMonitorMix = needsMonitorMix(memo, mode);
     const headphonesConnected = await isHeadphonesConnected();
     if (
@@ -4421,6 +4451,8 @@ function MemoEditorInner({
     setCollapseWarningVisible(false);
     const base = memoRef.current;
     if (!pending || !base) {
+      intendedStartTimeRef.current = null;
+      recordingStartLockedRef.current = false;
       return;
     }
 
@@ -4502,14 +4534,26 @@ function MemoEditorInner({
 
       const currentMemo = memoRef.current ?? memo;
       if (currentMemo && !engineLayersMatchMemo(engine, currentMemo)) {
+        const syncAt =
+          intendedStartTimeRef.current ?? engine.getPlaybackTime();
         await Promise.race([
-          syncEngineWithMemo(engine, currentMemo, engine.getPlaybackTime()),
+          syncEngineWithMemo(engine, currentMemo, syncAt),
           rejectAfterTimeoutMs(PREPARE_RECORDING_TIMEOUT_MS, 'Engine sync timed out'),
         ]);
       }
 
       engine.pause();
-      const startTime = engine.getPlaybackTime();
+      // Prefer early-latched intent (Stack/Replace tap); do not re-sample after dialogs.
+      const startTime =
+        intendedStartTimeRef.current ?? engine.getPlaybackTime();
+      intendedStartTimeRef.current = startTime;
+      recordingStartLockedRef.current = false;
+      if (__DEV__) {
+        console.log('[MemoEditor] arm beginSession startTime', {
+          mode,
+          startTime,
+        });
+      }
 
       recordingStartTime.current = startTime;
       setArmedTimelineTime(startTime);
@@ -4564,7 +4608,7 @@ function MemoEditorInner({
           await engine.finalizeRecordingWarmup({
             monitorMix: useMonitorMix,
             duckMonitorMix: useMonitorMix && duckMonitorMix,
-            monitorStartTime: startTime,
+            monitorStartTime: recordingStartTime.current,
           });
         };
 
@@ -4605,11 +4649,22 @@ function MemoEditorInner({
         // Dismiss teardown must not poison commit; only honor cancels after this point.
         precountCancelledRef.current = false;
 
+        // Lock punch-in for save + monitor commit (armed scrub may have moved it).
+        const lockedStart = recordingStartTime.current;
+        recordingStartLockedRef.current = true;
+        updateSessionStartTime(lockedStart);
+        if (__DEV__) {
+          console.log('[MemoEditor] lock startTime at commit', {
+            mode,
+            startTime: lockedStart,
+          });
+        }
+
         startPostPrecountWatchdog();
         const commitPromise = engine.commitRecordingStart({
           monitorMix: useMonitorMix,
           duckMonitorMix: useMonitorMix && duckMonitorMix,
-          monitorStartTime: startTime,
+          monitorStartTime: lockedStart,
           nextBeatDeadlineMs,
           nextBeatContextWhen,
           silentLayerId: mode === 'replace' ? activeLayerId ?? undefined : undefined,
@@ -5650,7 +5705,11 @@ function MemoEditorInner({
       />
       <HeadphonesRecommendedDialog
         visible={headphonesWarningMode != null}
-        onCancel={() => setHeadphonesWarningMode(null)}
+        onCancel={() => {
+          intendedStartTimeRef.current = null;
+          recordingStartLockedRef.current = false;
+          setHeadphonesWarningMode(null);
+        }}
         onContinue={() => {
           const mode = headphonesWarningMode;
           setHeadphonesWarningMode(null);

@@ -112,6 +112,32 @@ function deletePersistedSession(): void {
 export function beginSession(next: ActiveRecordingSession): void {
   session = next;
   persistSessionToStorage(session);
+  if (__DEV__) {
+    console.log('[activeRecordingSession] beginSession', {
+      mode: next.mode,
+      startTime: next.startTime,
+      memoId: next.memoId,
+    });
+  }
+}
+
+/** Update punch-in start while armed (before capture). No-op if no session. */
+export function updateSessionStartTime(startTime: number): void {
+  if (!session) {
+    return;
+  }
+  if (session.startTime === startTime) {
+    return;
+  }
+  session = { ...session, startTime };
+  persistSessionToStorage(session);
+  if (__DEV__) {
+    console.log('[activeRecordingSession] updateSessionStartTime', {
+      startTime,
+      mode: session.mode,
+      memoId: session.memoId,
+    });
+  }
 }
 
 export function clearSession(): void {
@@ -449,6 +475,13 @@ export async function stopAndSave(
       }
 
       const capturedStartTime = currentSession.startTime;
+      if (__DEV__) {
+        console.log('[activeRecordingSession] stopAndSave startTime', {
+          startTime: capturedStartTime,
+          mode: currentSession.mode,
+          memoId: currentSession.memoId,
+        });
+      }
       const layerId = currentSession.layerId;
 
       let updated: Memo;
