@@ -67,6 +67,8 @@ function isGridProcessingChange(partial: Partial<MetronomeSettings>): boolean {
 }
 
 const useGlass = isGlassEffectAPIAvailable();
+/** Default NumericDragInput (2) is ~4 BPM/px; tempo needs finer vertical drag. */
+const TEMPO_DRAG_SENSITIVITY = 0.15;
 
 export function MetronomeSettingsSheet({
   visible,
@@ -193,6 +195,7 @@ export function MetronomeSettingsSheet({
           <NumericDragInput
             accessibilityLabel="Tempo, beats per minute"
             disabled={controlsDisabled}
+            gestureSensitivity={TEMPO_DRAG_SENSITIVITY}
             max={240}
             min={40}
             value={optimistic.bpm}
