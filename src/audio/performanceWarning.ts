@@ -29,12 +29,14 @@ const warnState: WarnState = {
 /** Session latches so plain Continue does not re-open the same tip every render. */
 type TipSessionState = {
   memoId: string;
+  performanceTriggered: boolean;
   mergeShown: boolean;
   collapseShown: boolean;
 };
 
 const tipSession: TipSessionState = {
   memoId: '',
+  performanceTriggered: false,
   mergeShown: false,
   collapseShown: false,
 };
@@ -44,8 +46,13 @@ function syncTipSessionMemo(memoId: string): void {
     return;
   }
   tipSession.memoId = memoId;
+  tipSession.performanceTriggered = false;
   tipSession.mergeShown = false;
   tipSession.collapseShown = false;
+}
+
+function canShowFollowUpTips(memo: Memo): boolean {
+  return memo.hidePerformanceWarning === true || tipSession.performanceTriggered;
 }
 
 export type PerformanceWarningResult = {
@@ -177,7 +184,9 @@ export type ResolveEditorTipsResult =
 
 /**
  * Picks at most one tip. Priority: performance → merge → collapse.
- * Each tip is independently gated by its memo hide flag and content rules.
+ * Merge/collapse unlock only after the performance warning fires this visit,
+ * or if the memo already hid that warning (don't-show-again).
+ * Each follow-up tip is independently gated by its hide flag and content rules.
  * Session latches prevent re-showing the same tip after Continue in this visit.
  */
 export function resolvePerformanceRelatedTips(
@@ -192,7 +201,12 @@ export function resolvePerformanceRelatedTips(
 
   const performance = maybeShowPerformanceWarning(memo);
   if (performance.message) {
+    tipSession.performanceTriggered = true;
     return { kind: 'performance', message: performance.message };
+  }
+
+  if (!canShowFollowUpTips(memo)) {
+    return { kind: null };
   }
 
   if (
@@ -223,6 +237,7 @@ export function resetPerformanceWarningState(): void {
   warnState.nodes = false;
   warnState.pcm = false;
   tipSession.memoId = '';
+  tipSession.performanceTriggered = false;
   tipSession.mergeShown = false;
   tipSession.collapseShown = false;
 }

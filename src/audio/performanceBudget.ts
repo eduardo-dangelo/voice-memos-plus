@@ -8,7 +8,7 @@ import type { LayerEffects } from '@/src/audio/layerEffects';
 import { getLayerEffects, getPlayableLayers, type Memo } from '@/src/storage/types';
 
 export const PERFORMANCE_LAYER_WARN_COUNT = 8;
-export const PERFORMANCE_NODE_WARN_COUNT = 100;
+export const PERFORMANCE_NODE_WARN_COUNT = 120;
 
 /**
  * Estimated float32 PCM MB for fully decoded mono stems (playback / monitor mix).
@@ -16,12 +16,12 @@ export const PERFORMANCE_NODE_WARN_COUNT = 100;
  */
 export const PERFORMANCE_PCM_SAMPLE_RATE = 48000;
 export const PERFORMANCE_PCM_BYTES_PER_SAMPLE = 4;
-/** Warn when estimated resident PCM exceeds this (3× ~3 min mono ≈ ~100 MB). */
-export const PERFORMANCE_PCM_WARN_MB = 100;
+/** Warn when estimated resident PCM exceeds this (4× ~3 min mono ≈ ~125 MB). */
+export const PERFORMANCE_PCM_WARN_MB = 125;
 /** Layers at least this long count toward the duration × layers product warn. */
 export const PERFORMANCE_LONG_LAYER_SEC = 180;
-/** Warn when this many long layers are playable (3×3 min song stacks). */
-export const PERFORMANCE_LONG_LAYER_WARN_COUNT = 3;
+/** Warn when this many long layers are playable (4×3 min song stacks). */
+export const PERFORMANCE_LONG_LAYER_WARN_COUNT = 4;
 
 export type MemoPerformanceAssessment = {
   playableLayerCount: number;

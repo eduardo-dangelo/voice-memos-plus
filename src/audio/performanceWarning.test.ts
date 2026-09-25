@@ -153,6 +153,18 @@ test('shouldShowCollapseTracksTip skips when unselected tracks already collapsed
   );
 });
 
+test('resolvePerformanceRelatedTips hides merge and collapse before performance warning', () => {
+  resetPerformanceWarningState();
+  const light = makeMemo(2);
+  const result = resolvePerformanceRelatedTips({
+    memo: light,
+    isRecording: false,
+    activeLayerId: 'layer-0',
+    collapsedLayerIds: new Set(),
+  });
+  assert.equal(result.kind, null);
+});
+
 test('resolvePerformanceRelatedTips prefers performance then merge then collapse', () => {
   resetPerformanceWarningState();
   const heavy = makeMemo(PERFORMANCE_LAYER_WARN_COUNT);
