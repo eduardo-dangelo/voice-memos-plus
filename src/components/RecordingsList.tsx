@@ -25,7 +25,7 @@ import {
 import Animated, { FadeInUp, FadeOutDown } from 'react-native-reanimated';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { promptImportMemo } from '@/src/actions/importMemo';
+import { promptImportFile } from '@/src/actions/importAudio';
 import { shareMemos } from '@/src/actions/shareMemo';
 import { useAudioEngineSelector } from '@/src/audio/AudioEngineContext';
 import { memoAudioEngine } from '@/src/audio/MemoAudioEngine';
@@ -95,6 +95,8 @@ export function RecordingsList({
   const [isSearchActive, setIsSearchActive] = useState(false);
   const [isStartingRecord, setIsStartingRecord] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const [importKind, setImportKind] = useState<'project' | 'audio' | null>(null);
+  const importInFlightRef = useRef(false);
   const [isExporting, setIsExporting] = useState(false);
   const startingRecordRef = useRef(false);
   const isTrash = scope.kind === 'trash';
@@ -316,24 +318,32 @@ export function RecordingsList({
   }, []);
 
   const handleImport = useCallback(() => {
-    if (isTrash || isImporting) {
+    if (isTrash || isImporting || isExporting || importInFlightRef.current) {
       return;
     }
-    promptImportMemo({
+    importInFlightRef.current = true;
+    promptImportFile({
       folderId,
-      onImportStarted: () => setIsImporting(true),
-      onImportFinished: () => setIsImporting(false),
+      onImportStarted: (kind) => {
+        setImportKind(kind ?? 'audio');
+        setIsImporting(true);
+      },
+      onImportFinished: () => {
+        importInFlightRef.current = false;
+        setIsImporting(false);
+        setImportKind(null);
+      },
       onImported: () => {
         void refresh({ silent: true });
       },
     });
-  }, [folderId, isImporting, isTrash, refresh]);
+  }, [folderId, isExporting, isImporting, isTrash, refresh]);
 
   const headerRightActions = (
     <>
       {!isTrash ? (
         <FloatingHeaderButton
-          accessibilityLabel="Import project"
+          accessibilityLabel="Import"
           icon="square.and.arrow.down"
           onPress={handleImport}
         />
@@ -374,7 +384,7 @@ export function RecordingsList({
                         sharesBackground: false,
                         element: (
                           <FloatingHeaderButton
-                            accessibilityLabel="Import project"
+                            accessibilityLabel="Import"
                             icon="square.and.arrow.down"
                             onPress={handleImport}
                           />
@@ -595,7 +605,11 @@ export function RecordingsList({
           <View style={styles.importCard}>
             <ActivityIndicator color={colors.accent} size="large" />
             <Text style={styles.importText}>
-              {isExporting ? 'Exporting…' : 'Importing project…'}
+              {isExporting
+                ? 'Exporting…'
+                : importKind === 'audio'
+                  ? 'Importing audio…'
+                  : 'Importing project…'}
             </Text>
           </View>
         </View>

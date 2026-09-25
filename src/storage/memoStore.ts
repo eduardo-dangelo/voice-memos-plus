@@ -908,6 +908,87 @@ export async function addStackedLayer(
   return memo;
 }
 
+export type ImportedAudioLayerOptions = {
+  duration?: number;
+  waveformPeaks?: number[];
+  label?: string;
+};
+
+/**
+ * Copies a converted mono WAV into the memo. Replaces an empty placeholder
+ * so the file is track 1; otherwise appends a layer at time 0.
+ */
+export async function addImportedAudioLayer(
+  memoId: string,
+  sourcePath: string,
+  options?: ImportedAudioLayerOptions
+): Promise<Memo> {
+  const memo = await getMemo(memoId);
+  if (!memo) {
+    throw new Error('Memo not found');
+  }
+
+  const source = new File(sourcePath);
+  if (!source.exists) {
+    throw new Error('Imported audio file not found');
+  }
+
+  const playable = getPlayableLayers(memo);
+  const usedColors = memo.layers.map(
+    (entry) => entry.color ?? DEFAULT_TRACK_COLOR
+  );
+  const precomputed =
+    options?.duration &&
+    options.duration > 0 &&
+    options.waveformPeaks &&
+    options.waveformPeaks.length > 0
+      ? { duration: options.duration, waveformPeaks: options.waveformPeaks }
+      : undefined;
+
+  let layer: Layer;
+  if (playable.length === 0) {
+    layer = memo.layers[0] ?? createLayer(0, 0, usedColors);
+    memo.layers = [layer];
+    layer.fileName = allocateUniqueLayerFileName(memo, layer.order, '.wav');
+    layer.startTime = 0;
+    if (options?.label) {
+      layer.label = options.label;
+    }
+    if (usedColors.length === 0 && !layer.color) {
+      layer.color = DEFAULT_TRACK_COLOR;
+    }
+  } else {
+    const order = nextLayerOrder(memo);
+    layer = {
+      id: randomId(),
+      order,
+      fileName: allocateUniqueLayerFileName(memo, order, '.wav'),
+      label: options?.label || getDefaultLayerLabel(order),
+      color:
+        usedColors.length === 0
+          ? DEFAULT_TRACK_COLOR
+          : pickRandomTrackColor(usedColors),
+      startTime: 0,
+      duration: 0,
+    };
+    memo.layers.push(layer);
+  }
+
+  const dest = requireLayerFile(memoId, layer.fileName);
+  if (dest.exists) {
+    dest.delete();
+  }
+  source.copy(dest);
+
+  await refreshLayerFromFile(memo, layer, undefined, precomputed);
+  updateMemoTimeline(memo);
+  normalizeLoopRegion(memo, memo.duration);
+  memo.updatedAt = new Date().toISOString();
+  writeManifest(memo);
+  notifyMemoUpdate(memo);
+  return memo;
+}
+
 /**
  * Sample-accurate PCM fine-trim vs an existing layer at the same stack point.
  * Unused on the save path (Logic I/O placement); kept for tests / manual recovery.

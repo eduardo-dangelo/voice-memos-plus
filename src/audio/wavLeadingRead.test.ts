@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
+  parseWavPcm16Layout,
   parseWavPcm16MonoLayout,
   wavDurationSecFromFileSize,
   wavDurationSecFromLayout,
@@ -62,6 +63,18 @@ describe('parseWavPcm16MonoLayout', () => {
     bytes[22] = 2;
     bytes[23] = 0;
     assert.equal(parseWavPcm16MonoLayout(bytes), null);
+  });
+});
+
+describe('parseWavPcm16Layout', () => {
+  it('accepts stereo PCM16', () => {
+    const bytes = buildPcm16MonoWavBytes(40, 44100);
+    bytes[22] = 2;
+    bytes[23] = 0;
+    const layout = parseWavPcm16Layout(bytes);
+    assert.ok(layout);
+    assert.equal(layout!.channels, 2);
+    assert.equal(layout!.sampleRate, 44100);
   });
 });
 

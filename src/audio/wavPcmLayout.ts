@@ -15,11 +15,15 @@ function readFourCC(bytes: Uint8Array, offset: number): string {
   );
 }
 
+function pcm16BytesPerFrame(layout: Pick<WavPcmLayout, 'channels'>): number {
+  return Math.max(1, layout.channels) * 2;
+}
+
 /**
- * Parse a PCM WAV header from a byte prefix. Returns null when the layout is
- * not mono PCM16 (caller should fall back to full decode).
+ * Parse a PCM16 WAV header from a byte prefix. Accepts any channel count.
+ * Returns null when the layout is not integer PCM16 (caller should fall back).
  */
-export function parseWavPcm16MonoLayout(bytes: Uint8Array): WavPcmLayout | null {
+export function parseWavPcm16Layout(bytes: Uint8Array): WavPcmLayout | null {
   if (bytes.length < 44) {
     return null;
   }
@@ -66,7 +70,7 @@ export function parseWavPcm16MonoLayout(bytes: Uint8Array): WavPcmLayout | null 
   if (
     dataOffset < 0 ||
     sampleRate < 8000 ||
-    channels !== 1 ||
+    channels < 1 ||
     bitsPerSample !== 16 ||
     audioFormat !== 1
   ) {
@@ -76,9 +80,21 @@ export function parseWavPcm16MonoLayout(bytes: Uint8Array): WavPcmLayout | null 
   return { sampleRate, channels, bitsPerSample, dataOffset, dataSize };
 }
 
-/** Duration of a mono PCM16 data chunk from a parsed WAV layout. */
+/**
+ * Parse a PCM WAV header from a byte prefix. Returns null when the layout is
+ * not mono PCM16 (caller should fall back to full decode).
+ */
+export function parseWavPcm16MonoLayout(bytes: Uint8Array): WavPcmLayout | null {
+  const layout = parseWavPcm16Layout(bytes);
+  if (!layout || layout.channels !== 1) {
+    return null;
+  }
+  return layout;
+}
+
+/** Duration of a PCM16 data chunk from a parsed WAV layout. */
 export function wavDurationSecFromLayout(layout: WavPcmLayout): number {
-  const bytesPerFrame = 2;
+  const bytesPerFrame = pcm16BytesPerFrame(layout);
   const frames = Math.floor(layout.dataSize / bytesPerFrame);
   return frames > 0 && layout.sampleRate > 0 ? frames / layout.sampleRate : 0;
 }
@@ -97,7 +113,7 @@ export function wavDurationSecFromFileSize(
   fileSize: number
 ): number {
   const dataSize = wavDataBytesOnDisk(layout, fileSize);
-  const frames = Math.floor(dataSize / 2);
+  const frames = Math.floor(dataSize / pcm16BytesPerFrame(layout));
   return frames > 0 && layout.sampleRate > 0 ? frames / layout.sampleRate : 0;
 }
 

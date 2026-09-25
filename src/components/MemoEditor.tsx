@@ -61,6 +61,11 @@ import {
   isMoveSnapSelectionValid,
   type MoveSnapSelection,
 } from '@/src/audio/moveSnap';
+import {
+  convertPickedAudioToMonoWav,
+  deleteImportedTempFile,
+  pickAudioFile,
+} from '@/src/audio/importAudioFile';
 import { estimateMemoNodeCount, estimateMemoPcmMb } from '@/src/audio/performanceBudget';
 import {
   COLLAPSE_TRACKS_PERFORMANCE_TIP_MESSAGE,
@@ -146,6 +151,7 @@ import {
   type StuckRecordingRecoveryInput,
 } from '@/src/recording/recordingStartRecovery';
 import {
+  addImportedAudioLayer,
   deactivateMemoLoop,
   deleteLayer,
   deleteMemo,
@@ -670,6 +676,7 @@ function MemoEditorInner({
   const [loopSettingsVisible, setLoopSettingsVisible] = useState(false);
   const [loopDialogLayerId, setLoopDialogLayerId] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
+  const [busyOverlayMessage, setBusyOverlayMessage] = useState('Preparing export…');
   const [layoutReady, setLayoutReady] = useState(false);
   const [waveformLayoutKey, setWaveformLayoutKey] = useState(0);
   const remountedForChromeRef = useRef(false);
@@ -912,7 +919,7 @@ function MemoEditorInner({
     [activeLayerId, applyLayerEffectsChange]
   );
 
-  const flushEffectsPersist = useCallback(() => {
+  const flushEffectsPersist = useCallback(async () => {
     if (persistEffectsTimeout.current) {
       clearTimeout(persistEffectsTimeout.current);
       persistEffectsTimeout.current = null;
@@ -922,17 +929,20 @@ function MemoEditorInner({
       return;
     }
     pendingEffectsPersist.current = null;
-    void updateLayerEffects(
-      pending.memoId,
-      pending.layerId,
-      layerEffectsPersistPayload(pending.effects)
-    );
+    const writes: Promise<unknown>[] = [
+      updateLayerEffects(
+        pending.memoId,
+        pending.layerId,
+        layerEffectsPersistPayload(pending.effects)
+      ),
+    ];
     if (pending.layerStartTimes) {
-      void updateLayerStartTimes(pending.memoId, pending.layerStartTimes);
+      writes.push(updateLayerStartTimes(pending.memoId, pending.layerStartTimes));
     }
+    await Promise.all(writes);
   }, []);
 
-  const flushStartTimePersist = useCallback(() => {
+  const flushStartTimePersist = useCallback(async () => {
     if (persistStartTimeTimeout.current) {
       clearTimeout(persistStartTimeTimeout.current);
       persistStartTimeTimeout.current = null;
@@ -942,10 +952,10 @@ function MemoEditorInner({
       return;
     }
     pendingStartTimePersist.current = null;
-    void updateLayerStartTimes(pending.memoId, pending.startTimes);
+    await updateLayerStartTimes(pending.memoId, pending.startTimes);
   }, []);
 
-  const flushTrackLoopPersist = useCallback(() => {
+  const flushTrackLoopPersist = useCallback(async () => {
     if (persistTrackLoopTimeout.current) {
       clearTimeout(persistTrackLoopTimeout.current);
       persistTrackLoopTimeout.current = null;
@@ -955,7 +965,7 @@ function MemoEditorInner({
       return;
     }
     pendingTrackLoopPersist.current = null;
-    void updateLayerLoopUntil(pending.memoId, pending.layerId, pending.loopUntil);
+    await updateLayerLoopUntil(pending.memoId, pending.layerId, pending.loopUntil);
   }, []);
 
   const clearDraftPersistTimers = useCallback(() => {
@@ -2145,6 +2155,112 @@ function MemoEditorInner({
     [confirmEditDraft, engine, flushEffectsPersist, flushStartTimePersist, memo]
   );
 
+  const handleImportTrack = useCallback(() => {
+    if (
+      !memo ||
+      engineState.isRecording ||
+      recordingArmed ||
+      stackMode ||
+      replaceMode ||
+      isPersistingTake ||
+      isExporting
+    ) {
+      return;
+    }
+
+    void (async () => {
+      const generation = loadGenerationRef.current;
+      let pickedUri: string | undefined;
+      try {
+        await confirmEditDraft(false);
+        if (generation !== loadGenerationRef.current) {
+          return;
+        }
+        const picked = await pickAudioFile();
+        if (picked.canceled) {
+          return;
+        }
+        pickedUri = picked.uri;
+        if (generation !== loadGenerationRef.current) {
+          return;
+        }
+
+        await flushEffectsPersist();
+        await flushStartTimePersist();
+        await flushTrackLoopPersist();
+        const current = memoRef.current;
+        if (!current || generation !== loadGenerationRef.current) {
+          return;
+        }
+
+        if (engine.getState().isPlaying) {
+          engine.pause();
+        }
+
+        setBusyOverlayMessage('Importing track…');
+        setIsExporting(true);
+        await new Promise<void>((resolve) => {
+          requestAnimationFrame(() => resolve());
+        });
+        if (generation !== loadGenerationRef.current) {
+          return;
+        }
+
+        const converted = await convertPickedAudioToMonoWav(picked);
+        try {
+          if (generation !== loadGenerationRef.current) {
+            return;
+          }
+          const previousIds = new Set(current.layers.map((entry) => entry.id));
+          const updated = await addImportedAudioLayer(current.id, converted.wavPath, {
+            duration: converted.duration,
+            waveformPeaks: converted.waveformPeaks,
+            label: converted.displayName,
+          });
+          if (generation !== loadGenerationRef.current) {
+            return;
+          }
+          const nextActiveId =
+            updated.layers.find((entry) => !previousIds.has(entry.id))?.id ??
+            getPlayableLayers(updated)[0]?.id ??
+            null;
+          const seekTime = Math.min(engine.getPlaybackTime(), updated.duration);
+          memoRef.current = updated;
+          setMemo(updated);
+          setActiveLayerId(nextActiveId);
+          setActiveEditor(null);
+          await loadMemoIntoEngine(engine, updated, seekTime);
+        } finally {
+          deleteImportedTempFile(converted.wavPath);
+        }
+      } catch (error) {
+        setIsExporting(false);
+        if (generation === loadGenerationRef.current) {
+          Alert.alert(
+            'Import failed',
+            error instanceof Error ? error.message : 'Unknown error'
+          );
+        }
+      } finally {
+        deleteImportedTempFile(pickedUri);
+        setIsExporting(false);
+      }
+    })();
+  }, [
+    confirmEditDraft,
+    engine,
+    engineState.isRecording,
+    flushEffectsPersist,
+    flushStartTimePersist,
+    flushTrackLoopPersist,
+    isExporting,
+    isPersistingTake,
+    memo,
+    recordingArmed,
+    replaceMode,
+    stackMode,
+  ]);
+
   const performMergeLayers = useCallback(
     async (layerIds: string[], survivorId?: string) => {
       const current = memoRef.current;
@@ -2527,7 +2643,10 @@ function MemoEditorInner({
           shareMemo(memo, {
             layerId,
             format: actionId,
-            onExportStarted: () => setIsExporting(true),
+            onExportStarted: () => {
+              setBusyOverlayMessage('Preparing export…');
+              setIsExporting(true);
+            },
             onExportFinished: () => setIsExporting(false),
           });
           break;
@@ -3999,7 +4118,10 @@ function MemoEditorInner({
       }
       const current = memoRef.current ?? memo;
       shareMemo(current, {
-        onExportStarted: () => setIsExporting(true),
+        onExportStarted: () => {
+          setBusyOverlayMessage('Preparing export…');
+          setIsExporting(true);
+        },
         onExportFinished: () => setIsExporting(false),
       });
     })();
@@ -4146,6 +4268,14 @@ function MemoEditorInner({
               : false
           }
           includeShare={memo ? hasRecording(memo) : false}
+          includeImportTrack={
+            !engineState.isRecording &&
+            !recordingArmed &&
+            !stackMode &&
+            !replaceMode &&
+            !isPersistingTake &&
+            !isExporting
+          }
           includeTrackAccordion={
             memo
               ? hasRecording(memo) && getPlayableLayers(memo).length > 1
@@ -4154,6 +4284,7 @@ function MemoEditorInner({
           trackAccordionEnabled={trackAccordionEnabled}
           includeRefresh
           onShare={handleShare}
+          onImportTrack={handleImportTrack}
           onRename={handleRename}
           onMergeLayers={handleMergeAllLayers}
           onMuteTracks={handleMuteTracksMenu}
@@ -4247,10 +4378,12 @@ function MemoEditorInner({
       handleRename,
       handleSoloTracksMenu,
       handleTitleLongPress,
+      handleImportTrack,
       handleShare,
       handleUnlockTracksMenu,
       handleUnmuteTracksMenu,
       handleUnsoloTracksMenu,
+      isExporting,
       isPane,
       isPersistingTake,
       recordingStartError,
@@ -4274,6 +4407,9 @@ function MemoEditorInner({
       zoomControls.y,
       trackAccordionEnabled,
       handleToggleTrackAccordion,
+      recordingArmed,
+      replaceMode,
+      stackMode,
     ],
   );
 
@@ -5883,7 +6019,7 @@ function MemoEditorInner({
         <View style={styles.exportOverlay}>
           <View style={styles.exportCard}>
             <ActivityIndicator color={colors.accent} size="large" />
-            <Text style={styles.exportText}>Preparing export…</Text>
+            <Text style={styles.exportText}>{busyOverlayMessage}</Text>
           </View>
         </View>
       </Modal>

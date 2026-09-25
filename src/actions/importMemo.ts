@@ -63,6 +63,15 @@ async function importFromUri(
   }
 }
 
+/** Import a `.vmp` already readable by the app (picker cache or copied URL). Overlay is the caller's job. */
+export async function importProjectFromCachedUri(
+  uri: string,
+  options?: Pick<ImportMemoOptions, 'folderId'>
+): Promise<Memo> {
+  const cachedUri = await copyIncomingProjectAsync(uri);
+  return importFromUri(cachedUri, options);
+}
+
 /** Import a Voice Memos Plus project from a file URI (Files / Mail / AirDrop). */
 export async function importMemoFromUri(
   uri: string,
@@ -84,18 +93,18 @@ export async function importMemoFromUri(
 export async function importMemoFromPicker(
   options?: ImportMemoOptions
 ): Promise<ImportMemoResult> {
-  const result = await pickProjectAsync();
-
-  if (result.canceled) {
-    return { status: 'canceled' };
-  }
-
-  if (!isProjectFileName(result.name)) {
-    throw new Error('Please select a Voice Memos Plus project (.vmp) file.');
-  }
-
-  options?.onImportStarted?.();
   try {
+    const result = await pickProjectAsync();
+
+    if (result.canceled) {
+      return { status: 'canceled' };
+    }
+
+    if (!isProjectFileName(result.name)) {
+      throw new Error('Please select a Voice Memos Plus project (.vmp) file.');
+    }
+
+    options?.onImportStarted?.();
     const memo = await importFromUri(result.uri, options);
     return { status: 'imported', memo };
   } finally {

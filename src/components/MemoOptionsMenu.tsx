@@ -8,6 +8,7 @@ import {
 
 export type MemoOptionsMenuHandlers = {
   onShare: () => void;
+  onImportTrack?: () => void;
   onRename: () => void;
   onEditRecording?: () => void;
   onMoveToFolder?: () => void;
@@ -31,6 +32,7 @@ export type MemoOptionActionFlags = {
   includeEditRecording?: boolean;
   includeMoveToFolder?: boolean;
   includeShare?: boolean;
+  includeImportTrack?: boolean;
   includeMergeLayers?: boolean;
   includeMuteTracks?: boolean;
   includeUnmuteTracks?: boolean;
@@ -64,6 +66,7 @@ export function buildMemoOptionActions({
   includeEditRecording = true,
   includeMoveToFolder = false,
   includeShare = true,
+  includeImportTrack = false,
   includeMergeLayers = false,
   includeMuteTracks = false,
   includeUnmuteTracks = false,
@@ -90,6 +93,13 @@ export function buildMemoOptionActions({
   const items: MemoOptionAction[] = [];
   if (includeShare) {
     items.push({ id: 'share', title: 'Export', systemImage: 'square.and.arrow.up' });
+  }
+  if (includeImportTrack) {
+    items.push({
+      id: 'importTrack',
+      title: 'Import Track',
+      systemImage: 'square.and.arrow.down',
+    });
   }
   items.push({ id: 'rename', title: 'Rename', systemImage: 'pencil' });
   if (includeEditRecording) {
@@ -168,6 +178,7 @@ export function MemoOptionsMenu({
   includeEditRecording = true,
   includeMoveToFolder = false,
   includeShare = true,
+  includeImportTrack = false,
   includeMergeLayers = false,
   includeMuteTracks = false,
   includeUnmuteTracks = false,
@@ -179,6 +190,7 @@ export function MemoOptionsMenu({
   trackAccordionEnabled = false,
   includeRefresh = false,
   onShare,
+  onImportTrack,
   onRename,
   onEditRecording,
   onMoveToFolder,
@@ -205,6 +217,7 @@ export function MemoOptionsMenu({
           includeEditRecording,
           includeMoveToFolder,
           includeShare,
+          includeImportTrack,
           includeMergeLayers,
           includeMuteTracks,
           includeUnmuteTracks,
@@ -226,6 +239,7 @@ export function MemoOptionsMenu({
       includeMuteTracks,
       includeRecover,
       includeRefresh,
+      includeImportTrack,
       includeShare,
       includeSoloTracks,
       includeTrackAccordion,
@@ -244,6 +258,9 @@ export function MemoOptionsMenu({
         switch (nativeEvent.event) {
           case 'share':
             onShare();
+            break;
+          case 'importTrack':
+            onImportTrack?.();
             break;
           case 'rename':
             onRename();
