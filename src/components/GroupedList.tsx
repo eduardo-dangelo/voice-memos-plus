@@ -83,15 +83,9 @@ export function GroupedListRow({
   const colorScheme = useColorScheme();
   const styles = useStyles(colors, colorScheme);
 
-  return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.row,
-        isFirst && styles.rowFirst,
-        isLast && styles.rowLast,
-        pressed && onPress ? styles.rowPressed : null,
-      ]}>
+  const rowStyle = [styles.row, isFirst && styles.rowFirst, isLast && styles.rowLast];
+  const body = (
+    <>
       <SymbolView
         name={{ ios: icon }}
         size={22}
@@ -104,6 +98,20 @@ export function GroupedListRow({
         <SymbolView name={{ ios: 'chevron.right' }} size={14} tintColor={colors.secondaryText} />
       ) : null}
       {!isLast ? <View style={styles.separator} /> : null}
+    </>
+  );
+
+  // Nested pressables (edit delete/reorder) do not fire reliably inside a
+  // parent Pressable with no onPress — especially on the last clipped row.
+  if (!onPress) {
+    return <View style={rowStyle}>{body}</View>;
+  }
+
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [rowStyle, pressed ? styles.rowPressed : null]}>
+      {body}
     </Pressable>
   );
 }

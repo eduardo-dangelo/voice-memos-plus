@@ -4,8 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Platform, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 import Animated, { FadeIn, FadeOut, LinearTransition } from 'react-native-reanimated';
 
-import { memoAudioEngine } from '@/src/audio/MemoAudioEngine';
 import { useColorScheme } from '@/components/useColorScheme';
+import { memoAudioEngine } from '@/src/audio/MemoAudioEngine';
 import { FloatingHeaderButton } from '@/src/components/FloatingHeaderButton';
 import {
   GroupedListRow,
@@ -17,7 +17,6 @@ import { NamePromptDialog } from '@/src/components/NamePromptDialog';
 import { sendFeedbackEmail } from '@/src/feedback/sendFeedback';
 import { useFolders } from '@/src/hooks/useFolders';
 import { useLibraryCounts } from '@/src/hooks/useLibraryCounts';
-import { endIdlePlaybackLiveActivities } from '@/src/widgets/recordingLiveActivityController';
 import {
   getAppSettings,
   setLocationBasedNaming,
@@ -27,6 +26,7 @@ import {
 import { createFolder, deleteFolder, reorderFolders } from '@/src/storage/folderStore';
 import { applyThemePreference } from '@/src/theme/applyThemePreference';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
+import { endIdlePlaybackLiveActivities } from '@/src/widgets/recordingLiveActivityController';
 
 export default function FoldersHomeScreen() {
   const colors = useVoiceMemosColors();
