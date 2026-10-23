@@ -1,7 +1,6 @@
 import { useLocalSearchParams, useNavigation } from 'expo-router';
 import { useCallback, useLayoutEffect, useMemo, useState } from 'react';
 
-import { FloatingHeaderButton } from '@/src/components/FloatingHeaderButton';
 import { NamePromptDialog } from '@/src/components/NamePromptDialog';
 import { RecordingsSplitView } from '@/src/components/RecordingsSplitView';
 import { getFolderSync, renameFolder } from '@/src/storage/folderStore';
@@ -52,13 +51,11 @@ export default function FolderRecordingsScreen() {
         backTitle={folderName}
         emptySubtitle="Tap the red button to record into this folder."
         folderId={folderId}
-        headerExtraActions={
-          <FloatingHeaderButton
-            accessibilityLabel="Folder options"
-            icon="ellipsis.circle"
-            onPress={showRenamePrompt}
-          />
-        }
+        headerExtraActions={{
+          accessibilityLabel: 'Folder options',
+          icon: 'ellipsis.circle',
+          onPress: showRenamePrompt,
+        }}
         scope={{ kind: 'folder', folderId }}
         title={folderName}
       />

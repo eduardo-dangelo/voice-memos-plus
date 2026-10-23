@@ -17,6 +17,8 @@ export type FloatingHeaderIcon =
   | 'square.and.arrow.up'
   | 'square.and.arrow.down'
   | 'pencil'
+  | 'checkmark'
+  | 'checkmark.square'
   | 'plus.square.on.square'
   | 'trash'
   | 'sidebar.left'

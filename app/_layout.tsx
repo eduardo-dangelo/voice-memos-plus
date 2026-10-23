@@ -1,6 +1,6 @@
 import { Stack, useRootNavigationState } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { AppState } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -12,6 +12,7 @@ import { AudioEngineProvider } from '@/src/audio/AudioEngineContext';
 import { memoAudioEngine } from '@/src/audio/MemoAudioEngine';
 import { ImportSuccessHost } from '@/src/components/ImportSuccessDialog';
 import { LowBatteryWarningHost } from '@/src/components/LowBatteryWarningHost';
+import { useDuoSideColumn } from '@/src/hooks/useDuoSideColumn';
 import { useIsRegularWidth } from '@/src/hooks/useIsRegularWidth';
 import { awaitSaveInFlight } from '@/src/recording/activeRecordingSession';
 import { ensureRecordingBootstrapComplete } from '@/src/recording/recordingBootstrap';
@@ -149,7 +150,31 @@ function ActiveRecordingResume() {
   return null;
 }
 
+function AppFrame({
+  children,
+  onCanvasColor,
+}: {
+  children: ReactNode;
+  onCanvasColor: (color: string | undefined) => void;
+}) {
+  const sideColumn = useDuoSideColumn();
+  const colorScheme = useColorScheme();
+  const colors = useVoiceMemosColors();
+  const backgroundColor = sideColumn.active
+    ? colorScheme === 'dark'
+      ? colors.background
+      : colors.editorCanvasBackground
+    : undefined;
+
+  useEffect(() => {
+    onCanvasColor(backgroundColor);
+  }, [backgroundColor, onCanvasColor]);
+
+  return children;
+}
+
 export default function RootLayout() {
+  const [canvasColor, setCanvasColor] = useState<string | undefined>(undefined);
   useEffect(() => {
     void (async () => {
       await memoAudioEngine.requestPermission();
@@ -166,14 +191,17 @@ export default function RootLayout() {
   }, []);
 
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
+    <GestureHandlerRootView
+      style={canvasColor ? { flex: 1, backgroundColor: canvasColor } : { flex: 1 }}>
       <SafeAreaProvider>
-        <AudioEngineProvider>
-          {/* Host before navigator so its layout effect registers before route effects. */}
-          <ImportSuccessHost />
-          <LowBatteryWarningHost />
-          <RootNavigator />
-        </AudioEngineProvider>
+        <AppFrame onCanvasColor={setCanvasColor}>
+          <AudioEngineProvider>
+            {/* Host before navigator so its layout effect registers before route effects. */}
+            <ImportSuccessHost />
+            <LowBatteryWarningHost />
+            <RootNavigator />
+          </AudioEngineProvider>
+        </AppFrame>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

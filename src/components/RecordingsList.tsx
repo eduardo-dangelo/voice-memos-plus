@@ -1,15 +1,6 @@
 import { SymbolView } from 'expo-symbols';
 import { Stack, router, useFocusEffect } from 'expo-router';
-import {
-  isValidElement,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactElement,
-  type ReactNode,
-} from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -29,13 +20,17 @@ import { promptImportFile } from '@/src/actions/importAudio';
 import { shareMemos } from '@/src/actions/shareMemo';
 import { useAudioEngineSelector } from '@/src/audio/AudioEngineContext';
 import { memoAudioEngine } from '@/src/audio/MemoAudioEngine';
-import { FloatingHeaderButton } from '@/src/components/FloatingHeaderButton';
+import {
+  FloatingHeaderButton,
+  type FloatingHeaderIcon,
+} from '@/src/components/FloatingHeaderButton';
 import { LIST_ITEM_TRANSITION } from '@/src/components/listTransitions';
 import {
   RecordFabCluster,
   type RecordFabSettings,
 } from '@/src/components/RecordFabCluster';
 import { RecordingRow } from '@/src/components/RecordingRow';
+import { sideColumnIconItem, useDuoSideColumn } from '@/src/hooks/useDuoSideColumn';
 import { useFolders } from '@/src/hooks/useFolders';
 import { useMemos } from '@/src/hooks/useMemos';
 import { getSession } from '@/src/recording/activeRecordingSession';
@@ -52,6 +47,12 @@ import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
 export type RecordingsListLayoutMode = 'stack' | 'sidebar';
 
+export type RecordingsListHeaderAction = {
+  accessibilityLabel: string;
+  icon: FloatingHeaderIcon;
+  onPress: () => void;
+};
+
 export type RecordingsListProps = {
   scope: MemoListScope;
   folderId?: string;
@@ -62,7 +63,7 @@ export type RecordingsListProps = {
   allowMoveToFolder?: boolean;
   emptyTitle?: string;
   emptySubtitle?: string;
-  headerExtraActions?: ReactNode;
+  headerExtraActions?: RecordingsListHeaderAction;
   layoutMode?: RecordingsListLayoutMode;
   selectedMemoId?: string | null;
   onSelectMemo?: (memoId: string | null, options?: { autoRecord?: boolean }) => void;
@@ -84,6 +85,7 @@ export function RecordingsList({
 }: RecordingsListProps) {
   const colors = useVoiceMemosColors();
   const insets = useSafeAreaInsets();
+  const sideColumn = useDuoSideColumn();
   const styles = useStyles(colors);
   const isRecording = useAudioEngineSelector((state) => state.isRecording);
   const { memos, refresh, removeMemo, removeMemos } = useMemos(scope);
@@ -359,7 +361,13 @@ export function RecordingsList({
         variant="pill"
         onPress={toggleSelectionMode}
       />
-      {headerExtraActions}
+      {headerExtraActions ? (
+        <FloatingHeaderButton
+          accessibilityLabel={headerExtraActions.accessibilityLabel}
+          icon={headerExtraActions.icon}
+          onPress={headerExtraActions.onPress}
+        />
+      ) : null}
     </>
   );
 
@@ -375,6 +383,59 @@ export function RecordingsList({
       ...(Platform.OS === 'ios'
         ? {
             unstable_headerRightItems: () => {
+              const selectItem = {
+                type: 'custom' as const,
+                hidesSharedBackground: true,
+                sharesBackground: false,
+                element: (
+                  <FloatingHeaderButton
+                    accessibilityLabel={
+                      selectionMode ? 'Done selecting' : 'Select recordings'
+                    }
+                    label={selectionMode ? 'Done' : 'Select'}
+                    variant="pill"
+                    onPress={toggleSelectionMode}
+                  />
+                ),
+              };
+
+              if (sideColumn.active) {
+                return [
+                  ...(!isTrash
+                    ? [
+                        sideColumnIconItem({
+                          label: 'Import',
+                          icon: 'square.and.arrow.down',
+                          onPress: handleImport,
+                          tintColor: colors.text,
+                        }),
+                      ]
+                    : []),
+                  sideColumnIconItem({
+                    label: 'Search recordings',
+                    icon: 'magnifyingglass',
+                    onPress: handleSearchPress,
+                    tintColor: colors.text,
+                  }),
+                  ...(headerExtraActions
+                    ? [
+                        sideColumnIconItem({
+                          label: headerExtraActions.accessibilityLabel,
+                          icon: headerExtraActions.icon,
+                          onPress: headerExtraActions.onPress,
+                          tintColor: colors.text,
+                        }),
+                      ]
+                    : []),
+                  sideColumnIconItem({
+                    label: selectionMode ? 'Done selecting' : 'Select recordings',
+                    icon: selectionMode ? 'checkmark' : 'checkmark.square',
+                    onPress: toggleSelectionMode,
+                    tintColor: colors.text,
+                  }),
+                ];
+              }
+
               const items = [
                 ...(!isTrash
                   ? [
@@ -404,29 +465,21 @@ export function RecordingsList({
                     />
                   ),
                 },
-                {
-                  type: 'custom' as const,
-                  hidesSharedBackground: true,
-                  sharesBackground: false,
-                  element: (
-                    <FloatingHeaderButton
-                      accessibilityLabel={
-                        selectionMode ? 'Done selecting' : 'Select recordings'
-                      }
-                      label={selectionMode ? 'Done' : 'Select'}
-                      variant="pill"
-                      onPress={toggleSelectionMode}
-                    />
-                  ),
-                },
+                selectItem,
               ];
 
-              if (isValidElement(headerExtraActions)) {
+              if (headerExtraActions) {
                 items.push({
                   type: 'custom',
                   hidesSharedBackground: true,
                   sharesBackground: false,
-                  element: headerExtraActions as ReactElement,
+                  element: (
+                    <FloatingHeaderButton
+                      accessibilityLabel={headerExtraActions.accessibilityLabel}
+                      icon={headerExtraActions.icon}
+                      onPress={headerExtraActions.onPress}
+                    />
+                  ),
                 });
               }
 
@@ -440,6 +493,7 @@ export function RecordingsList({
           }),
     };
   }, [
+    colors.text,
     handleImport,
     handleSearchPress,
     headerExtraActions,
@@ -447,6 +501,7 @@ export function RecordingsList({
     isTrash,
     listTitle,
     selectionMode,
+    sideColumn.active,
     styles.headerActions,
     toggleSelectionMode,
   ]);
@@ -528,7 +583,13 @@ export function RecordingsList({
 
       <Animated.FlatList
         ListHeaderComponent={listHeader}
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={
+          sideColumn.edge === 'right'
+            ? [styles.listContent, { paddingRight: sideColumn.inset }]
+            : sideColumn.edge === 'left'
+              ? [styles.listContent, { paddingLeft: sideColumn.inset }]
+              : styles.listContent
+        }
         contentInsetAdjustmentBehavior="automatic"
         data={filteredMemos}
         itemLayoutAnimation={LIST_ITEM_TRANSITION}
@@ -582,6 +643,14 @@ export function RecordingsList({
           <RecordFabCluster
             bottomOffset={32 + (isSidebar ? 0 : insets.bottom)}
             disabled={isStartingRecord || isRecording}
+            horizontalInset={
+              sideColumn.active
+                ? {
+                    left: sideColumn.edge === 'left' ? sideColumn.inset : 0,
+                    right: sideColumn.edge === 'right' ? sideColumn.inset : 0,
+                  }
+                : undefined
+            }
             onRecord={(settings) => void handleStartRecording(settings)}
           />
         </Animated.View>

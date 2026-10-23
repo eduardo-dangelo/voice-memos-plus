@@ -35,6 +35,8 @@ export type RecordFabSettings = {
 type Props = {
   disabled?: boolean;
   bottomOffset?: number;
+  /** Shifts the cluster out of a Duo side column. Omitted on iPhone and iPad. */
+  horizontalInset?: { left: number; right: number };
   onRecord: (settings: RecordFabSettings) => void;
 };
 
@@ -63,7 +65,12 @@ function persistSettings(precount: PrecountMode, metronome: MetronomeSettings) {
   });
 }
 
-export function RecordFabCluster({ disabled, bottomOffset = 32, onRecord }: Props) {
+export function RecordFabCluster({
+  disabled,
+  bottomOffset = 32,
+  horizontalInset,
+  onRecord,
+}: Props) {
   const styles = useStyles();
   const [precount, setPrecount] = useState<PrecountMode>(
     () => getRecordingDefaultsSync().precount
@@ -152,7 +159,7 @@ export function RecordFabCluster({ disabled, bottomOffset = 32, onRecord }: Prop
     <>
       <View
         pointerEvents="box-none"
-        style={[styles.root, { bottom: bottomOffset }]}>
+        style={[styles.root, { bottom: bottomOffset }, horizontalInset]}>
         <View style={styles.row}>
           <View style={styles.side}>
             <MetronomeButton

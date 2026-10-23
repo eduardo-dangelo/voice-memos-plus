@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 
 import { useColorScheme } from '@/components/useColorScheme';
+import { useDuoSideColumn } from '@/src/hooks/useDuoSideColumn';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 
 type GroupedListProps = {
@@ -22,10 +23,17 @@ type GroupedListProps = {
 export function GroupedListScreen({ children, style, largeTitle }: GroupedListProps) {
   const colors = useVoiceMemosColors();
   const colorScheme = useColorScheme();
+  const sideColumn = useDuoSideColumn();
   const styles = useStyles(colors, colorScheme);
+  const contentContainerStyle =
+    sideColumn.edge === 'right'
+      ? [styles.scrollContent, { paddingRight: sideColumn.inset }]
+      : sideColumn.edge === 'left'
+        ? [styles.scrollContent, { paddingLeft: sideColumn.inset }]
+        : styles.scrollContent;
   return (
     <ScrollView
-      contentContainerStyle={styles.scrollContent}
+      contentContainerStyle={contentContainerStyle}
       keyboardShouldPersistTaps="handled"
       style={[styles.screen, style]}>
       {largeTitle ? <Text style={styles.largeTitle}>{largeTitle}</Text> : null}

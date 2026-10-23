@@ -15,6 +15,7 @@ import {
 } from '@/src/components/GroupedList';
 import { NamePromptDialog } from '@/src/components/NamePromptDialog';
 import { sendFeedbackEmail } from '@/src/feedback/sendFeedback';
+import { sideColumnIconItem, useDuoSideColumn } from '@/src/hooks/useDuoSideColumn';
 import { useFolders } from '@/src/hooks/useFolders';
 import { useLibraryCounts } from '@/src/hooks/useLibraryCounts';
 import {
@@ -31,6 +32,7 @@ import { endIdlePlaybackLiveActivities } from '@/src/widgets/recordingLiveActivi
 export default function FoldersHomeScreen() {
   const colors = useVoiceMemosColors();
   const colorScheme = useColorScheme();
+  const sideColumn = useDuoSideColumn();
   const styles = useStyles(colors, colorScheme);
   const headerStyles = useHeaderStyles(colors, colorScheme);
   const { folders, refresh: refreshFolders } = useFolders();
@@ -140,6 +142,33 @@ export default function FoldersHomeScreen() {
       ...(Platform.OS === 'ios'
         ? {
             unstable_headerRightItems: () => {
+              if (sideColumn.active) {
+                return [
+                  sideColumnIconItem({
+                    label: showSettings ? 'Hide settings' : 'Show settings',
+                    icon: showSettings ? 'gearshape.fill' : 'gearshape',
+                    onPress: toggleSettings,
+                    tintColor: colors.text,
+                  }),
+                  sideColumnIconItem({
+                    label: 'New folder',
+                    icon: 'folder.badge.plus',
+                    onPress: handleNewFolder,
+                    tintColor: colors.text,
+                  }),
+                  ...(hasFolders
+                    ? [
+                        sideColumnIconItem({
+                          label: editMode ? 'Done editing folders' : 'Edit folders',
+                          icon: editMode ? 'checkmark' : 'pencil',
+                          onPress: toggleEditMode,
+                          tintColor: colors.text,
+                        }),
+                      ]
+                    : []),
+                ];
+              }
+
               const items = [
                 {
                   type: 'custom' as const,
@@ -216,6 +245,7 @@ export default function FoldersHomeScreen() {
       hasFolders,
       headerStyles.canvasColor,
       showSettings,
+      sideColumn.active,
       styles.headerActions,
       toggleEditMode,
       toggleSettings,
