@@ -156,6 +156,64 @@ export function buildMemoOptionActions({
   return items;
 }
 
+export function dispatchMemoOptionAction(id: string, handlers: MemoOptionsMenuHandlers): void {
+  switch (id) {
+    case 'share':
+      handlers.onShare();
+      break;
+    case 'importTrack':
+      handlers.onImportTrack?.();
+      break;
+    case 'rename':
+      handlers.onRename();
+      break;
+    case 'editRecording':
+      handlers.onEditRecording?.();
+      break;
+    case 'moveToFolder':
+      handlers.onMoveToFolder?.();
+      break;
+    case 'mergeLayers':
+      handlers.onMergeLayers?.();
+      break;
+    case 'muteTracks':
+      handlers.onMuteTracks?.();
+      break;
+    case 'unmuteTracks':
+      handlers.onUnmuteTracks?.();
+      break;
+    case 'soloTracks':
+      handlers.onSoloTracks?.();
+      break;
+    case 'unsoloTracks':
+      handlers.onUnsoloTracks?.();
+      break;
+    case 'lockTracks':
+      handlers.onLockTracks?.();
+      break;
+    case 'unlockTracks':
+      handlers.onUnlockTracks?.();
+      break;
+    case 'toggleTrackAccordion':
+      handlers.onToggleTrackAccordion?.();
+      break;
+    case 'duplicate':
+      handlers.onDuplicate();
+      break;
+    case 'refresh':
+      handlers.onRefresh?.();
+      break;
+    case 'recover':
+      handlers.onRecover?.();
+      break;
+    case 'delete':
+      handlers.onDelete();
+      break;
+    default:
+      break;
+  }
+}
+
 function toMenuActions(items: MemoOptionAction[]): MenuAction[] {
   return items.map((item) => {
     const action: MenuAction = {
@@ -255,59 +313,25 @@ export function MemoOptionsMenu({
       actions={actions}
       style={style}
       onPressAction={({ nativeEvent }) => {
-        switch (nativeEvent.event) {
-          case 'share':
-            onShare();
-            break;
-          case 'importTrack':
-            onImportTrack?.();
-            break;
-          case 'rename':
-            onRename();
-            break;
-          case 'editRecording':
-            onEditRecording?.();
-            break;
-          case 'moveToFolder':
-            onMoveToFolder?.();
-            break;
-          case 'mergeLayers':
-            onMergeLayers?.();
-            break;
-          case 'muteTracks':
-            onMuteTracks?.();
-            break;
-          case 'unmuteTracks':
-            onUnmuteTracks?.();
-            break;
-          case 'soloTracks':
-            onSoloTracks?.();
-            break;
-          case 'unsoloTracks':
-            onUnsoloTracks?.();
-            break;
-          case 'lockTracks':
-            onLockTracks?.();
-            break;
-          case 'unlockTracks':
-            onUnlockTracks?.();
-            break;
-          case 'toggleTrackAccordion':
-            onToggleTrackAccordion?.();
-            break;
-          case 'duplicate':
-            onDuplicate();
-            break;
-          case 'refresh':
-            onRefresh?.();
-            break;
-          case 'recover':
-            onRecover?.();
-            break;
-          case 'delete':
-            onDelete();
-            break;
-        }
+        dispatchMemoOptionAction(nativeEvent.event, {
+          onShare,
+          onImportTrack,
+          onRename,
+          onEditRecording,
+          onMoveToFolder,
+          onMergeLayers,
+          onMuteTracks,
+          onUnmuteTracks,
+          onSoloTracks,
+          onUnsoloTracks,
+          onLockTracks,
+          onUnlockTracks,
+          onToggleTrackAccordion,
+          onDuplicate,
+          onRefresh,
+          onRecover,
+          onDelete,
+        });
       }}>
       {children}
     </ThemedMenuView>

@@ -38,6 +38,7 @@ export function sideColumnIconItem(options: {
   icon: FloatingHeaderIcon;
   onPress: () => void;
   tintColor: ColorValue;
+  disabled?: boolean;
 }) {
   return {
     type: 'button' as const,
@@ -46,6 +47,7 @@ export function sideColumnIconItem(options: {
     icon: { type: 'sfSymbol' as const, name: options.icon },
     onPress: options.onPress,
     tintColor: options.tintColor,
+    disabled: options.disabled,
     hidesSharedBackground: true,
     sharesBackground: false,
   };

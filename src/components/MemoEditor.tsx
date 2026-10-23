@@ -1,5 +1,7 @@
 import * as Haptics from 'expo-haptics';
+import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
 import { router, useNavigation } from 'expo-router';
+import type { SFSymbol } from 'sf-symbols-typescript';
 import { SymbolView } from 'expo-symbols';
 import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import {
@@ -99,7 +101,11 @@ import { FloatingHeaderButton, FloatingHeaderIconFace } from '@/src/components/F
 import { HeadphonesRecommendedDialog } from '@/src/components/HeadphonesRecommendedDialog';
 import { IconActionSheet, type IconActionSheetItem } from '@/src/components/IconActionSheet';
 import { LoopSettingsSheet } from '@/src/components/LoopSettingsSheet';
-import { MemoOptionsMenu } from '@/src/components/MemoOptionsMenu';
+import {
+  buildMemoOptionActions,
+  dispatchMemoOptionAction,
+  MemoOptionsMenu,
+} from '@/src/components/MemoOptionsMenu';
 import { MetronomeButton } from '@/src/components/MetronomeButton';
 import { MetronomeSettingsSheet } from '@/src/components/MetronomeSettingsSheet';
 import { NamePromptDialog } from '@/src/components/NamePromptDialog';
@@ -197,6 +203,7 @@ import {
   normalizeMetronomeSettings,
   settingsForMetronomeMode,
 } from '@/src/storage/types';
+import { sideColumnIconItem, useDuoSideColumn } from '@/src/hooks/useDuoSideColumn';
 import { useVoiceMemosColors } from '@/src/theme/useVoiceMemosColors';
 import { formatDurationWithTenths } from '@/src/utils/format';
 
@@ -522,6 +529,13 @@ type MemoEditorInnerProps = MemoEditorProps & {
   onReload: () => void;
 };
 
+/** Editor column is ellipsis, then Done. */
+const EDITOR_COLUMN_PLATTER_WIDTH = 52;
+/** Just above the ellipsis, leaving a gap under the system platter. */
+const EDITOR_COLUMN_PLATTER_TOP = 98;
+/** Bottom still ends 16pt under Done. */
+const EDITOR_COLUMN_PLATTER_HEIGHT = 118;
+
 export function MemoEditor(props: MemoEditorProps) {
   const [reloadNonce, setReloadNonce] = useState(0);
   const onReload = useCallback(() => setReloadNonce((n) => n + 1), []);
@@ -542,6 +556,7 @@ function MemoEditorInner({
 }: MemoEditorInnerProps) {
   const colors = useVoiceMemosColors();
   const styles = useMemoEditorStyles(colors);
+  const sideColumn = useDuoSideColumn();
   const isPane = presentation === 'pane';
   const record = autoRecord ? '1' : undefined;
   const navigation = useNavigation();
@@ -4219,10 +4234,62 @@ function MemoEditorInner({
     })();
   }, [memo, trackAccordionEnabled]);
 
+  const renderEditorTitle = useCallback(() => {
+    const showZoomSubtitle =
+      !isTimelineZoomAtDefault(zoomControls.x, zoomControls.y) || zoomControls.visible;
+    return (
+      <>
+        <Pressable
+          accessibilityLabel="Rename"
+          accessibilityRole="button"
+          delayLongPress={400}
+          onLongPress={handleTitleLongPress}
+          onPress={handleRename}
+          style={styles.headerTitlePressable}>
+          <Text numberOfLines={1} style={styles.headerTitleText}>
+            {memo?.title ?? ''}
+          </Text>
+        </Pressable>
+        {recordingStartError ? (
+          <Text
+            pointerEvents="none"
+            style={[styles.headerZoomCaption, styles.headerRecordingStartError]}>
+            {recordingStartError}
+          </Text>
+        ) : isPersistingTake && savePhase ? (
+          <Text pointerEvents="none" style={styles.headerZoomCaption}>
+            {SAVE_PHASE_LABELS[savePhase]}
+          </Text>
+        ) : showZoomSubtitle ? (
+          <Text pointerEvents="none" style={styles.headerZoomCaption}>
+            {`x: ${formatTimelineZoomMultiplier(zoomControls.x)}  y: ${formatTimelineZoomMultiplier(zoomControls.y)}`}
+          </Text>
+        ) : null}
+      </>
+    );
+  }, [
+    handleRename,
+    handleTitleLongPress,
+    isPersistingTake,
+    memo?.title,
+    recordingStartError,
+    savePhase,
+    styles.headerRecordingStartError,
+    styles.headerTitlePressable,
+    styles.headerTitleText,
+    styles.headerZoomCaption,
+    zoomControls.visible,
+    zoomControls.x,
+    zoomControls.y,
+  ]);
+
+  const renderColumnHeaderTitle = useCallback(
+    () => <View style={styles.headerTitleColumn}>{renderEditorTitle()}</View>,
+    [renderEditorTitle, styles.headerTitleColumn]
+  );
+
   const renderHeaderBar = useCallback(
     () => {
-      const showZoomSubtitle =
-        !isTimelineZoomAtDefault(zoomControls.x, zoomControls.y) || zoomControls.visible;
       const optionsMenu = (
         <MemoOptionsMenu
           includeEditRecording={false}
@@ -4328,32 +4395,7 @@ function MemoEditorInner({
           <View style={styles.headerLeading}>{optionsMenu}</View>
         )}
         <View style={[styles.headerTitle, isPane && styles.headerTitlePane]}>
-          <Pressable
-            accessibilityLabel="Rename"
-            accessibilityRole="button"
-            delayLongPress={400}
-            onLongPress={handleTitleLongPress}
-            onPress={handleRename}
-            style={styles.headerTitlePressable}>
-            <Text numberOfLines={1} style={styles.headerTitleText}>
-              {memo?.title ?? ''}
-            </Text>
-          </Pressable>
-          {recordingStartError ? (
-            <Text
-              pointerEvents="none"
-              style={[styles.headerZoomCaption, styles.headerRecordingStartError]}>
-              {recordingStartError}
-            </Text>
-          ) : isPersistingTake && savePhase ? (
-            <Text pointerEvents="none" style={styles.headerZoomCaption}>
-              {SAVE_PHASE_LABELS[savePhase]}
-            </Text>
-          ) : showZoomSubtitle ? (
-            <Text pointerEvents="none" style={styles.headerZoomCaption}>
-              {`x: ${formatTimelineZoomMultiplier(zoomControls.x)}  y: ${formatTimelineZoomMultiplier(zoomControls.y)}`}
-            </Text>
-          ) : null}
+          {renderEditorTitle()}
         </View>
         <Pressable
           accessibilityLabel="Done"
@@ -4410,8 +4452,131 @@ function MemoEditorInner({
       recordingArmed,
       replaceMode,
       stackMode,
+      renderEditorTitle,
     ],
   );
+
+  const useSideColumnHeader = sideColumn.active && !isPane;
+
+  const sideColumnHeaderItems = useCallback(() => {
+    const actions = buildMemoOptionActions({
+      includeEditRecording: false,
+      includeMergeLayers: memo
+        ? getPlayableLayersInTimelineOrder(memo.layers).filter(
+            (layer) => !isLayerLocked(getLayerEffects(layer))
+          ).length > 1
+        : false,
+      includeMuteTracks: memo
+        ? getPlayableLayers(memo).some((layer) => !getLayerEffects(layer).muted)
+        : false,
+      includeUnmuteTracks: memo
+        ? getPlayableLayers(memo).some((layer) => getLayerEffects(layer).muted)
+        : false,
+      includeSoloTracks: memo
+        ? getPlayableLayers(memo).some((layer) => !getLayerEffects(layer).solo)
+        : false,
+      includeUnsoloTracks: memo
+        ? getPlayableLayers(memo).some((layer) => getLayerEffects(layer).solo)
+        : false,
+      includeLockTracks: memo
+        ? getPlayableLayers(memo).some((layer) => !isLayerLocked(getLayerEffects(layer)))
+        : false,
+      includeUnlockTracks: memo
+        ? getPlayableLayers(memo).some((layer) => isLayerLocked(getLayerEffects(layer)))
+        : false,
+      includeShare: memo ? hasRecording(memo) : false,
+      includeImportTrack:
+        !engineState.isRecording &&
+        !recordingArmed &&
+        !stackMode &&
+        !replaceMode &&
+        !isPersistingTake &&
+        !isExporting,
+      includeTrackAccordion: memo
+        ? hasRecording(memo) && getPlayableLayers(memo).length > 1
+        : false,
+      trackAccordionEnabled,
+      includeRefresh: true,
+    });
+    const handlers = {
+      onShare: handleShare,
+      onImportTrack: handleImportTrack,
+      onRename: handleRename,
+      onMergeLayers: handleMergeAllLayers,
+      onMuteTracks: handleMuteTracksMenu,
+      onUnmuteTracks: handleUnmuteTracksMenu,
+      onSoloTracks: handleSoloTracksMenu,
+      onUnsoloTracks: handleUnsoloTracksMenu,
+      onLockTracks: handleLockTracksMenu,
+      onUnlockTracks: handleUnlockTracksMenu,
+      onToggleTrackAccordion: handleToggleTrackAccordion,
+      onDuplicate: () => {
+        void handleDuplicate();
+      },
+      onRefresh: handleRefresh,
+      onDelete: confirmDelete,
+    };
+
+    return [
+      {
+        type: 'menu' as const,
+        label: 'More options',
+        accessibilityLabel: 'More options',
+        icon: { type: 'sfSymbol' as const, name: 'ellipsis' as const },
+        tintColor: colors.text,
+        hidesSharedBackground: true,
+        sharesBackground: false,
+        menu: {
+          items: actions.map((action) => ({
+            type: 'action' as const,
+            label: action.title,
+            icon: {
+              type: 'sfSymbol' as const,
+              name: action.systemImage as SFSymbol,
+            },
+            destructive: action.destructive,
+            state:
+              action.toggled == null ? undefined : action.toggled ? ('on' as const) : ('off' as const),
+            onPress: () => dispatchMemoOptionAction(action.id, handlers),
+          })),
+        },
+      },
+      sideColumnIconItem({
+        label: 'Done',
+        icon: 'checkmark',
+        onPress: () => {
+          void handleDone();
+        },
+        tintColor: colors.text,
+        disabled: engineState.isRecording,
+      }),
+    ];
+  }, [
+    colors.text,
+    confirmDelete,
+    engineState.isRecording,
+    handleDone,
+    handleDuplicate,
+    handleImportTrack,
+    handleLockTracksMenu,
+    handleMergeAllLayers,
+    handleMuteTracksMenu,
+    handleRefresh,
+    handleRename,
+    handleShare,
+    handleSoloTracksMenu,
+    handleToggleTrackAccordion,
+    handleUnlockTracksMenu,
+    handleUnmuteTracksMenu,
+    handleUnsoloTracksMenu,
+    isExporting,
+    isPersistingTake,
+    memo,
+    recordingArmed,
+    replaceMode,
+    stackMode,
+    trackAccordionEnabled,
+  ]);
 
   const headerBar = useMemo(() => renderHeaderBar(), [renderHeaderBar]);
 
@@ -4427,16 +4592,28 @@ function MemoEditorInner({
       headerTitleStyle: { color: colors.text },
       headerShadowVisible: false,
       contentStyle: { backgroundColor: colors.sheetBackground },
-      headerTitle: renderHeaderBar,
+      headerTitle: useSideColumnHeader ? renderColumnHeaderTitle : renderHeaderBar,
       headerTitleAlign: 'center',
-      headerTitleContainerStyle: {
-        left: 0,
-        right: 0,
-        maxWidth: '100%',
-        paddingHorizontal: 0,
-      },
+      headerTitleContainerStyle: useSideColumnHeader
+        ? { maxWidth: '100%' as const, paddingHorizontal: 0 }
+        : {
+            left: 0,
+            right: 0,
+            maxWidth: '100%',
+            paddingHorizontal: 0,
+          },
+      unstable_headerRightItems: useSideColumnHeader ? sideColumnHeaderItems : () => [],
     });
-  }, [backTitle, colors, isPane, navigation, renderHeaderBar]);
+  }, [
+    backTitle,
+    colors,
+    isPane,
+    navigation,
+    renderColumnHeaderTitle,
+    renderHeaderBar,
+    sideColumnHeaderItems,
+    useSideColumnHeader,
+  ]);
 
   const getPlaybackTime = useCallback(() => engine.getPlaybackTime(), [engine]);
   const getRecordingTime = useCallback(
@@ -6023,6 +6200,24 @@ function MemoEditorInner({
           </View>
         </View>
       </Modal>
+      {sideColumn.active && sideColumn.edge && isGlassEffectAPIAvailable() ? (
+        <View
+          pointerEvents="none"
+          style={[
+            styles.sideColumnGlass,
+            {
+              top: EDITOR_COLUMN_PLATTER_TOP,
+              height: EDITOR_COLUMN_PLATTER_HEIGHT,
+              width: EDITOR_COLUMN_PLATTER_WIDTH,
+            },
+            sideColumn.edge === 'left'
+              ? { left: (sideColumn.inset - EDITOR_COLUMN_PLATTER_WIDTH) / 2 }
+              : { right: (sideColumn.inset - EDITOR_COLUMN_PLATTER_WIDTH) / 2 },
+          ]}
+        >
+          <GlassView glassEffectStyle="regular" style={styles.sideColumnGlassFill} />
+        </View>
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -6034,6 +6229,16 @@ function useMemoEditorStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
         screen: {
           flex: 1,
           backgroundColor: colors.sheetBackground,
+        },
+        sideColumnGlass: {
+          position: 'absolute',
+          zIndex: 30,
+          borderRadius: EDITOR_COLUMN_PLATTER_WIDTH / 2,
+          borderCurve: 'continuous',
+          overflow: 'hidden',
+        },
+        sideColumnGlassFill: {
+          flex: 1,
         },
         paneHeader: {
           paddingTop: 4,
@@ -6088,6 +6293,12 @@ function useMemoEditorStyles(colors: ReturnType<typeof useVoiceMemosColors>) {
           // Clears regular toggle + small ellipsis (44+8+32) with phone side pad (58−32).
           left: 110,
           right: 110,
+        },
+        headerTitleColumn: {
+          alignItems: 'center',
+          justifyContent: 'center',
+          maxWidth: '100%',
+          overflow: 'visible',
         },
         headerTitlePressable: {
           maxWidth: '100%',
