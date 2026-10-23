@@ -1,0 +1,12 @@
+{
+  "name": "horizontal-size-class",
+  "version": "1.0.0",
+  "description": "Read UIKit horizontal size class so an open iPhone Duo is not treated as an iPad",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "peerDependencies": {
+    "expo": "*",
+    "react": "*",
+    "react-native": "*"
+  }
+}

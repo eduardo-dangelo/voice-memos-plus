@@ -25,6 +25,7 @@
     "expo-web-browser": "~56.0.5",
     "expo-widgets": "~56.0.22",
     "fflate": "^0.8.3",
+    "horizontal-size-class": "file:modules/horizontal-size-class",
     "project-document-picker": "file:./modules/project-document-picker",
     "react": "19.2.3",
     "react-dom": "19.2.3",

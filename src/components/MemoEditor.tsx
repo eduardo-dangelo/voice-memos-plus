@@ -6200,7 +6200,7 @@ function MemoEditorInner({
           </View>
         </View>
       </Modal>
-      {sideColumn.active && sideColumn.edge && isGlassEffectAPIAvailable() ? (
+      {sideColumn.inset > 0 && sideColumn.edge && isGlassEffectAPIAvailable() ? (
         <View
           pointerEvents="none"
           style={[

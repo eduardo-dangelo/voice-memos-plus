@@ -160,11 +160,12 @@ function AppFrame({
   const sideColumn = useDuoSideColumn();
   const colorScheme = useColorScheme();
   const colors = useVoiceMemosColors();
-  const backgroundColor = sideColumn.active
-    ? colorScheme === 'dark'
-      ? colors.background
-      : colors.editorCanvasBackground
-    : undefined;
+  const backgroundColor =
+    sideColumn.inset > 0
+      ? colorScheme === 'dark'
+        ? colors.background
+        : colors.editorCanvasBackground
+      : undefined;
 
   useEffect(() => {
     onCanvasColor(backgroundColor);

@@ -1,5 +1,6 @@
+import { useHorizontalSizeClass } from 'horizontal-size-class';
 import { useMemo } from 'react';
-import type { ColorValue } from 'react-native';
+import { Platform, type ColorValue } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { FloatingHeaderIcon } from '@/src/components/FloatingHeaderButton';
@@ -9,6 +10,10 @@ import type { FloatingHeaderIcon } from '@/src/components/FloatingHeaderButton';
  * insets are a normal safe area, including portrait iPhone (0).
  */
 const SIDE_COLUMN_MIN_INSET = 60;
+
+function isIphone(): boolean {
+  return Platform.OS === 'ios' && !Platform.isPad;
+}
 
 export type DuoSideColumn = {
   active: boolean;
@@ -20,16 +25,23 @@ const INACTIVE_SIDE_COLUMN: DuoSideColumn = { active: false, edge: null, inset: 
 
 export function useDuoSideColumn(): DuoSideColumn {
   const { left, right } = useSafeAreaInsets();
+  const horizontalSizeClass = useHorizontalSizeClass();
 
   return useMemo(() => {
+    if (!isIphone()) {
+      return INACTIVE_SIDE_COLUMN;
+    }
     if (left >= SIDE_COLUMN_MIN_INSET && left >= right) {
       return { active: true, edge: 'left' as const, inset: left };
     }
     if (right >= SIDE_COLUMN_MIN_INSET) {
       return { active: true, edge: 'right' as const, inset: right };
     }
+    if (horizontalSizeClass === 'regular') {
+      return { active: true, edge: null, inset: 0 };
+    }
     return INACTIVE_SIDE_COLUMN;
-  }, [left, right]);
+  }, [horizontalSizeClass, left, right]);
 }
 
 /** Native symbol button. UIKit places icon items in the Duo side column. */

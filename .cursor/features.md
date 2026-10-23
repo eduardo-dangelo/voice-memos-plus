@@ -8,7 +8,7 @@ Keep entries thin: one-sentence What, 2–5 Paths, 2–4 Invariants. Newest firs
 
 ### iPhone Duo side column
 - Status: evolving
-- What: When a side column is present, home, memo-list, and editor icon buttons move into it in black and white, and a rounded glass platter sits behind the editor's column buttons.
-- Paths: `src/hooks/useDuoSideColumn.ts`, `app/index.tsx`, `src/components/RecordingsList.tsx`, `src/components/MemoEditor.tsx`, `src/components/GroupedList.tsx`
-- Invariants: iPhone and iPad keep the current headers and edge-to-edge editor; on Duo, editor content stays full-bleed and one rounded glass platter covers the editor's two column buttons.
+- What: On an iPhone, a closed side-column inset or a regular size class moves home, memo-list, and editor icon buttons into the column in black and white. The editor glass platter is only the closed column.
+- Paths: `src/hooks/useDuoSideColumn.ts`, `src/components/RecordingsSplitView.tsx`, `src/components/RecordingsList.tsx`, `src/components/RecordingRow.tsx`, `src/components/MemoEditor.tsx`
+- Invariants: iPad, including mini and Split View, keeps the split view, current headers, and hidden list mini tracks; portrait iPhone keeps its header; the open Duo uses the phone list stack, column icons, and expanded mini tracks. The open editor stays a full screen.
 - Updated: 2026-10-23

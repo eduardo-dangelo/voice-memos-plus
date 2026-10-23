@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
+import { Alert, Platform, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 import Animated, {
   Easing,
   useAnimatedStyle,
@@ -127,7 +127,8 @@ export function RecordingsSplitView(props: Props) {
     setSelected({ id: memoId, autoRecord: false });
   }, []);
 
-  if (!isRegularWidth) {
+  const isPad = Platform.OS === 'ios' && Platform.isPad;
+  if (!isRegularWidth || !isPad) {
     return <RecordingsList {...props} layoutMode="stack" />;
   }
 

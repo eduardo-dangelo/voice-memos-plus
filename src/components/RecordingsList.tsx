@@ -644,7 +644,7 @@ export function RecordingsList({
             bottomOffset={32 + (isSidebar ? 0 : insets.bottom)}
             disabled={isStartingRecord || isRecording}
             horizontalInset={
-              sideColumn.active
+              sideColumn.inset > 0 && sideColumn.edge
                 ? {
                     left: sideColumn.edge === 'left' ? sideColumn.inset : 0,
                     right: sideColumn.edge === 'right' ? sideColumn.inset : 0,

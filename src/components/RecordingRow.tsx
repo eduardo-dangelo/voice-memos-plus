@@ -1,7 +1,7 @@
 import { SymbolView } from 'expo-symbols';
 import * as Haptics from 'expo-haptics';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 
 import { LIST_ITEM_EXIT } from '@/src/components/listTransitions';
@@ -109,6 +109,7 @@ function RecordingRowComponent({
   const colors = useVoiceMemosColors();
   const styles = useStyles(colors);
   const isRegularWidth = useIsRegularWidth();
+  const hideMiniTracks = isRegularWidth && Platform.OS === 'ios' && Platform.isPad;
   const engine = useAudioEngine();
   const playback = useRowPlayback(memo.id);
   const [isExporting, setIsExporting] = useState(false);
@@ -132,7 +133,7 @@ function RecordingRowComponent({
   }, [expanded, isActive, engine]);
 
   useEffect(() => {
-    if (!expanded || isRegularWidth) {
+    if (!expanded || hideMiniTracks) {
       setWaveformMemo(null);
       return;
     }
@@ -145,7 +146,7 @@ function RecordingRowComponent({
     return () => {
       cancelled = true;
     };
-  }, [expanded, isRegularWidth, memo.id, memo.updatedAt]);
+  }, [expanded, hideMiniTracks, memo.id, memo.updatedAt]);
 
   const ensureLoaded = async () => {
     if (!playable) {
@@ -392,7 +393,7 @@ function RecordingRowComponent({
       {playable ? (
         <Collapsible expanded={expanded}>
           <View style={styles.expanded}>
-            {!isRegularWidth && expanded ? (
+            {!hideMiniTracks && expanded ? (
               <MiniWaveformTracks
                 currentTime={displayTime}
                 duration={duration}
